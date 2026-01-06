@@ -1,0 +1,156 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"strconv"
+	"time"
+
+	"github.com/narsihuang/o2stock-crawler/internal/crawler"
+)
+
+// SaveSnapshot saves current roster snapshot into players and p_p_history tables.
+func SaveSnapshot(database *DB, resp *crawler.APIResponse, now time.Time) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tx, err := database.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 去重：按 playerId + version + cardType 作为唯一键，避免重复入库同一球员
+	unique := make(map[string]*crawler.RosterItem)
+	for i := range resp.Data.RosterList {
+		item := &resp.Data.RosterList[i]
+		key := item.PlayerID + "|" + item.VersionStr + "|" + item.CardTypeStr
+		if _, ok := unique[key]; ok {
+			continue
+		}
+		unique[key] = item
+	}
+
+	for _, item := range unique {
+		if err := upsertPlayer(ctx, tx, item); err != nil {
+			return err
+		}
+		if err := insertHistory(ctx, tx, item, now); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem) error {
+	playerID, err := strconv.Atoi(item.PlayerID)
+	if err != nil {
+		return err
+	}
+
+	cardType, _ := strconv.Atoi(item.CardTypeStr)
+	version, _ := strconv.Atoi(item.VersionStr)
+
+	// 根据 grade 计算单张基础卡的价格：grade n 表示 2^(n-1) 张基础卡
+	factor := gradeFactor(item.Grade)
+
+	currentLowest := 0
+	if item.Price.CurrentLowestPrice != "" {
+		if v, err := strconv.Atoi(item.Price.CurrentLowestPrice); err == nil {
+			currentLowest = v / factor
+		}
+	}
+
+	priceStandard := item.Price.StandardPrice / factor
+	priceSaleLower := item.Price.LowerPriceForSale / factor
+	priceSaleUpper := item.Price.UpperPriceForSale / factor
+
+	// players table: simple insert; if you want dedup by (player_id, version, card_type)
+	// you can add unique index and use ON DUPLICATE KEY UPDATE.
+	const q = `
+INSERT INTO players
+	(player_id, p_name_show, p_name_en, team_abbr, version, card_type,
+	 player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper)
+VALUES (?,?,?,?,?,?,?,?,?,?,?)
+ON DUPLICATE KEY UPDATE
+	p_name_show = VALUES(p_name_show),
+	p_name_en = VALUES(p_name_en),
+	team_abbr = VALUES(team_abbr),
+	version = VALUES(version),
+	card_type = VALUES(card_type),
+	player_img = VALUES(player_img),
+	price_standard = VALUES(price_standard),
+	price_current_lowest = VALUES(price_current_lowest),
+	price_sale_lower = VALUES(price_sale_lower),
+	price_sale_upper = VALUES(price_sale_upper)
+`
+
+	_, err = tx.ExecContext(ctx, q,
+		playerID,
+		item.ShowName,
+		item.PlayerEn,
+		item.TeamAbbr,
+		version,
+		cardType,
+		item.PlayerImg,
+		priceStandard,
+		currentLowest,
+		priceSaleLower,
+		priceSaleUpper,
+	)
+	return err
+}
+
+func insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, now time.Time) error {
+	playerID, err := strconv.Atoi(item.PlayerID)
+	if err != nil {
+		return err
+	}
+
+	atDate := now.Format("2006-01-02")
+	atYear := now.Format("2006")
+	atMonth := now.Format("01")
+	atDay := now.Format("02")
+	atHour := now.Format("15")
+	atDateHour := now.Format("2006010215")
+
+	// 历史表也保存单张基础卡的价格
+	factor := gradeFactor(item.Grade)
+	priceStandard := item.Price.StandardPrice / factor
+
+	const q = `
+INSERT INTO p_p_history
+	(player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, price_standard, c_time)
+VALUES (?,?,?,?,?,?,?,?,?)
+`
+
+	_, err = tx.ExecContext(ctx, q,
+		playerID,
+		atDate,
+		atDateHour,
+		atYear,
+		atMonth,
+		atDay,
+		atHour,
+		priceStandard,
+		now,
+	)
+	return err
+}
+
+// gradeFactor 将 grade 转换为基础卡张数：n 级需要 2^(n-1) 张卡
+func gradeFactor(gradeStr string) int {
+	n, err := strconv.Atoi(gradeStr)
+	if err != nil || n <= 1 {
+		return 1
+	}
+	// 保护一下上限，文档中为 1~7 级
+	if n > 7 {
+		n = 7
+	}
+	return 1 << (n - 1)
+}
