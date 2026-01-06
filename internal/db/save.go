@@ -122,13 +122,8 @@ func insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, no
 	factor := gradeFactor(item.Grade)
 	priceStandard := item.Price.StandardPrice / factor
 
-	// 计算市场最低价和最高价（单张基础卡价格）
-	priceLower := 0
-	if item.Price.CurrentLowestPrice != "" {
-		if v, err := strconv.Atoi(item.Price.CurrentLowestPrice); err == nil {
-			priceLower = v / factor
-		}
-	}
+	// 计算市场最低价和最高价（单张基础卡价格），来源为 lowerPriceForSale / upperPriceForSale
+	priceLower := item.Price.LowerPriceForSale / factor
 	priceUpper := item.Price.UpperPriceForSale / factor
 
 	const q = `
