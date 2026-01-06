@@ -122,10 +122,19 @@ func insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, no
 	factor := gradeFactor(item.Grade)
 	priceStandard := item.Price.StandardPrice / factor
 
+	// 计算市场最低价和最高价（单张基础卡价格）
+	priceLower := 0
+	if item.Price.CurrentLowestPrice != "" {
+		if v, err := strconv.Atoi(item.Price.CurrentLowestPrice); err == nil {
+			priceLower = v / factor
+		}
+	}
+	priceUpper := item.Price.UpperPriceForSale / factor
+
 	const q = `
 INSERT INTO p_p_history
-	(player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, price_standard, c_time)
-VALUES (?,?,?,?,?,?,?,?,?)
+	(player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, price_standard, price_lower, price_upper, c_time)
+VALUES (?,?,?,?,?,?,?,?,?,?,?)
 `
 
 	_, err = tx.ExecContext(ctx, q,
@@ -137,6 +146,8 @@ VALUES (?,?,?,?,?,?,?,?,?)
 		atDay,
 		atHour,
 		priceStandard,
+		priceLower,
+		priceUpper,
 		now,
 	)
 	return err
