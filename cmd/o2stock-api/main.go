@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/narsihuang/o2stock-crawler/api"
 	"github.com/narsihuang/o2stock-crawler/internal/db"
 )
 
@@ -27,7 +28,7 @@ func main() {
 	defer database.Close()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/players", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/players", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
@@ -38,10 +39,10 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, rows)
+		writeJSON(w, api.Success(api.PlayersRes{Players: rows}))
 	}))
 
-	mux.HandleFunc("/api/player-history", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/player-history", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
 		playerIDStr := r.URL.Query().Get("player_id")
@@ -62,7 +63,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, rows)
+		writeJSON(w, api.Success(api.PlayerHistoryRes{PlayerHistory: rows}))
 	}))
 
 	addr := os.Getenv("API_ADDR")
