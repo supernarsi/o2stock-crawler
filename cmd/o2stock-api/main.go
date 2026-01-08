@@ -27,6 +27,7 @@ func main() {
 
 	apiCtl := controller.NewAPI(database)
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", apiCtl.Healthz())
 	mux.HandleFunc("/players", apiCtl.Players())
 	mux.HandleFunc("/player-history", apiCtl.PlayerHistory())
 

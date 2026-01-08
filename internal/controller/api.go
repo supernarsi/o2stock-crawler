@@ -27,7 +27,7 @@ func (a *API) Players() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 		return api.PlayersRes{Players: rows}, nil
-	}), middleware.CORS)
+	}), middleware.CORS, middleware.Logging)
 }
 
 func (a *API) PlayerHistory() http.HandlerFunc {
@@ -47,7 +47,14 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 		return api.PlayerHistoryRes{PlayerHistory: rows}, nil
-	}), middleware.CORS)
+	}), middleware.CORS, middleware.Logging)
+}
+
+func (a *API) Healthz() http.HandlerFunc {
+	return middleware.Compose(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}, middleware.CORS, middleware.Logging)
 }
 
 func parseIntDefault(s string, def int) int {
