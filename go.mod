@@ -1,4 +1,4 @@
-module github.com/narsihuang/o2stock-crawler
+module o2stock-crawler
 
 go 1.21
 

@@ -2,13 +2,12 @@ package main
 
 import (
 	"log"
+	"o2stock-crawler/internal/crawler"
+	"o2stock-crawler/internal/db"
 	"os"
 	"time"
 
 	"github.com/joho/godotenv"
-
-	"github.com/narsihuang/o2stock-crawler/internal/crawler"
-	"github.com/narsihuang/o2stock-crawler/internal/db"
 )
 
 func main() {

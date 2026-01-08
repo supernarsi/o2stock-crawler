@@ -1,6 +1,6 @@
 package api
 
-import "github.com/narsihuang/o2stock-crawler/internal/model"
+import "o2stock-crawler/internal/model"
 
 type PlayersRes struct {
 	Players []*model.Players `json:"players"`

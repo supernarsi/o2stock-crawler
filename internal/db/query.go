@@ -2,8 +2,7 @@ package db
 
 import (
 	"context"
-
-	"github.com/narsihuang/o2stock-crawler/internal/model"
+	"o2stock-crawler/internal/model"
 )
 
 // ListPlayers 返回简单的球员列表，按 player_id 排序，可分页。

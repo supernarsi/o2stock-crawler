@@ -3,10 +3,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	"o2stock-crawler/internal/crawler"
 	"strconv"
 	"time"
-
-	"github.com/narsihuang/o2stock-crawler/internal/crawler"
 )
 
 // SaveSnapshot saves current roster snapshot into players and p_p_history tables.
