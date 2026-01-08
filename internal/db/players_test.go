@@ -1,0 +1,55 @@
+package db
+
+import (
+	"context"
+	"testing"
+)
+
+func TestListPlayers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database test in short mode")
+	}
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Skipf("skip test: %v", err)
+	}
+
+	db, err := Open(cfg)
+	if err != nil {
+		t.Skipf("skip test: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	players, err := ListPlayers(ctx, db, 10, 0)
+	if err != nil {
+		t.Fatalf("ListPlayers failed: %v", err)
+	}
+	t.Logf("Found %d players", len(players))
+}
+
+func TestGetPlayersByIDs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database test in short mode")
+	}
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Skipf("skip test: %v", err)
+	}
+
+	db, err := Open(cfg)
+	if err != nil {
+		t.Skipf("skip test: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	playerIDs := []uint{10005, 10006}
+	players, err := GetPlayersByIDs(ctx, db, playerIDs)
+	if err != nil {
+		t.Fatalf("GetPlayersByIDs failed: %v", err)
+	}
+	t.Logf("Found %d players", len(players))
+}

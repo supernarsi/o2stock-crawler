@@ -2,8 +2,14 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 
 	_ "github.com/go-sql-driver/mysql"
+)
+
+var (
+	// ErrNoRows 表示没有找到记录
+	ErrNoRows = errors.New("no rows found")
 )
 
 // DB is a thin wrapper over *sql.DB to allow extension later.

@@ -1,12 +1,12 @@
 package api
 
 type Response struct {
-	Code int         `json:"code"`
-	Msg  string      `json:"msg"`
-	Data interface{} `json:"data"`
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data any    `json:"data"`
 }
 
-func Success(data interface{}) *Response {
+func Success(data any) *Response {
 	return &Response{
 		Code: 0,
 		Msg:  "success",

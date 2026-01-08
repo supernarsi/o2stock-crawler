@@ -30,6 +30,9 @@ func main() {
 	mux.HandleFunc("/healthz", apiCtl.Healthz())
 	mux.HandleFunc("/players", apiCtl.Players())
 	mux.HandleFunc("/player-history", apiCtl.PlayerHistory())
+	mux.HandleFunc("/player/in", apiCtl.PlayerIn())
+	mux.HandleFunc("/player/out", apiCtl.PlayerOut())
+	mux.HandleFunc("/u-players", apiCtl.UserPlayers())
 
 	addr := os.Getenv("API_ADDR")
 	if addr == "" {

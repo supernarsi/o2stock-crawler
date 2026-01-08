@@ -53,29 +53,51 @@ LIMIT ? OFFSET ?`
 	return result, nil
 }
 
-// GetPlayerHistory 返回某个球员的历史价格，按时间升序。
-func GetPlayerHistory(ctx context.Context, database *DB, playerID uint32, limit int) ([]*model.PriceHistoryRow, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
+// GetPlayersByIDs 根据球员 ID 列表获取球员信息
+func GetPlayersByIDs(ctx context.Context, database *DB, playerIDs []uint) ([]*model.Players, error) {
+	if len(playerIDs) == 0 {
+		return []*model.Players{}, nil
 	}
 
-	const q = `
-SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, price_standard, price_lower, price_upper
-FROM p_p_history
-WHERE player_id = ?
-ORDER BY at_date, at_hour
-LIMIT ?`
+	// 构建 IN 查询的占位符
+	placeholders := ""
+	args := make([]interface{}, 0, len(playerIDs))
+	for i, pid := range playerIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, pid)
+	}
 
-	rows, err := database.QueryContext(ctx, q, playerID, limit)
+	q := `
+SELECT player_id, p_name_show, p_name_en, team_abbr, version, card_type,
+       player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper
+FROM players
+WHERE player_id IN (` + placeholders + `)`
+
+	rows, err := database.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var result []*model.PriceHistoryRow
+	var result []*model.Players
 	for rows.Next() {
-		var r model.PriceHistoryRow
-		if err := rows.Scan(&r.PlayerId, &r.AtDate, &r.AtDateHourStr, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.PriceStandard, &r.PriceLower, &r.PriceUpper); err != nil {
+		var r model.Players
+		if err := rows.Scan(
+			&r.PlayerID,
+			&r.ShowName,
+			&r.EnName,
+			&r.TeamAbbr,
+			&r.Version,
+			&r.CardType,
+			&r.PlayerImg,
+			&r.PriceStandard,
+			&r.PriceCurrentLower,
+			&r.PriceSaleLower,
+			&r.PriceSaleUpper,
+		); err != nil {
 			return nil, err
 		}
 		result = append(result, &r)
