@@ -6,3 +6,14 @@ import "o2stock-crawler/internal/model"
 type PlayerHistoryRes struct {
 	PlayerHistory []*model.PriceHistoryRow `json:"history"`
 }
+
+// MultiPlayersHistoryRes 批量球员历史价格响应
+type MultiPlayersHistoryRes struct {
+	History []PlayerHistoryItem `json:"history"`
+}
+
+// PlayerHistoryItem 单个球员的历史价格项
+type PlayerHistoryItem struct {
+	PlayerID uint32                   `json:"player_id"`
+	History  []*model.PriceHistoryRow `json:"history"`
+}

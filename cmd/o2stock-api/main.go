@@ -39,6 +39,7 @@ func main() {
 	router.RegisterAPI("/healthz", apiCtl.Healthz(), "") // 允许所有方法
 	router.RegisterAPI("/players", apiCtl.Players(), http.MethodGet)
 	router.RegisterAPI("/player-history", apiCtl.PlayerHistory(), http.MethodGet)
+	router.RegisterAPI("/multi-players-history", apiCtl.MultiPlayersHistory(), http.MethodGet)
 	router.RegisterAPI("/player/in", apiCtl.PlayerIn(), http.MethodPost)
 	router.RegisterAPI("/player/out", apiCtl.PlayerOut(), http.MethodPost)
 	router.RegisterAPI("/u-players", apiCtl.UserPlayers(), http.MethodGet)
