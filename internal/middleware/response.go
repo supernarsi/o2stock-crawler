@@ -1,10 +1,13 @@
 package middleware
 
 import (
-	"encoding/json"
 	"net/http"
 	"o2stock-crawler/api"
+
+	jsoniter "github.com/json-iterator/go"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type APIError struct {
 	Status int
@@ -12,7 +15,7 @@ type APIError struct {
 	Msg    string
 }
 
-func API(handler func(r *http.Request) (interface{}, *APIError)) http.HandlerFunc {
+func API(handler func(r *http.Request) (any, *APIError)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data, err := handler(r)
 		if err != nil {
@@ -26,7 +29,10 @@ func API(handler func(r *http.Request) (interface{}, *APIError)) http.HandlerFun
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(data)
 }

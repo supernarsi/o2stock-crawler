@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -21,7 +20,7 @@ func NewAPI(database *db.DB) *API {
 }
 
 func (a *API) Players() http.HandlerFunc {
-	return middleware.Compose(middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		ctx := r.Context()
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
 		offset := parseIntDefault(r.URL.Query().Get("offset"), 0)
@@ -63,11 +62,11 @@ func (a *API) Players() http.HandlerFunc {
 		}
 
 		return api.PlayersWithOwnedRes{Players: result}, nil
-	}), middleware.CORS, middleware.Logging)
+	})
 }
 
 func (a *API) PlayerHistory() http.HandlerFunc {
-	return middleware.Compose(middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		ctx := r.Context()
 		playerIDStr := r.URL.Query().Get("player_id")
 		if playerIDStr == "" {
@@ -83,26 +82,22 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 		return api.PlayerHistoryRes{PlayerHistory: rows}, nil
-	}), middleware.CORS, middleware.Logging)
+	})
 }
 
 func (a *API) Healthz() http.HandlerFunc {
-	return middleware.Compose(func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
-	}, middleware.CORS, middleware.Logging)
+	}
 }
 
 // PlayerIn 标记购买接口
 func (a *API) PlayerIn() http.HandlerFunc {
-	return middleware.Compose(middleware.API(func(r *http.Request) (any, *middleware.APIError) {
-		if r.Method != http.MethodPost {
-			return nil, &middleware.APIError{Status: http.StatusMethodNotAllowed, Code: http.StatusMethodNotAllowed, Msg: "method not allowed"}
-		}
-
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		var req api.PlayerInReq
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body"}
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
 		}
 
 		// 解析时间
@@ -112,19 +107,16 @@ func (a *API) PlayerIn() http.HandlerFunc {
 		}
 
 		// 获取 user_id（这里简化处理，实际应该从认证中间件获取）
-		userIDStr := r.URL.Query().Get("user_id")
-		if userIDStr == "" {
+		// 临时从请求体中获取
+		userID := req.UserID
+		if userID == 0 {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing user_id"}
-		}
-		userID, err := strconv.ParseUint(userIDStr, 10, 32)
-		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid user_id"}
 		}
 
 		ctx := r.Context()
 
 		// 检查是否已拥有超过 2 条
-		count, err := db.CountOwnedPlayers(ctx, a.db, uint(userID), req.PlayerID)
+		count, err := db.CountOwnedPlayers(ctx, a.db, userID, req.PlayerID)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -138,19 +130,15 @@ func (a *API) PlayerIn() http.HandlerFunc {
 		}
 
 		return nil, nil
-	}), middleware.CORS, middleware.Logging)
+	})
 }
 
 // PlayerOut 标记出售接口
 func (a *API) PlayerOut() http.HandlerFunc {
-	return middleware.Compose(middleware.API(func(r *http.Request) (any, *middleware.APIError) {
-		if r.Method != http.MethodPost {
-			return nil, &middleware.APIError{Status: http.StatusMethodNotAllowed, Code: http.StatusMethodNotAllowed, Msg: "method not allowed"}
-		}
-
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		var req api.PlayerOutReq
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body"}
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
 		}
 
 		// 解析时间
@@ -160,19 +148,15 @@ func (a *API) PlayerOut() http.HandlerFunc {
 		}
 
 		// 获取 user_id
-		userIDStr := r.URL.Query().Get("user_id")
-		if userIDStr == "" {
+		userID := req.UserID
+		if userID == 0 {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing user_id"}
-		}
-		userID, err := strconv.ParseUint(userIDStr, 10, 32)
-		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid user_id"}
 		}
 
 		ctx := r.Context()
 
 		// 更新为已出售状态
-		if err := db.UpdatePlayerOwnToSold(ctx, a.db, uint(userID), req.PlayerID, req.Cost, dt); err != nil {
+		if err := db.UpdatePlayerOwnToSold(ctx, a.db, userID, req.PlayerID, req.Cost, dt); err != nil {
 			if err == db.ErrNoRows {
 				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "not own this player yet"}
 			}
@@ -180,12 +164,12 @@ func (a *API) PlayerOut() http.HandlerFunc {
 		}
 
 		return nil, nil
-	}), middleware.CORS, middleware.Logging)
+	})
 }
 
 // UserPlayers 获取用户拥有球员列表
 func (a *API) UserPlayers() http.HandlerFunc {
-	return middleware.Compose(middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		ctx := r.Context()
 
 		userIDStr := r.URL.Query().Get("user_id")
@@ -246,7 +230,7 @@ func (a *API) UserPlayers() http.HandlerFunc {
 		}
 
 		return api.UserPlayersRes{Rosters: rosters}, nil
-	}), middleware.CORS, middleware.Logging)
+	})
 }
 
 func parseIntDefault(s string, def int) int {
