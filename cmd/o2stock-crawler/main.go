@@ -51,6 +51,18 @@ func main() {
 
 		log.Printf("start loop, interval=%s", interval)
 		for {
+			now := time.Now()
+
+			// 检查是否在禁止抓取的时间段（03:00~08:00）
+			if shouldSkipCrawl(now) {
+				nextRun := getNextRunTime(now)
+				waitDuration := nextRun.Sub(now)
+				log.Printf("current time %s is in skip period (03:00~08:00), next run at %s (wait %s)",
+					now.Format("15:04:05"), nextRun.Format("15:04:05"), waitDuration)
+				time.Sleep(waitDuration)
+				continue
+			}
+
 			if err := runOnce(client, database); err != nil {
 				log.Printf("loop run failed: %v", err)
 			}
@@ -75,4 +87,23 @@ func runOnce(client *crawler.Client, database *db.DB) error {
 
 	log.Printf("saved snapshot at %s, players=%d", now.Format(time.RFC3339), len(resp.Data.RosterList))
 	return nil
+}
+
+// shouldSkipCrawl 检查当前时间是否在禁止抓取的时间段（03:00~08:00）
+func shouldSkipCrawl(t time.Time) bool {
+	hour := t.Hour()
+	return hour >= 3 && hour < 8
+}
+
+// getNextRunTime 计算下次应该执行的时间
+// 如果当前在禁止时间段，返回 08:00；否则返回当前时间（实际不会用到）
+func getNextRunTime(now time.Time) time.Time {
+	hour := now.Hour()
+	if hour >= 3 && hour < 8 {
+		// 当前在禁止时间段，返回今天的 08:00
+		next := time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, now.Location())
+		return next
+	}
+	// 不在禁止时间段，返回当前时间（实际不会用到）
+	return now
 }

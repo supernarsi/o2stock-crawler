@@ -96,9 +96,9 @@ func (a *API) MultiPlayersHistory() http.HandlerFunc {
 		}
 
 		// 限制最多查询的球员数量
-		if len(playerIDStrs) > 50 {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "too many player_ids, maximum 50"}
-		}
+		// if len(playerIDStrs) > 50 {
+		// 	return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "too many player_ids, maximum 50"}
+		// }
 
 		playerIDs := make([]uint32, 0, len(playerIDStrs))
 		for _, idStr := range playerIDStrs {
