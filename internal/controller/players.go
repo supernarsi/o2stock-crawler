@@ -69,8 +69,8 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid player_id"}
 		}
-		limit := parseIntDefault(r.URL.Query().Get("limit"), 200)
-		rows, err := db.GetPlayerHistory(ctx, a.db, uint32(id64), limit)
+		query := db.NewPlayerHistoryQuery(uint32(id64), 200)
+		rows, err := query.GetPlayerHistory(ctx, a.db)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -109,8 +109,8 @@ func (a *API) MultiPlayersHistory() http.HandlerFunc {
 			playerIDs = append(playerIDs, uint32(id64))
 		}
 
-		limit := parseIntDefault(r.URL.Query().Get("limit"), 200)
-		historyMap, err := db.GetMultiPlayersHistory(ctx, a.db, playerIDs, limit)
+		query := db.NewMultiPlayersHistoryQuery(playerIDs, 200)
+		historyMap, err := query.GetMultiPlayersHistory(ctx, a.db)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}

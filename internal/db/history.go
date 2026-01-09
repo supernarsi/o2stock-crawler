@@ -2,23 +2,51 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"o2stock-crawler/internal/model"
+	"strings"
 )
 
-// GetPlayerHistory 返回某个球员的历史价格，按时间升序。
-func GetPlayerHistory(ctx context.Context, database *DB, playerID uint32, limit int) ([]*model.PriceHistoryRow, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
-	}
+// PlayerHistoryQuery 获取某个球员的历史价格
+type PlayerHistoryQuery struct {
+	QueryBase
+	playerID uint32
+}
 
-	const q = `
-SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, price_standard, price_lower, price_upper
+// NewPlayerHistoryQuery 创建一个 PlayerHistoryQuery
+func NewPlayerHistoryQuery(playerID uint32, limit int) *PlayerHistoryQuery {
+	return &PlayerHistoryQuery{
+		QueryBase: QueryBase{
+			orderBy: []orderByDirection{
+				{
+					orderBy:        "at_date",
+					orderDirection: OrderAsc,
+				},
+				{
+					orderBy:        "at_hour",
+					orderDirection: OrderAsc,
+				},
+				{
+					orderBy:        "at_minute",
+					orderDirection: OrderAsc,
+				},
+			},
+			limit: limit,
+		},
+		playerID: playerID,
+	}
+}
+
+// GetPlayerHistory 返回某个球员的历史价格，按时间升序。
+func (s *PlayerHistoryQuery) GetPlayerHistory(ctx context.Context, database *DB) ([]*model.PriceHistoryRow, error) {
+	q := fmt.Sprintf(`
+SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper
 FROM p_p_history
 WHERE player_id = ?
-ORDER BY at_date, at_hour
-LIMIT ?`
+ORDER BY %s
+LIMIT ?`, s.GetOrderByClause())
 
-	rows, err := database.QueryContext(ctx, q, playerID, limit)
+	rows, err := database.QueryContext(ctx, q, s.playerID, s.limit)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +55,7 @@ LIMIT ?`
 	var result []*model.PriceHistoryRow
 	for rows.Next() {
 		var r model.PriceHistoryRow
-		if err := rows.Scan(&r.PlayerId, &r.AtDate, &r.AtDateHourStr, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.PriceStandard, &r.PriceLower, &r.PriceUpper); err != nil {
+		if err := rows.Scan(&r.PlayerId, &r.AtDate, &r.AtDateHourStr, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.AtMinute, &r.PriceStandard, &r.PriceCurrentSale, &r.PriceLower, &r.PriceUpper); err != nil {
 			return nil, err
 		}
 		result = append(result, &r)
@@ -38,48 +66,66 @@ LIMIT ?`
 	return result, nil
 }
 
+// MultiPlayersHistoryQuery 批量获取多个球员的历史价格
+type MultiPlayersHistoryQuery struct {
+	QueryBase
+	playerIDs []uint32
+}
+
+// NewMultiPlayersHistoryQuery 创建一个 MultiPlayersHistoryQuery
+func NewMultiPlayersHistoryQuery(playerIDs []uint32, limit int) *MultiPlayersHistoryQuery {
+	return &MultiPlayersHistoryQuery{
+		QueryBase: QueryBase{
+			orderBy: []orderByDirection{
+				{
+					orderBy:        "at_date",
+					orderDirection: OrderAsc,
+				},
+				{
+					orderBy:        "at_hour",
+					orderDirection: OrderAsc,
+				},
+			},
+			limit: limit,
+		},
+		playerIDs: playerIDs,
+	}
+}
+
 // GetMultiPlayersHistory 批量获取多个球员的历史价格
-func GetMultiPlayersHistory(ctx context.Context, database *DB, playerIDs []uint32, limit int) (map[uint32][]*model.PriceHistoryRow, error) {
-	if len(playerIDs) == 0 {
+func (s *MultiPlayersHistoryQuery) GetMultiPlayersHistory(ctx context.Context, database *DB) (map[uint32][]*model.PriceHistoryRow, error) {
+	if len(s.playerIDs) == 0 {
 		return make(map[uint32][]*model.PriceHistoryRow), nil
 	}
 
-	if limit <= 0 || limit > 1000 {
-		limit = 200
-	}
-
 	// 构建 IN 查询的占位符
-	placeholders := ""
-	args := make([]interface{}, 0, len(playerIDs))
-	for i, pid := range playerIDs {
+	var placeholders strings.Builder
+	args := make([]any, 0, len(s.playerIDs))
+	for i, pid := range s.playerIDs {
 		if i > 0 {
-			placeholders += ","
+			placeholders.WriteString(",")
 		}
-		placeholders += "?"
+		placeholders.WriteString("?")
 		args = append(args, pid)
 	}
-
-	q := `
-SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, price_standard, price_lower, price_upper
+	q := fmt.Sprintf(`
+SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper
 FROM p_p_history
-WHERE player_id IN (` + placeholders + `)
-ORDER BY player_id, at_date, at_hour
-LIMIT ?`
+WHERE player_id IN (`+placeholders.String()+`)
+ORDER BY %s 
+LIMIT %d`, s.GetOrderByClause(), s.limit)
 
-	// todo 待优化：这里 LIMIT 是全局的，不是每个球员的
-	// 如果需要每个球员单独限制，需要更复杂的查询
-	args = append(args, limit*len(playerIDs)) // 为每个球员预留 limit 条记录
+	fmt.Println("查询语句：", q)
 
 	rows, err := database.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	result := make(map[uint32][]*model.PriceHistoryRow)
 	for rows.Next() {
 		var r model.PriceHistoryRow
-		if err := rows.Scan(&r.PlayerId, &r.AtDate, &r.AtDateHourStr, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.PriceStandard, &r.PriceLower, &r.PriceUpper); err != nil {
+		if err := rows.Scan(&r.PlayerId, &r.AtDate, &r.AtDateHourStr, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.AtMinute, &r.PriceStandard, &r.PriceCurrentSale, &r.PriceLower, &r.PriceUpper); err != nil {
 			return nil, err
 		}
 		playerID := uint32(r.PlayerId)
@@ -91,8 +137,8 @@ LIMIT ?`
 
 	// 限制每个球员的记录数
 	for pid := range result {
-		if len(result[pid]) > limit {
-			result[pid] = result[pid][:limit]
+		if len(result[pid]) > s.limit {
+			result[pid] = result[pid][:s.limit]
 		}
 	}
 

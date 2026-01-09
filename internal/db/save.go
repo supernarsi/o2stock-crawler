@@ -3,13 +3,24 @@ package db
 import (
 	"context"
 	"database/sql"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/crawler"
 	"strconv"
 	"time"
 )
 
+type SaveSnapshotDb struct {
+	DbBase
+}
+
+func NewSaveSnapshotDb() *SaveSnapshotDb {
+	return &SaveSnapshotDb{
+		DbBase: DbBase{},
+	}
+}
+
 // SaveSnapshot saves current roster snapshot into players and p_p_history tables.
-func SaveSnapshot(database *DB, rosterList []crawler.RosterItem, now time.Time) error {
+func (s *SaveSnapshotDb) SaveSnapshot(database *DB, rosterList []crawler.RosterItem, now time.Time) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -31,10 +42,10 @@ func SaveSnapshot(database *DB, rosterList []crawler.RosterItem, now time.Time) 
 	}
 
 	for _, item := range unique {
-		if err := upsertPlayer(ctx, tx, item); err != nil {
+		if err := s.upsertPlayer(ctx, tx, item); err != nil {
 			return err
 		}
-		if err := insertHistory(ctx, tx, item, now); err != nil {
+		if err := s.insertHistory(ctx, tx, item, now); err != nil {
 			return err
 		}
 	}
@@ -45,7 +56,7 @@ func SaveSnapshot(database *DB, rosterList []crawler.RosterItem, now time.Time) 
 	return nil
 }
 
-func upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem) error {
+func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem) error {
 	playerID, err := strconv.Atoi(item.PlayerID)
 	if err != nil {
 		return err
@@ -55,7 +66,7 @@ func upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem) err
 	version, _ := strconv.Atoi(item.VersionStr)
 
 	// 根据 grade 计算单张基础卡的价格：grade n 表示 2^(n-1) 张基础卡
-	factor := gradeFactor(item.Grade)
+	factor := s.gradeFactor(item.Grade)
 
 	currentLowest := 0
 	if item.Price.CurrentLowestPrice != "" {
@@ -67,6 +78,11 @@ func upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem) err
 	priceStandard := item.Price.StandardPrice / factor
 	priceSaleLower := item.Price.LowerPriceForSale / factor
 	priceSaleUpper := item.Price.UpperPriceForSale / factor
+
+	if priceStandard < consts.LowestPrice {
+		// 如果单张基础卡价格低于最低价格，则不保存
+		return nil
+	}
 
 	// players table: simple insert; if you want dedup by (player_id, version, card_type)
 	// you can add unique index and use ON DUPLICATE KEY UPDATE.
@@ -104,7 +120,7 @@ ON DUPLICATE KEY UPDATE
 	return err
 }
 
-func insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, now time.Time) error {
+func (s *SaveSnapshotDb) insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, now time.Time) error {
 	playerID, err := strconv.Atoi(item.PlayerID)
 	if err != nil {
 		return err
@@ -119,8 +135,13 @@ func insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, no
 	atDateHour := now.Format("200601021504")
 
 	// 历史表也保存单张基础卡的价格
-	factor := gradeFactor(item.Grade)
+	factor := s.gradeFactor(item.Grade)
 	priceStandard := item.Price.StandardPrice / factor
+
+	if priceStandard < consts.LowestPrice {
+		// 如果单张基础卡价格低于最低价格，则不保存
+		return nil
+	}
 
 	// 计算市场最低价和最高价（单张基础卡价格），来源为 lowerPriceForSale / upperPriceForSale
 	priceLower := item.Price.LowerPriceForSale / factor
@@ -165,7 +186,7 @@ ON DUPLICATE KEY UPDATE
 }
 
 // gradeFactor 将 grade 转换为基础卡张数：n 级需要 2^(n-1) 张卡
-func gradeFactor(gradeStr string) int {
+func (s *SaveSnapshotDb) gradeFactor(gradeStr string) int {
 	n, err := strconv.Atoi(gradeStr)
 	if err != nil || n <= 1 {
 		return 1

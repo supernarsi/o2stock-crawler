@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"o2stock-crawler/internal/consts"
 	"strconv"
 	"time"
 
@@ -95,19 +96,19 @@ func (c *Client) FetchRoster(page int) (*APIResponse, error) {
 	nonceStr := c.generateNonceStr(5)
 
 	q := req.URL.Query()
-	q.Set("openid", c.cfg.OpenID)            // 用户 openid
-	q.Set("access_token", c.cfg.AccessToken) // 用户 access_token
-	q.Set("page", strconv.Itoa(page))        // 页码
-	q.Set("orderBy", "price")                // 排序方式: price 价格，grade 等级，popularity 人气
-	q.Set("orientation", "desc")             // 排序方向: desc 降序，asc 升序
-	q.Set("cardType", "1")                   // 筛选系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏
-	q.Set("badges", "-1")                    // 筛选徽章
-	q.Set("grade", "1")                      // 筛选突破等级
-	q.Set("lowPrice", "5000")                // 筛选最低价格
-	q.Set("highPrice", "0")                  // 筛选最高价格，0 表示不限制
-	q.Set("collapseAll", "false")            // 作用未知
-	q.Set("versionLabel", "")                // 作用未知
-	q.Set("source", "trade")                 // 作用未知
+	q.Set("openid", c.cfg.OpenID)                       // 用户 openid
+	q.Set("access_token", c.cfg.AccessToken)            // 用户 access_token
+	q.Set("page", strconv.Itoa(page))                   // 页码
+	q.Set("orderBy", "price")                           // 排序方式: price 价格，grade 等级，popularity 人气
+	q.Set("orientation", "desc")                        // 排序方向: desc 降序，asc 升序
+	q.Set("cardType", "1")                              // 筛选系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏
+	q.Set("badges", "-1")                               // 筛选徽章
+	q.Set("grade", "1")                                 // 筛选突破等级
+	q.Set("lowPrice", strconv.Itoa(consts.LowestPrice)) // 筛选最低价格
+	q.Set("highPrice", "0")                             // 筛选最高价格，0 表示不限制
+	q.Set("collapseAll", "false")                       // 作用未知
+	q.Set("versionLabel", "")                           // 作用未知
+	q.Set("source", "trade")                            // 作用未知
 	q.Set("timeStamp", fmt.Sprintf("%d", ts))
 	q.Set("nonseStr", nonceStr)
 	q.Set("sign", c.generateSign(nonceStr, ts))
