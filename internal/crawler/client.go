@@ -76,7 +76,7 @@ type RosterItem struct {
 }
 
 // FetchRoster fetches current roster data from OL2 API.
-func (c *Client) FetchRoster() (*APIResponse, error) {
+func (c *Client) FetchRoster(page int) (*APIResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -97,6 +97,7 @@ func (c *Client) FetchRoster() (*APIResponse, error) {
 	q := req.URL.Query()
 	q.Set("openid", c.cfg.OpenID)            // 用户 openid
 	q.Set("access_token", c.cfg.AccessToken) // 用户 access_token
+	q.Set("page", strconv.Itoa(page))        // 页码
 	q.Set("orderBy", "price")                // 排序方式: price 价格，grade 等级，popularity 人气
 	q.Set("orientation", "desc")             // 排序方向: desc 降序，asc 升序
 	q.Set("cardType", "1")                   // 筛选系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏

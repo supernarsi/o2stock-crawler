@@ -78,17 +78,19 @@ func runOnce(client *crawler.Client, database *db.DB) error {
 	log.Printf(">>> 开始抓取球员数据 <<<")
 
 	// 从 resp.Data.HasMore 判断是否需要继续抓取，最多抓取 20 页数据，每次抓取间隔随机 2~4 秒
-	for i := 0; i < 20; i++ {
-		log.Printf("--> 开始抓取第 %d 页球员数据 <--", i+1)
+	limit := 20
+	for i := 0; i < limit; i++ {
+		page := i + 1
+		log.Printf("--> 开始抓取第 %d 页球员数据 <--", page)
 
-		resp, err := client.FetchRoster()
+		resp, err := client.FetchRoster(page)
 		if err != nil {
 			log.Printf("抓取球员数据失败: %v", err)
 			return err
 		}
 
 		rosterList, hasMore = resp.Data.RosterList, resp.Data.HasMore
-		log.Printf("抓取第 %d 页球员数据成功，球员数量: %+v，是否还有更多: %+v", i+1, len(rosterList), hasMore)
+		log.Printf("抓取第 %d 页球员数据成功，球员数量: %+v，是否还有更多: %+v", page, len(rosterList), hasMore)
 
 		now := time.Now()
 		if err := db.SaveSnapshot(database, rosterList, now); err != nil {
@@ -101,9 +103,11 @@ func runOnce(client *crawler.Client, database *db.DB) error {
 			break
 		}
 
-		sleepDuration := time.Duration(rand.Intn(2)+2) * time.Second
-		log.Printf("等待 %s 后开始抓取第 %d 页球员数据", sleepDuration, i+2)
-		time.Sleep(sleepDuration)
+		if i < limit-1 {
+			sleepDuration := time.Duration(rand.Intn(2)+2) * time.Second
+			log.Printf("等待 %s 后开始抓取第 %d 页球员数据", sleepDuration, page+1)
+			time.Sleep(sleepDuration)
+		}
 		log.Println("================================")
 	}
 	log.Printf(">>> 抓取球员数据完成 <<<")

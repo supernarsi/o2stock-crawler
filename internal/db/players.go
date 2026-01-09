@@ -18,7 +18,6 @@ func ListPlayers(ctx context.Context, database *DB, limit, offset int) ([]*model
 SELECT player_id, p_name_show, p_name_en, team_abbr, version, card_type,
        player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper
 FROM players
-ORDER BY player_id ASC
 LIMIT ? OFFSET ?`
 
 	rows, err := database.QueryContext(ctx, q, limit, offset)

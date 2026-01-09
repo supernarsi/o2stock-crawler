@@ -126,15 +126,24 @@ func insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, no
 	priceLower := item.Price.LowerPriceForSale / factor
 	priceUpper := item.Price.UpperPriceForSale / factor
 
+	// 计算当前成交的最低价（单张基础卡价格）
+	currentLowest := -1 // 默认-1，表示没有成交（断卡）
+	if item.Price.CurrentLowestPrice != "" && item.Price.CurrentLowestPrice != "- -" {
+		if v, err := strconv.Atoi(item.Price.CurrentLowestPrice); err == nil {
+			currentLowest = v / factor
+		}
+	}
+
 	// 由于存在唯一键，如果重复数据直接替换，ON DUPLICATE KEY UPDATE。
 	const q = `
 INSERT INTO p_p_history
-	(player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_lower, price_upper, c_time)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+	(player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper, c_time)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON DUPLICATE KEY UPDATE
 	price_standard = VALUES(price_standard),
 	price_lower = VALUES(price_lower),
-	price_upper = VALUES(price_upper)
+	price_upper = VALUES(price_upper),
+	price_current_sale = VALUES(price_current_sale)
 `
 
 	_, err = tx.ExecContext(ctx, q,
@@ -147,6 +156,7 @@ ON DUPLICATE KEY UPDATE
 		atHour,
 		atMinute,
 		priceStandard,
+		currentLowest,
 		priceLower,
 		priceUpper,
 		now,
