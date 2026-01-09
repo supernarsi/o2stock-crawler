@@ -15,8 +15,9 @@ func (a *API) Players() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		ctx := r.Context()
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
-		offset := parseIntDefault(r.URL.Query().Get("offset"), 0)
-		rows, err := db.ListPlayers(ctx, a.db, limit, offset)
+		page := parseIntDefault(r.URL.Query().Get("page"), 1)
+		query := db.NewPlayersQuery(page, limit)
+		rows, err := query.ListPlayers(ctx, a.db)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -69,7 +70,8 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid player_id"}
 		}
-		query := db.NewPlayerHistoryQuery(uint32(id64), 200)
+		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
+		query := db.NewPlayerHistoryQuery(uint32(id64), limit)
 		rows, err := query.GetPlayerHistory(ctx, a.db)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}

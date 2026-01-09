@@ -5,22 +5,30 @@ import (
 	"o2stock-crawler/internal/model"
 )
 
-// ListPlayers 返回简单的球员列表，按 player_id 排序，可分页。
-func ListPlayers(ctx context.Context, database *DB, limit, offset int) ([]*model.Players, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
+// PlayersQuery 获取球员列表
+type PlayersQuery struct {
+	QueryBase
+}
 
+// NewPlayersQuery 创建一个 PlayersQuery
+func NewPlayersQuery(page, limit int) *PlayersQuery {
+	return &PlayersQuery{
+		QueryBase: QueryBase{
+			limit:  limit,
+			offset: (page - 1) * limit,
+		},
+	}
+}
+
+// ListPlayers 返回简单的球员列表，按 player_id 排序，可分页。
+func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB) ([]*model.Players, error) {
 	const q = `
 SELECT player_id, p_name_show, p_name_en, team_abbr, version, card_type,
        player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper
 FROM players
 LIMIT ? OFFSET ?`
 
-	rows, err := database.QueryContext(ctx, q, limit, offset)
+	rows, err := database.QueryContext(ctx, q, s.limit, s.offset)
 	if err != nil {
 		return nil, err
 	}
@@ -52,16 +60,30 @@ LIMIT ? OFFSET ?`
 	return result, nil
 }
 
+// PlayersByIDsQuery 根据球员 ID 列表获取球员信息
+type PlayersByIDsQuery struct {
+	QueryBase
+	playerIDs []uint
+}
+
+// NewPlayersByIDsQuery 创建一个 PlayersByIDsQuery
+func NewPlayersByIDsQuery(playerIDs []uint) *PlayersByIDsQuery {
+	return &PlayersByIDsQuery{
+		QueryBase: QueryBase{},
+		playerIDs: playerIDs,
+	}
+}
+
 // GetPlayersByIDs 根据球员 ID 列表获取球员信息
-func GetPlayersByIDs(ctx context.Context, database *DB, playerIDs []uint) ([]*model.Players, error) {
-	if len(playerIDs) == 0 {
+func (s *PlayersByIDsQuery) GetPlayersByIDs(ctx context.Context, database *DB) ([]*model.Players, error) {
+	if len(s.playerIDs) == 0 {
 		return []*model.Players{}, nil
 	}
 
 	// 构建 IN 查询的占位符
 	placeholders := ""
-	args := make([]interface{}, 0, len(playerIDs))
-	for i, pid := range playerIDs {
+	args := make([]interface{}, 0, len(s.playerIDs))
+	for i, pid := range s.playerIDs {
 		if i > 0 {
 			placeholders += ","
 		}

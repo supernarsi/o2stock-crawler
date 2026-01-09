@@ -15,7 +15,7 @@ type PriceHistoryRow struct {
 	AtHour           uint8     `json:"at_hour"`
 	AtMinute         uint8     `json:"at_minute"`
 	PriceStandard    uint32    `json:"price_standard"`
-	PriceCurrentSale uint32    `json:"price_current_sale"`
+	PriceCurrentSale int32     `json:"price_current_sale"`
 	PriceLower       uint32    `json:"price_lower"`
 	PriceUpper       uint32    `json:"price_upper"`
 }

@@ -84,8 +84,7 @@ func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *cra
 		return nil
 	}
 
-	// players table: simple insert; if you want dedup by (player_id, version, card_type)
-	// you can add unique index and use ON DUPLICATE KEY UPDATE.
+	// 保存球员数据
 	const q = `
 INSERT INTO players
 	(player_id, p_name_show, p_name_en, team_abbr, version, card_type,

@@ -29,6 +29,8 @@ func Logging(next http.HandlerFunc) http.HandlerFunc {
 		rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
 		next(rec, r)
 		dur := time.Since(start)
-		log.Printf("%s %s %d %d %s", r.Method, r.URL.Path, rec.status, rec.bytes, dur)
+		// 记录请求url，且包含query参数
+		reqUrl := r.URL.Path + "?" + r.URL.RawQuery
+		log.Printf("%s %s %d %d %s", r.Method, reqUrl, rec.status, rec.bytes, dur)
 	}
 }

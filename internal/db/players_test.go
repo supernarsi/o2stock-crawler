@@ -22,7 +22,8 @@ func TestListPlayers(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	players, err := ListPlayers(ctx, db, 10, 0)
+	query := NewPlayersQuery(10, 0)
+	players, err := query.ListPlayers(ctx, db)
 	if err != nil {
 		t.Fatalf("ListPlayers failed: %v", err)
 	}
@@ -47,7 +48,8 @@ func TestGetPlayersByIDs(t *testing.T) {
 
 	ctx := context.Background()
 	playerIDs := []uint{10005, 10006}
-	players, err := GetPlayersByIDs(ctx, db, playerIDs)
+	query := NewPlayersByIDsQuery(playerIDs)
+	players, err := query.GetPlayersByIDs(ctx, db)
 	if err != nil {
 		t.Fatalf("GetPlayersByIDs failed: %v", err)
 	}

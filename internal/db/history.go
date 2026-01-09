@@ -17,21 +17,8 @@ type PlayerHistoryQuery struct {
 func NewPlayerHistoryQuery(playerID uint32, limit int) *PlayerHistoryQuery {
 	return &PlayerHistoryQuery{
 		QueryBase: QueryBase{
-			orderBy: []orderByDirection{
-				{
-					orderBy:        "at_date",
-					orderDirection: OrderAsc,
-				},
-				{
-					orderBy:        "at_hour",
-					orderDirection: OrderAsc,
-				},
-				{
-					orderBy:        "at_minute",
-					orderDirection: OrderAsc,
-				},
-			},
-			limit: limit,
+			orderBy: NewOrderByDesc("at_date_hour"),
+			limit:   limit,
 		},
 		playerID: playerID,
 	}
@@ -44,7 +31,7 @@ SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_
 FROM p_p_history
 WHERE player_id = ?
 ORDER BY %s
-LIMIT ?`, s.GetOrderByClause())
+LIMIT ?`, s.orderBy.GetOrderByClause())
 
 	rows, err := database.QueryContext(ctx, q, s.playerID, s.limit)
 	if err != nil {
@@ -63,6 +50,13 @@ LIMIT ?`, s.GetOrderByClause())
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// 倒序排列 result
+	func(slice []*model.PriceHistoryRow) {
+		for i, j := 0, len(slice)-1; i < j; i, j = i+1, j-1 {
+			slice[i], slice[j] = slice[j], slice[i]
+		}
+	}(result)
 	return result, nil
 }
 
@@ -76,17 +70,8 @@ type MultiPlayersHistoryQuery struct {
 func NewMultiPlayersHistoryQuery(playerIDs []uint32, limit int) *MultiPlayersHistoryQuery {
 	return &MultiPlayersHistoryQuery{
 		QueryBase: QueryBase{
-			orderBy: []orderByDirection{
-				{
-					orderBy:        "at_date",
-					orderDirection: OrderAsc,
-				},
-				{
-					orderBy:        "at_hour",
-					orderDirection: OrderAsc,
-				},
-			},
-			limit: limit,
+			orderBy: NewOrderByDesc("at_date_hour"),
+			limit:   limit,
 		},
 		playerIDs: playerIDs,
 	}
@@ -108,14 +93,20 @@ func (s *MultiPlayersHistoryQuery) GetMultiPlayersHistory(ctx context.Context, d
 		placeholders.WriteString("?")
 		args = append(args, pid)
 	}
+	orderByClause := s.orderBy.GetOrderByClause()
 	q := fmt.Sprintf(`
 SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper
-FROM p_p_history
-WHERE player_id IN (`+placeholders.String()+`)
-ORDER BY %s 
-LIMIT %d`, s.GetOrderByClause(), s.limit)
+FROM (
+  SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper, ROW_NUMBER() OVER (
+      PARTITION BY player_id ORDER BY %s) AS rn
+    FROM p_p_history
+    WHERE player_id IN (%s)
+  ) t
+  WHERE rn <= %d
+  ORDER BY %s
+`, orderByClause, placeholders.String(), s.limit, NewOrderByAsc("at_date_hour").GetOrderByClause())
 
-	fmt.Println("查询语句：", q)
+	// fmt.Println("查询语句：", q)
 
 	rows, err := database.QueryContext(ctx, q, args...)
 	if err != nil {
