@@ -9,7 +9,6 @@ import (
 type Config struct {
 	OpenID      string
 	AccessToken string
-	LoginChannel string
 	NonseStr    string
 	Sign        string
 	BaseURL     string
@@ -23,9 +22,8 @@ type Config struct {
 //   - OL2_SIGN
 //
 // Optional:
-//   - OL2_LOGIN_CHANNEL (default "qq")
 //   - OL2_NONSE_STR (default "VKE5z")
-//   - OL2_BASE_URL (default "https://nba2k2app.game.qq.com/user/favorite/rosters")
+//   - OL2_BASE_URL (default "https://nba2k2app.game.qq.com/game/trade/rosterList")
 func LoadConfigFromEnv() (*Config, error) {
 	openID := os.Getenv("OL2_OPENID")
 	accessToken := os.Getenv("OL2_ACCESS_TOKEN")
@@ -47,17 +45,14 @@ func LoadConfigFromEnv() (*Config, error) {
 
 	baseURL := os.Getenv("OL2_BASE_URL")
 	if baseURL == "" {
-		baseURL = "https://nba2k2app.game.qq.com/user/favorite/rosters"
+		baseURL = "https://nba2k2app.game.qq.com/game/trade/rosterList"
 	}
 
 	return &Config{
 		OpenID:      openID,
 		AccessToken: accessToken,
-		LoginChannel: loginChannel,
 		NonseStr:    nonseStr,
 		Sign:        sign,
 		BaseURL:     baseURL,
 	}, nil
 }
-
-

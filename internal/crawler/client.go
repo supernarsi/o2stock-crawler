@@ -2,11 +2,17 @@ package crawler
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"log"
+	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
+
+	jsoniter "github.com/json-iterator/go"
 )
 
 // Client wraps HTTP calls to the OL2 API.
@@ -46,35 +52,27 @@ type APIResponse struct {
 	Msg  string `json:"msg"`
 	Data struct {
 		RosterList []RosterItem `json:"rosterList"`
-		Limit      struct {
-			Fav struct {
-				Max     int `json:"max"`
-				Current int `json:"current"`
-			} `json:"fav"`
-		} `json:"limit"`
+		HasMore    bool         `json:"hasMore"`
 	} `json:"data"`
 }
 
 // RosterItem represents a single player entry.
 type RosterItem struct {
-	PlayerID string `json:"playerId"`
-	Grade    string `json:"grade"`
-
-	ShowName    string `json:"showName"`
-	PlayerEn    string `json:"PlayerEnName"`
-	PlayerImg   string `json:"playerImg"`
-	TeamAbbr    string `json:"teamAbbr"`
-	CardTypeStr string `json:"cardType"`
-	VersionStr  string `json:"Version"`
-
-	Price struct {
-		StandardPrice       int    `json:"standardPrice"`
-		CurrentLowestPrice  string `json:"currentLowestPrice"`
-		LowerPriceForSale   int    `json:"lowerPriceForSale"`
-		UpperPriceForSale   int    `json:"upperPriceForSale"`
-		Popularity          string `json:"popularity"`
-		SalePrice           int    `json:"salePrice"`
-	} `json:"price"`
+	PlayerID    string `json:"playerId" dc:"球员ID"`
+	Grade       string `json:"grade" dc:"等级"`
+	ShowName    string `json:"showName" dc:"展示名称"`
+	PlayerEn    string `json:"PlayerEnName" dc:"球员英文名称"`
+	PlayerImg   string `json:"playerImg" dc:"球员图片"`
+	TeamAbbr    string `json:"teamAbbr" dc:"球队"`
+	CardTypeStr string `json:"cardType" dc:"系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏"`
+	VersionStr  string `json:"Version" dc:"球员年代，0 表示现役"`
+	Price       struct {
+		StandardPrice      int    `json:"standardPrice" dc:"标准价格"`
+		CurrentLowestPrice string `json:"currentLowestPrice" dc:"当前出售的最低价格"`
+		LowerPriceForSale  int    `json:"lowerPriceForSale" dc:"最低可售价"`
+		UpperPriceForSale  int    `json:"upperPriceForSale" dc:"最高可售价"`
+		Popularity         string `json:"popularity" dc:"人气"`
+	} `json:"price" dc:"价格"`
 }
 
 // FetchRoster fetches current roster data from OL2 API.
@@ -94,17 +92,27 @@ func (c *Client) FetchRoster() (*APIResponse, error) {
 		return nil, err
 	}
 
+	nonceStr := c.generateNonceStr(5)
+
 	q := req.URL.Query()
-	q.Set("openid", c.cfg.OpenID)
-	q.Set("access_token", c.cfg.AccessToken)
-	q.Set("orderBy", "")
-	q.Set("orientation", "")
-	q.Set("login_channel", c.cfg.LoginChannel)
+	q.Set("openid", c.cfg.OpenID)            // 用户 openid
+	q.Set("access_token", c.cfg.AccessToken) // 用户 access_token
+	q.Set("orderBy", "price")                // 排序方式: price 价格，grade 等级，popularity 人气
+	q.Set("orientation", "desc")             // 排序方向: desc 降序，asc 升序
+	q.Set("cardType", "1")                   // 筛选系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏
+	q.Set("badges", "-1")                    // 筛选徽章
+	q.Set("grade", "1")                      // 筛选突破等级
+	q.Set("lowPrice", "5000")                // 筛选最低价格
+	q.Set("highPrice", "0")                  // 筛选最高价格，0 表示不限制
+	q.Set("collapseAll", "false")            // 作用未知
+	q.Set("versionLabel", "")                // 作用未知
+	q.Set("source", "trade")                 // 作用未知
 	q.Set("timeStamp", fmt.Sprintf("%d", ts))
-	q.Set("nonseStr", c.cfg.NonseStr)
-	q.Set("sign", c.cfg.Sign)
+	q.Set("nonseStr", nonceStr)
+	q.Set("sign", c.generateSign(nonceStr, ts))
 	req.URL.RawQuery = q.Encode()
 
+	log.Printf("开始请求球员数据接口，请求 URL: %+v", req.URL.String())
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -112,19 +120,36 @@ func (c *Client) FetchRoster() (*APIResponse, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %s", resp.Status)
+		return nil, fmt.Errorf("请求球员数据接口失败，状态码: %s", resp.Status)
 	}
 
 	var out APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+	// 使用 jsoniter 解析
+	if err := jsoniter.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("解析球员数据失败: %s", err.Error())
 	}
 
 	if out.Code != 0 {
-		return nil, fmt.Errorf("api error: code=%d msg=%s", out.Code, out.Msg)
+		return nil, fmt.Errorf("请求球员数据接口失败，错误码: %d 错误信息: %s", out.Code, out.Msg)
 	}
+	log.Printf("抓取球员数据成功，球员数量: %+v", len(out.Data.RosterList))
 
 	return &out, nil
 }
 
+func (c *Client) generateNonceStr(length int) string {
+	const nonceChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = nonceChars[rand.Intn(len(nonceChars))]
+	}
+	return string(b)
+}
+
+func (c *Client) generateSign(nonceStr string, timestamp int64) string {
+	data := nonceStr + strconv.FormatInt(timestamp, 10)
+
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:])
+}

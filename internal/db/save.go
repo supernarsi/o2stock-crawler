@@ -9,7 +9,7 @@ import (
 )
 
 // SaveSnapshot saves current roster snapshot into players and p_p_history tables.
-func SaveSnapshot(database *DB, resp *crawler.APIResponse, now time.Time) error {
+func SaveSnapshot(database *DB, rosterList []crawler.RosterItem, now time.Time) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -21,8 +21,8 @@ func SaveSnapshot(database *DB, resp *crawler.APIResponse, now time.Time) error 
 
 	// 去重：按 playerId + version + cardType 作为唯一键，避免重复入库同一球员
 	unique := make(map[string]*crawler.RosterItem)
-	for i := range resp.Data.RosterList {
-		item := &resp.Data.RosterList[i]
+	for i := range rosterList {
+		item := &rosterList[i]
 		key := item.PlayerID + "|" + item.VersionStr + "|" + item.CardTypeStr
 		if _, ok := unique[key]; ok {
 			continue
@@ -115,7 +115,8 @@ func insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, no
 	atMonth := now.Format("01")
 	atDay := now.Format("02")
 	atHour := now.Format("15")
-	atDateHour := now.Format("2006010215")
+	atMinute := now.Format("04")
+	atDateHour := now.Format("200601021504")
 
 	// 历史表也保存单张基础卡的价格
 	factor := gradeFactor(item.Grade)
@@ -125,10 +126,15 @@ func insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, no
 	priceLower := item.Price.LowerPriceForSale / factor
 	priceUpper := item.Price.UpperPriceForSale / factor
 
+	// 由于存在唯一键，如果重复数据直接替换，ON DUPLICATE KEY UPDATE。
 	const q = `
 INSERT INTO p_p_history
-	(player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, price_standard, price_lower, price_upper, c_time)
-VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	(player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_lower, price_upper, c_time)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+ON DUPLICATE KEY UPDATE
+	price_standard = VALUES(price_standard),
+	price_lower = VALUES(price_lower),
+	price_upper = VALUES(price_upper)
 `
 
 	_, err = tx.ExecContext(ctx, q,
@@ -139,6 +145,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		atMonth,
 		atDay,
 		atHour,
+		atMinute,
 		priceStandard,
 		priceLower,
 		priceUpper,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"math/rand"
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
 	"os"
@@ -16,17 +17,17 @@ func main() {
 
 	cfg, err := crawler.LoadConfigFromEnv()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		log.Fatalf("加载配置失败: %v", err)
 	}
 
 	dbCfg, err := db.LoadConfigFromEnv()
 	if err != nil {
-		log.Fatalf("load db config: %v", err)
+		log.Fatalf("加载数据库配置失败: %v", err)
 	}
 
 	database, err := db.Open(dbCfg)
 	if err != nil {
-		log.Fatalf("open db: %v", err)
+		log.Fatalf("打开数据库失败: %v", err)
 	}
 	defer database.Close()
 
@@ -35,7 +36,7 @@ func main() {
 	// Simple one-shot run by default
 	if len(os.Args) == 1 || os.Args[1] == "run-once" {
 		if err := runOnce(client, database); err != nil {
-			log.Fatalf("run-once failed: %v", err)
+			log.Fatalf("一次性抓取球员数据失败: %v", err)
 		}
 		return
 	}
@@ -49,7 +50,7 @@ func main() {
 			}
 		}
 
-		log.Printf("start loop, interval=%s", interval)
+		log.Printf("开始循环抓取球员数据，间隔: %s", interval)
 		for {
 			now := time.Now()
 
@@ -57,14 +58,14 @@ func main() {
 			if shouldSkipCrawl(now) {
 				nextRun := getNextRunTime(now)
 				waitDuration := nextRun.Sub(now)
-				log.Printf("current time %s is in skip period (03:00~08:00), next run at %s (wait %s)",
+				log.Printf("当前时间 %s 在禁止抓取的时间段（03:00~08:00），下次抓取时间: %s (等待 %s)",
 					now.Format("15:04:05"), nextRun.Format("15:04:05"), waitDuration)
 				time.Sleep(waitDuration)
 				continue
 			}
 
 			if err := runOnce(client, database); err != nil {
-				log.Printf("loop run failed: %v", err)
+				log.Printf("循环抓取球员数据失败: %v", err)
 			}
 			time.Sleep(interval)
 		}
@@ -72,20 +73,41 @@ func main() {
 }
 
 func runOnce(client *crawler.Client, database *db.DB) error {
-	resp, err := client.FetchRoster()
-	if err != nil {
-		return err
+	hasMore := true
+	rosterList := []crawler.RosterItem{}
+	log.Printf(">>> 开始抓取球员数据 <<<")
+
+	// 从 resp.Data.HasMore 判断是否需要继续抓取，最多抓取 20 页数据，每次抓取间隔随机 2~4 秒
+	for i := 0; i < 20; i++ {
+		log.Printf("--> 开始抓取第 %d 页球员数据 <--", i+1)
+
+		resp, err := client.FetchRoster()
+		if err != nil {
+			log.Printf("抓取球员数据失败: %v", err)
+			return err
+		}
+
+		rosterList, hasMore = resp.Data.RosterList, resp.Data.HasMore
+		log.Printf("抓取第 %d 页球员数据成功，球员数量: %+v，是否还有更多: %+v", i+1, len(rosterList), hasMore)
+
+		now := time.Now()
+		if err := db.SaveSnapshot(database, rosterList, now); err != nil {
+			log.Printf("保存球员数据失败: %v", err)
+			continue
+		}
+		log.Printf("保存球员数据成功，时间: %s，球员数量: %d", now.Format(time.RFC3339), len(rosterList))
+
+		if !hasMore {
+			break
+		}
+
+		sleepDuration := time.Duration(rand.Intn(2)+2) * time.Second
+		log.Printf("等待 %s 后开始抓取第 %d 页球员数据", sleepDuration, i+2)
+		time.Sleep(sleepDuration)
+		log.Println("================================")
 	}
+	log.Printf(">>> 抓取球员数据完成 <<<")
 
-	// println("resp is:", resp.Data)
-	// return nil
-
-	now := time.Now()
-	if err := db.SaveSnapshot(database, resp, now); err != nil {
-		return err
-	}
-
-	log.Printf("saved snapshot at %s, players=%d", now.Format(time.RFC3339), len(resp.Data.RosterList))
 	return nil
 }
 
