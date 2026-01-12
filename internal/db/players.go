@@ -93,6 +93,35 @@ func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB, period uin
 	}
 }
 
+// ListPlayersWithOwned 返回球员列表，并可选地包含用户的拥有信息
+func (s *PlayersQuery) ListPlayersWithOwned(ctx context.Context, database *DB, period uint8, orderBy string, orderAsc bool, userID *uint) ([]*model.PlayerWithPriceChange, map[uint][]*model.OwnInfo, error) {
+	players, err := s.ListPlayers(ctx, database, period, orderBy, orderAsc)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var ownedMap map[uint][]*model.OwnInfo
+	if userID != nil && len(players) > 0 {
+		playerIDs := extractPlayerIDsFromPlayersWithPriceChange(players)
+		ownedQuery := NewUserPlayerOwnQuery(*userID)
+		ownedMap, err = ownedQuery.GetOwnedInfoByPlayerIDs(ctx, database, playerIDs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get owned info: %w", err)
+		}
+	}
+
+	return players, ownedMap, nil
+}
+
+// extractPlayerIDsFromPlayersWithPriceChange 从 PlayerWithPriceChange 列表中提取ID
+func extractPlayerIDsFromPlayersWithPriceChange(players []*model.PlayerWithPriceChange) []uint {
+	ids := make([]uint, len(players))
+	for i, p := range players {
+		ids[i] = p.PlayerID
+	}
+	return ids
+}
+
 // queryPlayersOrderByPrice 按价格排序查询球员价格
 func (s *PlayersQuery) queryPlayersOrderByPrice(ctx context.Context, database *DB, period uint8, orderAsc bool) ([]*model.PlayerWithPriceChange, error) {
 	orderDir := getOrderDirection(orderAsc)
@@ -158,7 +187,7 @@ func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, databa
 // limit/offset: 如果 limit > 0，则应用分页；否则返回所有结果
 func (s *PlayersQuery) queryPlayersRatio(ctx context.Context, database *DB, playersIds []uint, sTime time.Time, orderAsc bool, limit, offset int) ([]*model.PlayerPriceChange, error) {
 	orderDir := getOrderDirection(orderAsc)
-	atDateHour := sTime.Format("200601021504")
+	atDateHour := FormatDateTimeHour(sTime)
 
 	// 构建查询参数
 	args := []any{atDateHour}
@@ -360,12 +389,7 @@ func buildPlayerIDFilter(playerIDs []uint, args *[]any) string {
 	if len(playerIDs) == 0 {
 		return ""
 	}
-	placeholders := make([]string, len(playerIDs))
-	for i, pid := range playerIDs {
-		placeholders[i] = "?"
-		*args = append(*args, pid)
-	}
-	return "AND player_id IN (" + strings.Join(placeholders, ",") + ")"
+	return buildINClauseWithPrefix("player_id", convertUintToAny(playerIDs), args)
 }
 
 // ============================================================================

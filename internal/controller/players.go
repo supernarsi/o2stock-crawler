@@ -20,39 +20,33 @@ func (a *API) Players() http.HandlerFunc {
 		orderAsc := r.URL.Query().Get("order_asc") == "true"
 		period := parseIntDefault(r.URL.Query().Get("period"), 1)
 
+		// 解析可选的 user_id
+		var userID *uint
+		if userIDStr := r.URL.Query().Get("user_id"); userIDStr != "" {
+			id, err := strconv.ParseUint(userIDStr, 10, 32)
+			if err != nil {
+				return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid user_id"}
+			}
+			uid := uint(id)
+			userID = &uid
+		}
+
 		query := db.NewPlayersQuery(page, limit, orderBy, orderAsc)
-		rows, err := query.ListPlayers(ctx, a.db, uint8(period), orderBy, orderAsc)
+		players, ownedMap, err := query.ListPlayersWithOwned(ctx, a.db, uint8(period), orderBy, orderAsc, userID)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
 		// 构建返回结果，总是包含 owned 字段
-		result := make([]api.PlayerWithOwned, len(rows))
-		playerIDs := make([]uint, len(rows))
-		for i, p := range rows {
-			playerIDs[i] = p.PlayerID
+		result := make([]api.PlayerWithOwned, len(players))
+		for i, p := range players {
 			result[i] = api.PlayerWithOwned{
 				PlayerWithPriceChange: *p,
 				Owned:                 []*model.OwnInfo{}, // 默认为空数组
 			}
-		}
-
-		// 如果提供了 user_id，查询用户的拥有信息
-		userIDStr := r.URL.Query().Get("user_id")
-		if userIDStr != "" {
-			userID, err := strconv.ParseUint(userIDStr, 10, 32)
-			if err != nil {
-				return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid user_id"}
-			}
-
-			ownedMap, err := db.GetOwnedInfoByPlayerIDs(ctx, a.db, uint(userID), playerIDs)
-			if err != nil {
-				return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
-			}
-
-			// 更新拥有信息
-			for i := range result {
-				if owned, ok := ownedMap[result[i].PlayerID]; ok {
+			// 如果有拥有信息，填充到结果中
+			if ownedMap != nil {
+				if owned, ok := ownedMap[p.PlayerID]; ok {
 					result[i].Owned = owned
 				}
 			}

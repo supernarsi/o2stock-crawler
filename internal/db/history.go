@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"o2stock-crawler/internal/model"
-	"strings"
 	"time"
+)
+
+// SQL 查询字段常量
+const (
+	selectPriceHistoryFields = `player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper`
 )
 
 // PlayerHistoryQuery 获取某个球员的历史价格
@@ -26,39 +30,62 @@ func NewPlayerHistoryQuery(playerID uint32, limit int) *PlayerHistoryQuery {
 }
 
 // GetPlayerHistory 返回某个球员的历史价格，按时间升序。
-func (s *PlayerHistoryQuery) GetPlayerHistory(ctx context.Context, database *DB) ([]*model.PriceHistoryRow, error) {
-	q := fmt.Sprintf(`
-SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper
+func (q *PlayerHistoryQuery) GetPlayerHistory(ctx context.Context, database *DB) ([]*model.PriceHistoryRow, error) {
+	query := fmt.Sprintf(`
+SELECT %s
 FROM p_p_history
 WHERE player_id = ?
 ORDER BY %s
-LIMIT ?`, s.orderBy.GetOrderByClause())
+LIMIT ?`, selectPriceHistoryFields, q.orderBy.GetOrderByClause())
 
-	rows, err := database.QueryContext(ctx, q, s.playerID, s.limit)
+	rows, err := database.QueryContext(ctx, query, q.playerID, q.limit)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query player history: %w", err)
 	}
 	defer rows.Close()
 
-	var result []*model.PriceHistoryRow
+	result := make([]*model.PriceHistoryRow, 0, q.limit)
 	for rows.Next() {
 		var r model.PriceHistoryRow
-		if err := rows.Scan(&r.PlayerId, &r.AtDate, &r.AtDateHourStr, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.AtMinute, &r.PriceStandard, &r.PriceCurrentSale, &r.PriceLower, &r.PriceUpper); err != nil {
-			return nil, err
+		if err := scanPriceHistoryRow(rows, &r); err != nil {
+			return nil, fmt.Errorf("failed to scan price history row: %w", err)
 		}
 		result = append(result, &r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error iterating price history rows: %w", err)
 	}
 
-	// 倒序排列 result
-	func(slice []*model.PriceHistoryRow) {
-		for i, j := 0, len(slice)-1; i < j; i, j = i+1, j-1 {
-			slice[i], slice[j] = slice[j], slice[i]
-		}
-	}(result)
+	// 倒序排列 result（因为查询是按降序，需要转为升序返回）
+	reversePriceHistoryRows(result)
 	return result, nil
+}
+
+// scanPriceHistoryRow 扫描价格历史行数据
+func scanPriceHistoryRow(rows interface {
+	Scan(dest ...any) error
+}, r *model.PriceHistoryRow) error {
+	return rows.Scan(
+		&r.PlayerId,
+		&r.AtDate,
+		&r.AtDateHourStr,
+		&r.AtYear,
+		&r.AtMonth,
+		&r.AtDay,
+		&r.AtHour,
+		&r.AtMinute,
+		&r.PriceStandard,
+		&r.PriceCurrentSale,
+		&r.PriceLower,
+		&r.PriceUpper,
+	)
+}
+
+// reversePriceHistoryRows 反转价格历史行切片
+func reversePriceHistoryRows(slice []*model.PriceHistoryRow) {
+	for i, j := 0, len(slice)-1; i < j; i, j = i+1, j-1 {
+		slice[i], slice[j] = slice[j], slice[i]
+	}
 }
 
 // MultiPlayersHistoryQuery 批量获取多个球员的历史价格
@@ -79,78 +106,79 @@ func NewMultiPlayersHistoryQuery(playerIDs []uint32, limit int) *MultiPlayersHis
 }
 
 // GetMultiPlayersHistory 批量获取多个球员的历史价格
-func (s *MultiPlayersHistoryQuery) GetMultiPlayersHistory(ctx context.Context, database *DB) (map[uint32][]*model.PriceHistoryRow, error) {
-	if len(s.playerIDs) == 0 {
+func (q *MultiPlayersHistoryQuery) GetMultiPlayersHistory(ctx context.Context, database *DB) (map[uint32][]*model.PriceHistoryRow, error) {
+	if len(q.playerIDs) == 0 {
 		return make(map[uint32][]*model.PriceHistoryRow), nil
 	}
 
-	// 构建 IN 查询的占位符
-	var placeholders strings.Builder
-	args := make([]any, 0, len(s.playerIDs))
-	for i, pid := range s.playerIDs {
-		if i > 0 {
-			placeholders.WriteString(",")
-		}
-		placeholders.WriteString("?")
-		args = append(args, pid)
-	}
-	orderByClause := s.orderBy.GetOrderByClause()
-	q := fmt.Sprintf(`
-SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper
+	// 构建 IN 查询
+	placeholders, args := buildINClause(convertUint32ToAny(q.playerIDs))
+	orderByClause := q.orderBy.GetOrderByClause()
+
+	query := fmt.Sprintf(`
+SELECT %s
 FROM (
-  SELECT player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper, ROW_NUMBER() OVER (
-      PARTITION BY player_id ORDER BY %s) AS rn
-    FROM p_p_history
-    WHERE player_id IN (%s)
-  ) t
-  WHERE rn <= %d
-  ORDER BY %s
-`, orderByClause, placeholders.String(), s.limit, NewOrderByAsc("at_date_hour").GetOrderByClause())
+  SELECT %s, ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY %s) AS rn
+  FROM p_p_history
+  WHERE player_id IN (%s)
+) t
+WHERE rn <= %d
+ORDER BY %s`, selectPriceHistoryFields, selectPriceHistoryFields, orderByClause, placeholders, q.limit, NewOrderByAsc("at_date_hour").GetOrderByClause())
 
-	// fmt.Println("查询语句：", q)
-
-	rows, err := database.QueryContext(ctx, q, args...)
+	rows, err := database.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query multi players history: %w", err)
 	}
+	defer rows.Close()
 
 	result := make(map[uint32][]*model.PriceHistoryRow)
 	for rows.Next() {
 		var r model.PriceHistoryRow
-		if err := rows.Scan(&r.PlayerId, &r.AtDate, &r.AtDateHourStr, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.AtMinute, &r.PriceStandard, &r.PriceCurrentSale, &r.PriceLower, &r.PriceUpper); err != nil {
-			return nil, err
+		if err := scanPriceHistoryRow(rows, &r); err != nil {
+			return nil, fmt.Errorf("failed to scan price history row: %w", err)
 		}
 		playerID := uint32(r.PlayerId)
 		result[playerID] = append(result[playerID], &r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error iterating price history rows: %w", err)
 	}
 
-	// 限制每个球员的记录数
+	// 限制每个球员的记录数（虽然 SQL 已经限制，但这里作为双重保险）
 	for pid := range result {
-		if len(result[pid]) > s.limit {
-			result[pid] = result[pid][:s.limit]
+		if len(result[pid]) > q.limit {
+			result[pid] = result[pid][:q.limit]
 		}
 	}
 
 	return result, nil
 }
 
-type PriceHistoryMapDb struct {
+// convertUint32ToAny 将 []uint32 转换为 []any
+func convertUint32ToAny(values []uint32) []any {
+	result := make([]any, len(values))
+	for i, v := range values {
+		result[i] = v
+	}
+	return result
+}
+
+// PriceHistoryMapQuery 获取指定时间点的价格快照
+type PriceHistoryMapQuery struct {
 	QueryBase
 }
 
-// NewPriceHistoryMap 创建一个 PriceHistoryMap
-func NewPriceHistoryMapDb() *PriceHistoryMapDb {
-	return &PriceHistoryMapDb{
+// NewPriceHistoryMapQuery 创建一个 PriceHistoryMapQuery
+func NewPriceHistoryMapQuery() *PriceHistoryMapQuery {
+	return &PriceHistoryMapQuery{
 		QueryBase: QueryBase{},
 	}
 }
 
-// GetPriceHistoryMap 获取 24 小时前价格
-func (s *PriceHistoryMapDb) GetPriceHistoryMap(ctx context.Context, database *DB, beforTime time.Time) (model.PriceHistoryMap, error) {
-	q := `SELECT 
+// GetPriceHistoryMap 获取指定时间点之后最早的价格快照
+// 用于计算价格变动，返回每个球员在指定时间点之后的第一条价格记录
+func (q *PriceHistoryMapQuery) GetPriceHistoryMap(ctx context.Context, database *DB, beforeTime time.Time) (model.PriceHistoryMap, error) {
+	const query = `SELECT 
     p1.player_id,
     p1.at_date_hour,
     p1.price_standard,
@@ -172,30 +200,38 @@ INNER JOIN (
     WHERE at_date_hour >= ?
     GROUP BY player_id
 ) p2 ON p1.player_id = p2.player_id AND p1.at_date_hour = p2.min_hour
-ORDER BY p1.player_id;`
+ORDER BY p1.player_id`
 
-	// 查询 24 小时前价格
-	rows, err := database.QueryContext(ctx, q, beforTime.Format("200601021504"))
+	rows, err := database.QueryContext(ctx, query, FormatDateTimeHour(beforeTime))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query price history map: %w", err)
 	}
 	defer rows.Close()
 
 	priceHistoryMap := make(map[uint]*model.PriceHistoryRow)
 	for rows.Next() {
 		var r model.PriceHistoryRow
-		if err := rows.Scan(&r.PlayerId, &r.AtDateHourStr, &r.PriceStandard, &r.PriceCurrentSale, &r.PriceLower, &r.PriceUpper, &r.AtDate, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.AtMinute); err != nil {
-			return nil, err
+		if err := rows.Scan(
+			&r.PlayerId,
+			&r.AtDateHourStr,
+			&r.PriceStandard,
+			&r.PriceCurrentSale,
+			&r.PriceLower,
+			&r.PriceUpper,
+			&r.AtDate,
+			&r.AtYear,
+			&r.AtMonth,
+			&r.AtDay,
+			&r.AtHour,
+			&r.AtMinute,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan price history map row: %w", err)
 		}
 		priceHistoryMap[r.PlayerId] = &r
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error iterating price history map rows: %w", err)
 	}
 
-	// log.Printf("query: %s", q)
-	// log.Printf("beforeTime: %s", beforTime.Format("200601021504"))
-	// log.Printf("priceHistoryMap: %+v", priceHistoryMap)
-	// panic("test")
 	return priceHistoryMap, nil
 }
