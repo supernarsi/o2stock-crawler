@@ -17,9 +17,11 @@ func (a *API) Players() http.HandlerFunc {
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
 		page := parseIntDefault(r.URL.Query().Get("page"), 1)
 		orderBy := r.URL.Query().Get("order_by")
-		orderAsc := r.URL.Query().Get("order_asc") == "1"
+		orderAsc := r.URL.Query().Get("order_asc") == "true"
+		period := parseIntDefault(r.URL.Query().Get("period"), 1)
+
 		query := db.NewPlayersQuery(page, limit, orderBy, orderAsc)
-		rows, err := query.ListPlayers(ctx, a.db)
+		rows, err := query.ListPlayers(ctx, a.db, uint8(period), orderBy, orderAsc)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -30,8 +32,8 @@ func (a *API) Players() http.HandlerFunc {
 		for i, p := range rows {
 			playerIDs[i] = p.PlayerID
 			result[i] = api.PlayerWithOwned{
-				Players: *p,
-				Owned:   []*model.OwnInfo{}, // 默认为空数组
+				PlayerWithPriceChange: *p,
+				Owned:                 []*model.OwnInfo{}, // 默认为空数组
 			}
 		}
 

@@ -192,5 +192,10 @@ ORDER BY p1.player_id;`
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// log.Printf("query: %s", q)
+	// log.Printf("beforeTime: %s", beforTime.Format("200601021504"))
+	// log.Printf("priceHistoryMap: %+v", priceHistoryMap)
+	// panic("test")
 	return priceHistoryMap, nil
 }

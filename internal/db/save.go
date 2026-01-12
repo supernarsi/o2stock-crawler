@@ -3,10 +3,8 @@ package db
 import (
 	"context"
 	"database/sql"
-	"math"
 	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/crawler"
-	"o2stock-crawler/internal/model"
 	"strconv"
 	"time"
 )
@@ -22,7 +20,7 @@ func NewSaveSnapshotDb() *SaveSnapshotDb {
 }
 
 // SaveSnapshot saves current roster snapshot into players and p_p_history tables.
-func (s *SaveSnapshotDb) SaveSnapshot(ctx context.Context, database *DB, rosterList []crawler.RosterItemModel, priceHisMap model.PriceHistoryMap, now time.Time) error {
+func (s *SaveSnapshotDb) SaveSnapshot(ctx context.Context, database *DB, rosterList []crawler.RosterItemModel, now time.Time) error {
 	tx, err := database.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return err
@@ -43,7 +41,7 @@ func (s *SaveSnapshotDb) SaveSnapshot(ctx context.Context, database *DB, rosterL
 	// todo: 批量查询球员的 24 小时前价格
 
 	for _, item := range unique {
-		if err := s.upsertPlayer(ctx, tx, item, priceHisMap); err != nil {
+		if err := s.upsertPlayer(ctx, tx, item); err != nil {
 			return err
 		}
 		if err := s.insertHistory(ctx, tx, item, now); err != nil {
@@ -57,7 +55,7 @@ func (s *SaveSnapshotDb) SaveSnapshot(ctx context.Context, database *DB, rosterL
 	return nil
 }
 
-func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItemModel, priceHisMap model.PriceHistoryMap) error {
+func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItemModel) error {
 	playerID := item.PlayerID
 	cardType, _ := strconv.Atoi(item.CardTypeStr)
 	version, _ := strconv.Atoi(item.VersionStr)
@@ -81,20 +79,12 @@ func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *cra
 		return nil
 	}
 
-	// todo: 计算涨跌幅
-	// 当前价格 - 24小时前价格 / 24小时前价格 * 100%
-	priceHis, _ := priceHisMap[playerID]
-	var changeVal float64 = 0
-	changeVal = float64(priceStandard-int(priceHis.PriceStandard)) / float64(priceHis.PriceStandard) * 100
-	// 最多保留两位小数
-	changeVal = math.Round(changeVal*100) / 100
-
 	// 保存球员数据
 	const q = `
 INSERT INTO players
 	(player_id, p_name_show, p_name_en, team_abbr, version, card_type,
-	 player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, price_change)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+	 player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper)
+VALUES (?,?,?,?,?,?,?,?,?,?,?)
 ON DUPLICATE KEY UPDATE
 	p_name_show = VALUES(p_name_show),
 	p_name_en = VALUES(p_name_en),
@@ -105,8 +95,7 @@ ON DUPLICATE KEY UPDATE
 	price_standard = VALUES(price_standard),
 	price_current_lowest = VALUES(price_current_lowest),
 	price_sale_lower = VALUES(price_sale_lower),
-	price_sale_upper = VALUES(price_sale_upper),
-	price_change = VALUES(price_change)
+	price_sale_upper = VALUES(price_sale_upper)
 `
 
 	_, err := tx.ExecContext(ctx, q,
@@ -121,7 +110,6 @@ ON DUPLICATE KEY UPDATE
 		currentLowest,
 		priceSaleLower,
 		priceSaleUpper,
-		changeVal,
 	)
 	if err != nil {
 		return err

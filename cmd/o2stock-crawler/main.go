@@ -80,14 +80,7 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 	rosterList := []crawler.RosterItemModel{}
 	log.Printf(">>> 开始抓取球员数据 <<<")
 
-	// 获取 24 小时前价格
 	saveSnapshotDb := db.NewSaveSnapshotDb()
-	priceHistoryMapDb := db.NewPriceHistoryMapDb()
-	priceHisMap, err := priceHistoryMapDb.GetPriceHistoryMap(ctx, database, time.Now().Add(-24*time.Hour))
-	if err != nil {
-		log.Printf("获取 24 小时前价格失败: %v", err)
-		return err
-	}
 
 	// 从 resp.Data.HasMore 判断是否需要继续抓取，最多抓取 20 页数据，每次抓取间隔随机 2~4 秒
 	limit := 20
@@ -107,7 +100,7 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 		log.Printf("抓取第 %d 页球员数据成功，球员数量: %+v，是否还有更多: %+v", page, len(rosterList), hasMore)
 
 		now := time.Now()
-		if err := saveSnapshotDb.SaveSnapshot(ctx, database, rosterList, priceHisMap, now); err != nil {
+		if err := saveSnapshotDb.SaveSnapshot(ctx, database, rosterList, now); err != nil {
 			log.Printf("保存球员数据失败: %v", err)
 			continue
 		}

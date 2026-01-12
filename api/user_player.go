@@ -43,6 +43,6 @@ type PlayersWithOwnedRes struct {
 
 // PlayerWithOwned 球员信息（包含拥有信息）
 type PlayerWithOwned struct {
-	model.Players
+	model.PlayerWithPriceChange
 	Owned []*model.OwnInfo `json:"owned"`
 }
