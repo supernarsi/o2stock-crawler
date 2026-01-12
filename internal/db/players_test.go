@@ -48,8 +48,8 @@ func TestGetPlayersByIDs(t *testing.T) {
 
 	ctx := context.Background()
 	playerIDs := []uint{10005, 10006}
-	query := NewPlayersByIDsQuery(playerIDs)
-	players, err := query.GetPlayersByIDs(ctx, db)
+	query := NewPlayersQuery(1, 100, "price_standard", true)
+	players, err := query.GetPlayersByIDs(ctx, db, playerIDs)
 	if err != nil {
 		t.Fatalf("GetPlayersByIDs failed: %v", err)
 	}

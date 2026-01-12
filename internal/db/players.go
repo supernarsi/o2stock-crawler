@@ -144,7 +144,7 @@ func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, databa
 	playerIds := extractPlayerIDsFromPriceChange(priceRatio)
 
 	// 查询球员数据
-	players, err := NewPlayersByIDsQuery(playerIds).GetPlayersByIDs(ctx, database)
+	players, err := s.GetPlayersByIDs(ctx, database, playerIds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
 	}
@@ -194,6 +194,25 @@ func (s *PlayersQuery) queryPlayersRatio(ctx context.Context, database *DB, play
 		return nil, fmt.Errorf("error iterating price change rows: %w", err)
 	}
 	return result, nil
+}
+
+// GetPlayersByIDs 根据球员 ID 列表获取球员信息
+func (s *PlayersQuery) GetPlayersByIDs(ctx context.Context, database *DB, playerIDs []uint) ([]*model.Players, error) {
+	if len(playerIDs) == 0 {
+		return []*model.Players{}, nil
+	}
+
+	// 构建 IN 查询
+	placeholders := make([]string, len(playerIDs))
+	args := make([]any, len(playerIDs))
+	for i, pid := range playerIDs {
+		placeholders[i] = "?"
+		args[i] = pid
+	}
+
+	q := fmt.Sprintf(`SELECT %s FROM players WHERE player_id IN (%s)`, selectPlayersFields, strings.Join(placeholders, ","))
+
+	return queryPlayers(ctx, database, q, args...)
 }
 
 // ============================================================================
@@ -262,41 +281,6 @@ func mergeByPlayersOrder(players []*model.Players, priceRatioMap map[uint]*model
 		})
 	}
 	return res
-}
-
-// PlayersByIDsQuery 根据球员 ID 列表获取球员信息
-type PlayersByIDsQuery struct {
-	QueryBase
-	playerIDs []uint
-}
-
-// NewPlayersByIDsQuery 创建一个 PlayersByIDsQuery
-func NewPlayersByIDsQuery(playerIDs []uint) *PlayersByIDsQuery {
-	return &PlayersByIDsQuery{
-		QueryBase: QueryBase{},
-		playerIDs: playerIDs,
-	}
-}
-
-// GetPlayersByIDs 根据球员 ID 列表获取球员信息
-func (s *PlayersByIDsQuery) GetPlayersByIDs(ctx context.Context, database *DB) ([]*model.Players, error) {
-	if len(s.playerIDs) == 0 {
-		return []*model.Players{}, nil
-	}
-
-	// 构建 IN 查询
-	placeholders := make([]string, len(s.playerIDs))
-	args := make([]any, len(s.playerIDs))
-	for i, pid := range s.playerIDs {
-		placeholders[i] = "?"
-		args[i] = pid
-	}
-
-	q := fmt.Sprintf(`SELECT %s
-FROM players
-WHERE player_id IN (%s)`, selectPlayersFields, strings.Join(placeholders, ","))
-
-	return queryPlayers(ctx, database, q, args...)
 }
 
 // ============================================================================

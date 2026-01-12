@@ -119,8 +119,8 @@ func (a *API) UserPlayers() http.HandlerFunc {
 		}
 
 		// 查询球员详细信息
-		query := db.NewPlayersByIDsQuery(playerIDs)
-		players, err := query.GetPlayersByIDs(ctx, a.db)
+		query := db.NewPlayersQuery(1, 100, "", true)
+		players, err := query.GetPlayersByIDs(ctx, a.db, playerIDs)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
