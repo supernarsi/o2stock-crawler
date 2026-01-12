@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"log"
 	"o2stock-crawler/internal/model"
 )
 
@@ -11,23 +12,34 @@ type PlayersQuery struct {
 }
 
 // NewPlayersQuery 创建一个 PlayersQuery
-func NewPlayersQuery(page, limit int) *PlayersQuery {
+func NewPlayersQuery(page, limit int, orderBy string, orderAsc bool) *PlayersQuery {
+	orderDir := OrderAsc
+	if !orderAsc {
+		orderDir = OrderDesc
+	}
+	// 限制排序字段
+	if orderBy != "price_change" {
+		orderBy = "player_id"
+	}
 	return &PlayersQuery{
 		QueryBase: QueryBase{
-			limit:  limit,
-			offset: (page - 1) * limit,
+			limit:   limit,
+			offset:  (page - 1) * limit,
+			orderBy: NewOrderBy(orderBy, orderDir),
 		},
 	}
 }
 
 // ListPlayers 返回简单的球员列表，按 player_id 排序，可分页。
 func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB) ([]*model.Players, error) {
-	const q = `
-SELECT player_id, p_name_show, p_name_en, team_abbr, version, card_type,
-       player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper
+	q := `
+SELECT player_id, p_name_show, p_name_en, team_abbr, version, card_type, player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, price_change
 FROM players
+ORDER BY ` + s.orderBy.GetOrderByClause() + `
 LIMIT ? OFFSET ?`
 
+	log.Printf("query: %s", q)
+	log.Printf("parsed orderBy: %s, limit: %d, offset: %d", s.orderBy.GetOrderByClause(), s.limit, s.offset)
 	rows, err := database.QueryContext(ctx, q, s.limit, s.offset)
 	if err != nil {
 		return nil, err
@@ -49,6 +61,7 @@ LIMIT ? OFFSET ?`
 			&r.PriceCurrentLower,
 			&r.PriceSaleLower,
 			&r.PriceSaleUpper,
+			&r.PriceChange,
 		); err != nil {
 			return nil, err
 		}

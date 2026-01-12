@@ -22,7 +22,7 @@ func TestListPlayers(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	query := NewPlayersQuery(10, 0)
+	query := NewPlayersQuery(10, 0, "price_change", true)
 	players, err := query.ListPlayers(ctx, db)
 	if err != nil {
 		t.Fatalf("ListPlayers failed: %v", err)

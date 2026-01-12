@@ -3,8 +3,10 @@ package db
 import (
 	"context"
 	"database/sql"
+	"math"
 	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/crawler"
+	"o2stock-crawler/internal/model"
 	"strconv"
 	"time"
 )
@@ -20,10 +22,7 @@ func NewSaveSnapshotDb() *SaveSnapshotDb {
 }
 
 // SaveSnapshot saves current roster snapshot into players and p_p_history tables.
-func (s *SaveSnapshotDb) SaveSnapshot(database *DB, rosterList []crawler.RosterItem, now time.Time) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
+func (s *SaveSnapshotDb) SaveSnapshot(ctx context.Context, database *DB, rosterList []crawler.RosterItemModel, priceHisMap model.PriceHistoryMap, now time.Time) error {
 	tx, err := database.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return err
@@ -31,18 +30,20 @@ func (s *SaveSnapshotDb) SaveSnapshot(database *DB, rosterList []crawler.RosterI
 	defer func() { _ = tx.Rollback() }()
 
 	// 去重：按 playerId + version + cardType 作为唯一键，避免重复入库同一球员
-	unique := make(map[string]*crawler.RosterItem)
+	unique := make(map[string]*crawler.RosterItemModel)
 	for i := range rosterList {
 		item := &rosterList[i]
-		key := item.PlayerID + "|" + item.VersionStr + "|" + item.CardTypeStr
+		key := strconv.Itoa(int(item.PlayerID)) + "|" + item.VersionStr + "|" + item.CardTypeStr
 		if _, ok := unique[key]; ok {
 			continue
 		}
 		unique[key] = item
 	}
 
+	// todo: 批量查询球员的 24 小时前价格
+
 	for _, item := range unique {
-		if err := s.upsertPlayer(ctx, tx, item); err != nil {
+		if err := s.upsertPlayer(ctx, tx, item, priceHisMap); err != nil {
 			return err
 		}
 		if err := s.insertHistory(ctx, tx, item, now); err != nil {
@@ -56,12 +57,8 @@ func (s *SaveSnapshotDb) SaveSnapshot(database *DB, rosterList []crawler.RosterI
 	return nil
 }
 
-func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem) error {
-	playerID, err := strconv.Atoi(item.PlayerID)
-	if err != nil {
-		return err
-	}
-
+func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *crawler.RosterItemModel, priceHisMap model.PriceHistoryMap) error {
+	playerID := item.PlayerID
 	cardType, _ := strconv.Atoi(item.CardTypeStr)
 	version, _ := strconv.Atoi(item.VersionStr)
 
@@ -84,12 +81,20 @@ func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *cra
 		return nil
 	}
 
+	// todo: 计算涨跌幅
+	// 当前价格 - 24小时前价格 / 24小时前价格 * 100%
+	priceHis, _ := priceHisMap[playerID]
+	var changeVal float64 = 0
+	changeVal = float64(priceStandard-int(priceHis.PriceStandard)) / float64(priceHis.PriceStandard) * 100
+	// 最多保留两位小数
+	changeVal = math.Round(changeVal*100) / 100
+
 	// 保存球员数据
 	const q = `
 INSERT INTO players
 	(player_id, p_name_show, p_name_en, team_abbr, version, card_type,
-	 player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper)
-VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	 player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, price_change)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 ON DUPLICATE KEY UPDATE
 	p_name_show = VALUES(p_name_show),
 	p_name_en = VALUES(p_name_en),
@@ -100,10 +105,11 @@ ON DUPLICATE KEY UPDATE
 	price_standard = VALUES(price_standard),
 	price_current_lowest = VALUES(price_current_lowest),
 	price_sale_lower = VALUES(price_sale_lower),
-	price_sale_upper = VALUES(price_sale_upper)
+	price_sale_upper = VALUES(price_sale_upper),
+	price_change = VALUES(price_change)
 `
 
-	_, err = tx.ExecContext(ctx, q,
+	_, err := tx.ExecContext(ctx, q,
 		playerID,
 		item.ShowName,
 		item.PlayerEn,
@@ -115,15 +121,16 @@ ON DUPLICATE KEY UPDATE
 		currentLowest,
 		priceSaleLower,
 		priceSaleUpper,
+		changeVal,
 	)
-	return err
-}
-
-func (s *SaveSnapshotDb) insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItem, now time.Time) error {
-	playerID, err := strconv.Atoi(item.PlayerID)
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (s *SaveSnapshotDb) insertHistory(ctx context.Context, tx *sql.Tx, item *crawler.RosterItemModel, now time.Time) error {
+	playerID := item.PlayerID
 
 	atDate := now.Format("2006-01-02")
 	atYear := now.Format("2006")
@@ -165,8 +172,7 @@ ON DUPLICATE KEY UPDATE
 	price_upper = VALUES(price_upper),
 	price_current_sale = VALUES(price_current_sale)
 `
-
-	_, err = tx.ExecContext(ctx, q,
+	_, err := tx.ExecContext(ctx, q,
 		playerID,
 		atDate,
 		atDateHour,
@@ -185,14 +191,6 @@ ON DUPLICATE KEY UPDATE
 }
 
 // gradeFactor 将 grade 转换为基础卡张数：n 级需要 2^(n-1) 张卡
-func (s *SaveSnapshotDb) gradeFactor(gradeStr string) int {
-	n, err := strconv.Atoi(gradeStr)
-	if err != nil || n <= 1 {
-		return 1
-	}
-	// 保护一下上限，文档中为 1~7 级
-	if n > 7 {
-		n = 7
-	}
-	return 1 << (n - 1)
+func (s *SaveSnapshotDb) gradeFactor(grade uint8) int {
+	return 1 << (grade - 1)
 }

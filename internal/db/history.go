@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"o2stock-crawler/internal/model"
 	"strings"
+	"time"
 )
 
 // PlayerHistoryQuery 获取某个球员的历史价格
@@ -134,4 +135,62 @@ FROM (
 	}
 
 	return result, nil
+}
+
+type PriceHistoryMapDb struct {
+	QueryBase
+}
+
+// NewPriceHistoryMap 创建一个 PriceHistoryMap
+func NewPriceHistoryMapDb() *PriceHistoryMapDb {
+	return &PriceHistoryMapDb{
+		QueryBase: QueryBase{},
+	}
+}
+
+// GetPriceHistoryMap 获取 24 小时前价格
+func (s *PriceHistoryMapDb) GetPriceHistoryMap(ctx context.Context, database *DB, beforTime time.Time) (model.PriceHistoryMap, error) {
+	q := `SELECT 
+    p1.player_id,
+    p1.at_date_hour,
+    p1.price_standard,
+    p1.price_current_sale,
+    p1.price_lower,
+    p1.price_upper,
+    p1.at_date,
+    p1.at_year,
+    p1.at_month,
+    p1.at_day,
+    p1.at_hour,
+    p1.at_minute
+FROM p_p_history p1
+INNER JOIN (
+    SELECT 
+        player_id,
+        MIN(at_date_hour) as min_hour
+    FROM p_p_history
+    WHERE at_date_hour >= ?
+    GROUP BY player_id
+) p2 ON p1.player_id = p2.player_id AND p1.at_date_hour = p2.min_hour
+ORDER BY p1.player_id;`
+
+	// 查询 24 小时前价格
+	rows, err := database.QueryContext(ctx, q, beforTime.Format("200601021504"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	priceHistoryMap := make(map[uint]*model.PriceHistoryRow)
+	for rows.Next() {
+		var r model.PriceHistoryRow
+		if err := rows.Scan(&r.PlayerId, &r.AtDateHourStr, &r.PriceStandard, &r.PriceCurrentSale, &r.PriceLower, &r.PriceUpper, &r.AtDate, &r.AtYear, &r.AtMonth, &r.AtDay, &r.AtHour, &r.AtMinute); err != nil {
+			return nil, err
+		}
+		priceHistoryMap[r.PlayerId] = &r
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return priceHistoryMap, nil
 }

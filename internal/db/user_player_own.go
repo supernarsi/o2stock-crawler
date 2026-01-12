@@ -13,7 +13,7 @@ func CountOwnedPlayers(ctx context.Context, database *DB, userID, playerID uint)
 	const q = `
 SELECT COUNT(*) 
 FROM u_p_own 
-WHERE user_id = ? AND player_id = ? AND own_sta = 1`
+WHERE uid = ? AND pid = ? AND own_sta = 1`
 
 	var count int
 	err := database.QueryRowContext(ctx, q, userID, playerID).Scan(&count)
@@ -27,7 +27,7 @@ WHERE user_id = ? AND player_id = ? AND own_sta = 1`
 func InsertPlayerOwn(ctx context.Context, database *DB, userID, playerID, num, cost uint, dt time.Time) error {
 	const q = `
 INSERT INTO u_p_own 
-	(user_id, player_id, own_sta, price_in, num_in, dt_in)
+	(uid, pid, own_sta, price_in, num_in, dt_in)
 VALUES (?, ?, 1, ?, ?, ?)`
 
 	_, err := database.ExecContext(ctx, q, userID, playerID, cost, num, dt)
@@ -39,7 +39,7 @@ func UpdatePlayerOwnToSold(ctx context.Context, database *DB, userID, playerID, 
 	const q = `
 UPDATE u_p_own 
 SET own_sta = 2, price_out = ?, dt_out = ?
-WHERE user_id = ? AND player_id = ? AND own_sta = 1
+WHERE uid = ? AND pid = ? AND own_sta = 1
 LIMIT 1`
 
 	result, err := database.ExecContext(ctx, q, cost, dt, userID, playerID)
@@ -59,9 +59,9 @@ LIMIT 1`
 // GetUserOwnedPlayers 获取用户拥有的所有球员记录（包括已出售）
 func GetUserOwnedPlayers(ctx context.Context, database *DB, userID uint) ([]*model.UserPlayerOwn, error) {
 	const q = `
-SELECT id, user_id, player_id, own_sta, price_in, price_out, num_in, dt_in, dt_out
+SELECT id, uid, pid, own_sta, price_in, price_out, num_in, dt_in, dt_out
 FROM u_p_own
-WHERE user_id = ?
+WHERE uid = ?
 ORDER BY dt_in DESC`
 
 	rows, err := database.QueryContext(ctx, q, userID)
@@ -118,9 +118,9 @@ func GetOwnedInfoByPlayerIDs(ctx context.Context, database *DB, userID uint, pla
 	}
 
 	q := `
-SELECT player_id, own_sta, price_in, price_out, num_in, dt_in, dt_out
+SELECT pid, own_sta, price_in, price_out, num_in, dt_in, dt_out
 FROM u_p_own
-WHERE user_id = ? AND player_id IN (` + placeholders + `) AND own_sta IN (1, 2)
+WHERE uid = ? AND pid IN (` + placeholders + `) AND own_sta IN (1, 2)
 ORDER BY dt_in DESC`
 
 	rows, err := database.QueryContext(ctx, q, args...)

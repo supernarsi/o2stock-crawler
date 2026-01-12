@@ -57,7 +57,7 @@ type APIResponse struct {
 	} `json:"data"`
 }
 
-// RosterItem represents a single player entry.
+// 接口返回的原始数据类型
 type RosterItem struct {
 	PlayerID    string `json:"playerId" dc:"球员ID"`
 	Grade       string `json:"grade" dc:"等级"`
@@ -76,11 +76,27 @@ type RosterItem struct {
 	} `json:"price" dc:"价格"`
 }
 
-// FetchRoster fetches current roster data from OL2 API.
-func (c *Client) FetchRoster(page int) (*APIResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+// 类型转换后的数据类型
+type RosterItemModel struct {
+	PlayerID    uint   `json:"playerId" dc:"球员ID"`
+	Grade       uint8  `json:"grade" dc:"等级"`
+	ShowName    string `json:"showName" dc:"展示名称"`
+	PlayerEn    string `json:"PlayerEnName" dc:"球员英文名称"`
+	PlayerImg   string `json:"playerImg" dc:"球员图片"`
+	TeamAbbr    string `json:"teamAbbr" dc:"球队"`
+	CardTypeStr string `json:"cardType" dc:"系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏"`
+	VersionStr  string `json:"Version" dc:"球员年代，0 表示现役"`
+	Price       struct {
+		StandardPrice      int    `json:"standardPrice" dc:"标准价格"`
+		CurrentLowestPrice string `json:"currentLowestPrice" dc:"当前出售的最低价格"`
+		LowerPriceForSale  int    `json:"lowerPriceForSale" dc:"最低可售价"`
+		UpperPriceForSale  int    `json:"upperPriceForSale" dc:"最高可售价"`
+		Popularity         string `json:"popularity" dc:"人气"`
+	} `json:"price" dc:"价格"`
+}
 
+// FetchRoster fetches current roster data from OL2 API.
+func (c *Client) FetchRoster(ctx context.Context, page int) (*APIResponse, error) {
 	ts := time.Now().UnixMilli()
 
 	req, err := http.NewRequestWithContext(
@@ -154,4 +170,28 @@ func (c *Client) generateSign(nonceStr string, timestamp int64) string {
 
 	hash := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(hash[:])
+}
+
+func (c *Client) parseRosterItem(item RosterItem) RosterItemModel {
+	playerID, _ := strconv.Atoi(item.PlayerID)
+	grade, _ := strconv.Atoi(item.Grade)
+	return RosterItemModel{
+		PlayerID:    uint(playerID),
+		Grade:       uint8(grade),
+		ShowName:    item.ShowName,
+		PlayerEn:    item.PlayerEn,
+		PlayerImg:   item.PlayerImg,
+		TeamAbbr:    item.TeamAbbr,
+		CardTypeStr: item.CardTypeStr,
+		VersionStr:  item.VersionStr,
+		Price:       item.Price,
+	}
+}
+
+func (c *Client) ParseRosterItemList(items []RosterItem) []RosterItemModel {
+	rosterList := make([]RosterItemModel, len(items))
+	for i, item := range items {
+		rosterList[i] = c.parseRosterItem(item)
+	}
+	return rosterList
 }

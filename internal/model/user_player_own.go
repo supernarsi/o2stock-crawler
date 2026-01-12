@@ -5,8 +5,8 @@ import "time"
 // UserPlayerOwn 表示 u_p_own 表的一行
 type UserPlayerOwn struct {
 	ID       uint       `json:"id"`
-	UserID   uint       `json:"user_id"`
-	PlayerID uint       `json:"player_id"`
+	UserID   uint       `json:"uid"`
+	PlayerID uint       `json:"pid"`
 	OwnSta   uint8      `json:"own_sta"` // 0.未拥有；1.已购买；2.已出售
 	PriceIn  uint       `json:"price_in"`
 	PriceOut uint       `json:"price_out"`

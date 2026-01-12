@@ -16,7 +16,9 @@ func (a *API) Players() http.HandlerFunc {
 		ctx := r.Context()
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
 		page := parseIntDefault(r.URL.Query().Get("page"), 1)
-		query := db.NewPlayersQuery(page, limit)
+		orderBy := r.URL.Query().Get("order_by")
+		orderAsc := r.URL.Query().Get("order_asc") == "1"
+		query := db.NewPlayersQuery(page, limit, orderBy, orderAsc)
 		rows, err := query.ListPlayers(ctx, a.db)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}

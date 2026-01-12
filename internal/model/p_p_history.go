@@ -19,3 +19,6 @@ type PriceHistoryRow struct {
 	PriceLower       uint32    `json:"price_lower"`
 	PriceUpper       uint32    `json:"price_upper"`
 }
+
+// PriceHistoryMap 球员历史价格 map
+type PriceHistoryMap map[uint]*PriceHistoryRow
