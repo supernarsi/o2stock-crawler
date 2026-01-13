@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"log"
 	"o2stock-crawler/internal/model"
 	"strings"
 	"time"
@@ -59,7 +60,7 @@ const (
 	// queryPriceRatioBase SQL 基础查询（价格变动）
 	queryPriceRatioBase = `WITH recent_data AS (
   SELECT
-    player_id, at_date_hour, price_standard,
+    player_id, at_date_hour, price_standard, price_current_sale,
     ROW_NUMBER() OVER ( PARTITION BY player_id ORDER BY at_date_hour DESC) AS rn_desc,
     ROW_NUMBER() OVER ( PARTITION BY player_id ORDER BY at_date_hour ASC) AS rn_asc
   FROM p_p_history
@@ -76,6 +77,7 @@ JOIN recent_data old ON cur.player_id = old.player_id
 WHERE cur.rn_desc = 1
   AND old.rn_asc = 1
   AND old.price_standard > 0
+  %s
 ORDER BY price_ratio %s`
 )
 
@@ -175,7 +177,7 @@ LIMIT ? OFFSET ?`, selectPlayersFields, filter, orderDir)
 
 	// 查询涨跌幅数据（注意：这里不需要排序和分页，因为已经按价格排序了）
 	sTime := calculateStartTime(period)
-	priceRatio, err := s.queryPlayersRatio(ctx, database, playerIds, sTime, false, 0, 0)
+	priceRatio, err := s.queryPlayersRatio(ctx, database, playerIds, sTime, soldOut, false, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query price ratio: %w", err)
 	}
@@ -189,7 +191,7 @@ func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, databa
 	sTime := calculateStartTime(period)
 
 	// 查询涨跌幅数据（已按涨跌幅排序和分页）
-	priceRatio, err := s.queryPlayersRatio(ctx, database, nil, sTime, orderAsc, s.limit, s.offset)
+	priceRatio, err := s.queryPlayersRatio(ctx, database, nil, sTime, soldOut, orderAsc, s.limit, s.offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query price ratio: %w", err)
 	}
@@ -215,21 +217,25 @@ func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, databa
 // queryPlayersRatio 查询球员价格变动（涨跌幅）
 // playersIds: 如果提供，则只查询这些球员的价格变动；如果为 nil，则查询所有球员
 // limit/offset: 如果 limit > 0，则应用分页；否则返回所有结果
-func (s *PlayersQuery) queryPlayersRatio(ctx context.Context, database *DB, playersIds []uint, sTime time.Time, orderAsc bool, limit, offset int) ([]*model.PlayerPriceChange, error) {
+func (s *PlayersQuery) queryPlayersRatio(ctx context.Context, database *DB, playersIds []uint, sTime time.Time, soldOut bool, orderAsc bool, limit, offset int) ([]*model.PlayerPriceChange, error) {
 	orderDir := getOrderDirection(orderAsc)
 	atDateHour := FormatDateTimeHour(sTime)
 
 	// 构建查询参数
 	args := []any{atDateHour}
 	playerFilter := buildPlayerIDFilter(playersIds, &args)
+	soldOutFilter := ""
+	if soldOut {
+		soldOutFilter = " AND cur.price_current_sale = -1"
+	}
 	// 构建 SQL 查询
-	q := fmt.Sprintf(queryPriceRatioBase, playerFilter, orderDir)
+	q := fmt.Sprintf(queryPriceRatioBase, playerFilter, soldOutFilter, orderDir)
 	if limit > 0 {
 		q += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
 
-	// log.Println("q", q, "args", args)
+	log.Println("查询语句：", q, "参数：", args)
 
 	rows, err := database.QueryContext(ctx, q, args...)
 	if err != nil {
