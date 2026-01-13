@@ -160,15 +160,6 @@ func scanUserPlayerOwnRow(rows interface {
 	)
 }
 
-// convertUintToAny 将 []uint 转换为 []any
-func convertUintToAny(values []uint) []any {
-	result := make([]any, len(values))
-	for i, v := range values {
-		result[i] = v
-	}
-	return result
-}
-
 // ============================================================================
 // UserPlayerOwnCommand 用户球员拥有操作（插入、更新）
 // ============================================================================

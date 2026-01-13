@@ -3,10 +3,10 @@ package db
 import (
 	"context"
 	"fmt"
-	"log"
-	"o2stock-crawler/internal/model"
 	"strings"
 	"time"
+
+	"o2stock-crawler/internal/model"
 )
 
 /*
@@ -81,48 +81,89 @@ WHERE cur.rn_desc = 1
 ORDER BY price_ratio %s`
 )
 
+// PlayerFilter 封装查询条件
+type PlayerFilter struct {
+	Page      int
+	Limit     int
+	OrderBy   string
+	OrderAsc  bool
+	Period    uint8
+	SoldOut   bool
+	PlayerIDs []uint
+}
+
+// GetOffset 计算偏移量
+func (f *PlayerFilter) GetOffset() int {
+	if f.Page < 1 {
+		return 0
+	}
+	return (f.Page - 1) * f.Limit
+}
+
+// GetOrderDirection 获取排序方向
+func (f *PlayerFilter) GetOrderDirection() string {
+	if f.OrderAsc {
+		return string(OrderAsc)
+	}
+	return string(OrderDesc)
+}
+
+// GetStartTime 根据周期计算开始时间
+func (f *PlayerFilter) GetStartTime() time.Time {
+	now := time.Now()
+	switch f.Period {
+	case Period1Week:
+		return now.AddDate(0, 0, -7)
+	case Period3Days:
+		return now.AddDate(0, 0, -3)
+	default: // Period1Day
+		return now.AddDate(0, 0, -1)
+	}
+}
+
 // PlayersQuery 获取球员列表
 type PlayersQuery struct {
-	QueryBase
+	filter PlayerFilter
 }
 
 // NewPlayersQuery 创建一个 PlayersQuery
 func NewPlayersQuery(page, limit int, orderBy string, orderAsc bool) *PlayersQuery {
-	orderDir := OrderAsc
-	if !orderAsc {
-		orderDir = OrderDesc
-	}
 	// 限制排序字段，只允许 price_change 和 price_standard
 	if orderBy != OrderByPriceChange && orderBy != OrderByPriceStandard {
 		orderBy = OrderByPlayerID
 	}
 	return &PlayersQuery{
-		QueryBase: QueryBase{
-			limit:   limit,
-			offset:  (page - 1) * limit,
-			orderBy: NewOrderBy(orderBy, orderDir),
+		filter: PlayerFilter{
+			Page:     page,
+			Limit:    limit,
+			OrderBy:  orderBy,
+			OrderAsc: orderAsc,
 		},
 	}
 }
 
 // ListPlayers 返回简单的球员列表，支持按价格或涨跌幅排序，可分页。
-func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB, period uint8, orderBy string, orderAsc bool, soldOut bool) ([]*model.PlayerWithPriceChange, error) {
-	switch orderBy {
+func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB, period uint8, soldOut bool) ([]*model.PlayerWithPriceChange, error) {
+	// 更新 Filter 中的条件
+	s.filter.Period = period
+	s.filter.SoldOut = soldOut
+
+	switch s.filter.OrderBy {
 	case OrderByPriceStandard:
 		// 如果按价格排序，直接查询 players 表，按 price_standard 排序，再查 p_p_history 表计算涨跌幅
-		return s.queryPlayersOrderByPrice(ctx, database, period, soldOut, orderAsc)
+		return s.queryPlayersOrderByPrice(ctx, database)
 	case OrderByPriceChange:
 		// 如果按涨跌幅排序，先使用窗口函数从 p_p_history 表中获取按涨跌幅排序后的球员 id，再使用 in 查询从 players 表中获取球员信息
-		return s.queryPlayersOrderByPriceRatio(ctx, database, period, soldOut, orderAsc)
+		return s.queryPlayersOrderByPriceRatio(ctx, database)
 	default:
 		// 默认按涨跌幅排序
-		return s.queryPlayersOrderByPriceRatio(ctx, database, period, soldOut, orderAsc)
+		return s.queryPlayersOrderByPriceRatio(ctx, database)
 	}
 }
 
 // ListPlayersWithOwned 返回球员列表，并可选地包含用户的拥有信息
-func (s *PlayersQuery) ListPlayersWithOwned(ctx context.Context, database *DB, period uint8, orderBy string, orderAsc bool, userID *uint, soldOut bool) ([]*model.PlayerWithPriceChange, map[uint][]*model.OwnInfo, error) {
-	players, err := s.ListPlayers(ctx, database, period, orderBy, orderAsc, soldOut)
+func (s *PlayersQuery) ListPlayersWithOwned(ctx context.Context, database *DB, period uint8, userID *uint, soldOut bool) ([]*model.PlayerWithPriceChange, map[uint][]*model.OwnInfo, error) {
+	players, err := s.ListPlayers(ctx, database, period, soldOut)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -150,19 +191,19 @@ func extractPlayerIDsFromPlayersWithPriceChange(players []*model.PlayerWithPrice
 }
 
 // queryPlayersOrderByPrice 按价格排序查询球员价格
-func (s *PlayersQuery) queryPlayersOrderByPrice(ctx context.Context, database *DB, period uint8, soldOut bool, orderAsc bool) ([]*model.PlayerWithPriceChange, error) {
-	orderDir := getOrderDirection(orderAsc)
-	filter := ""
-	if soldOut {
-		filter = "WHERE price_current_lowest = 0"
+func (s *PlayersQuery) queryPlayersOrderByPrice(ctx context.Context, database *DB) ([]*model.PlayerWithPriceChange, error) {
+	orderDir := s.filter.GetOrderDirection()
+	filterClause := ""
+	if s.filter.SoldOut {
+		filterClause = "WHERE price_current_lowest = 0"
 	}
 	q := fmt.Sprintf(`SELECT %s
 FROM players 
 %s
 ORDER BY price_standard %s 
-LIMIT ? OFFSET ?`, selectPlayersFields, filter, orderDir)
+LIMIT ? OFFSET ?`, selectPlayersFields, filterClause, orderDir)
 
-	players, err := s.queryPlayers(ctx, database, q, s.limit, s.offset)
+	players, err := s.queryPlayers(ctx, database, q, s.filter.Limit, s.filter.GetOffset())
 	if err != nil {
 		return nil, fmt.Errorf("failed to query players by price: %w", err)
 	}
@@ -176,8 +217,12 @@ LIMIT ? OFFSET ?`, selectPlayersFields, filter, orderDir)
 	playerIds := extractPlayerIDs(players)
 
 	// 查询涨跌幅数据（注意：这里不需要排序和分页，因为已经按价格排序了）
-	sTime := calculateStartTime(period)
-	priceRatio, err := s.queryPlayersRatio(ctx, database, playerIds, sTime, soldOut, false, 0, 0)
+	// 创建一个新的 Filter 用于查询比率，不带分页
+	ratioFilter := s.filter
+	ratioFilter.PlayerIDs = playerIds
+	ratioFilter.Limit = 0 // 不分页
+
+	priceRatio, err := s.queryPlayersRatio(ctx, database, ratioFilter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query price ratio: %w", err)
 	}
@@ -187,11 +232,9 @@ LIMIT ? OFFSET ?`, selectPlayersFields, filter, orderDir)
 }
 
 // queryPlayersOrderByPriceRatio 按涨跌幅排序查询球员价格变动
-func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, database *DB, period uint8, soldOut bool, orderAsc bool) ([]*model.PlayerWithPriceChange, error) {
-	sTime := calculateStartTime(period)
-
+func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, database *DB) ([]*model.PlayerWithPriceChange, error) {
 	// 查询涨跌幅数据（已按涨跌幅排序和分页）
-	priceRatio, err := s.queryPlayersRatio(ctx, database, nil, sTime, soldOut, orderAsc, s.limit, s.offset)
+	priceRatio, err := s.queryPlayersRatio(ctx, database, s.filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query price ratio: %w", err)
 	}
@@ -205,7 +248,7 @@ func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, databa
 	playerIds := extractPlayerIDsFromPriceChange(priceRatio)
 
 	// 查询球员数据
-	players, err := s.GetPlayersByIDs(ctx, database, playerIds, soldOut)
+	players, err := s.GetPlayersByIDs(ctx, database, playerIds, s.filter.SoldOut)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
 	}
@@ -215,27 +258,25 @@ func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, databa
 }
 
 // queryPlayersRatio 查询球员价格变动（涨跌幅）
-// playersIds: 如果提供，则只查询这些球员的价格变动；如果为 nil，则查询所有球员
-// limit/offset: 如果 limit > 0，则应用分页；否则返回所有结果
-func (s *PlayersQuery) queryPlayersRatio(ctx context.Context, database *DB, playersIds []uint, sTime time.Time, soldOut bool, orderAsc bool, limit, offset int) ([]*model.PlayerPriceChange, error) {
-	orderDir := getOrderDirection(orderAsc)
-	atDateHour := FormatDateTimeHour(sTime)
+func (s *PlayersQuery) queryPlayersRatio(ctx context.Context, database *DB, filter PlayerFilter) ([]*model.PlayerPriceChange, error) {
+	orderDir := filter.GetOrderDirection()
+	atDateHour := FormatDateTimeHour(filter.GetStartTime())
 
 	// 构建查询参数
 	args := []any{atDateHour}
-	playerFilter := buildPlayerIDFilter(playersIds, &args)
-	soldOutFilter := ""
-	if soldOut {
-		soldOutFilter = " AND cur.price_current_sale = -1"
+	playerFilterClause := buildPlayerIDFilter(filter.PlayerIDs, &args)
+	soldOutFilterClause := ""
+	if filter.SoldOut {
+		soldOutFilterClause = " AND cur.price_current_sale = -1"
 	}
 	// 构建 SQL 查询
-	q := fmt.Sprintf(queryPriceRatioBase, playerFilter, soldOutFilter, orderDir)
-	if limit > 0 {
+	q := fmt.Sprintf(queryPriceRatioBase, playerFilterClause, soldOutFilterClause, orderDir)
+	if filter.Limit > 0 {
 		q += " LIMIT ? OFFSET ?"
-		args = append(args, limit, offset)
+		args = append(args, filter.Limit, filter.GetOffset())
 	}
 
-	log.Println("查询语句：", q, "参数：", args)
+	// log.Println("查询语句：", q, "参数：", args)
 
 	rows, err := database.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -432,29 +473,4 @@ func buildPlayerIDFilter(playerIDs []uint, args *[]any) string {
 		return ""
 	}
 	return buildINClauseWithPrefix("player_id", convertUintToAny(playerIDs), args)
-}
-
-// ============================================================================
-// 辅助函数：工具函数
-// ============================================================================
-
-// calculateStartTime 根据周期计算开始时间
-func calculateStartTime(period uint8) time.Time {
-	now := time.Now()
-	switch period {
-	case Period1Week:
-		return now.AddDate(0, 0, -7)
-	case Period3Days:
-		return now.AddDate(0, 0, -3)
-	default: // Period1Day
-		return now.AddDate(0, 0, -1)
-	}
-}
-
-// getOrderDirection 获取排序方向字符串
-func getOrderDirection(orderAsc bool) string {
-	if orderAsc {
-		return string(OrderAsc)
-	}
-	return string(OrderDesc)
 }

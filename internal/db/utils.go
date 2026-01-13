@@ -37,6 +37,15 @@ func buildINClauseWithPrefix(column string, values []any, args *[]any) string {
 	return fmt.Sprintf("AND %s IN (%s)", column, strings.Join(placeholders, ","))
 }
 
+// convertUintToAny 将 []uint 转换为 []any
+func convertUintToAny(values []uint) []any {
+	result := make([]any, len(values))
+	for i, v := range values {
+		result[i] = v
+	}
+	return result
+}
+
 // ============================================================================
 // 时间处理辅助函数
 // ============================================================================
