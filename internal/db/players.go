@@ -8,6 +8,31 @@ import (
 	"time"
 )
 
+/*
+球员表
+```sql
+CREATE TABLE `players` (
+
+	`id` int unsigned NOT NULL AUTO_INCREMENT,
+	`player_id` int unsigned NOT NULL COMMENT '球员 id',
+	`p_name_show` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_vi_0900_ai_ci NOT NULL COMMENT '球员展示名称',
+	`p_name_en` varchar(255) COLLATE utf8mb4_vi_0900_ai_ci NOT NULL COMMENT '球员英文名称',
+	`team_abbr` varchar(255) COLLATE utf8mb4_vi_0900_ai_ci NOT NULL COMMENT '球队名称',
+	`version` int unsigned NOT NULL DEFAULT '0' COMMENT '球员版本',
+	`card_type` int unsigned NOT NULL DEFAULT '0' COMMENT '卡类型',
+	`player_img` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_vi_0900_ai_ci NOT NULL COMMENT '球员头像',
+	`price_standard` int unsigned NOT NULL DEFAULT '0' COMMENT '单卡价格-基准',
+	`price_current_lowest` int unsigned NOT NULL DEFAULT '0' COMMENT '市场最低售价',
+	`price_sale_lower` int unsigned NOT NULL DEFAULT '0' COMMENT '售价-低',
+	`price_sale_upper` int unsigned NOT NULL DEFAULT '0' COMMENT '售价-高',
+	PRIMARY KEY (`id`),
+	UNIQUE KEY `idx_pid` (`player_id`)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_vi_0900_ai_ci COMMENT='球员价格表';
+
+```
+*/
+
 const (
 	// OrderByPriceStandard 按标准价格排序
 	OrderByPriceStandard = "price_standard"

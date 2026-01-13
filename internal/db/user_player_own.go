@@ -9,6 +9,26 @@ import (
 	"o2stock-crawler/internal/model"
 )
 
+/*
+用户拥有球员数据表
+```sql
+CREATE TABLE `u_p_own` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `uid` int unsigned NOT NULL DEFAULT '0' COMMENT '用户 id',
+  `pid` int unsigned NOT NULL DEFAULT '0' COMMENT '球员 id',
+  `own_sta` tinyint unsigned NOT NULL DEFAULT '0' COMMENT '状态：0.未拥有；1.已购买；2.已出售',
+  `price_in` int unsigned NOT NULL DEFAULT '0' COMMENT '购买时的总价格',
+  `price_out` int unsigned NOT NULL DEFAULT '0' COMMENT '出售时的总价格',
+  `num_in` int unsigned NOT NULL DEFAULT '0' COMMENT '购买的卡数',
+  `dt_in` datetime NOT NULL COMMENT '购买时间',
+  `dt_out` datetime DEFAULT NULL COMMENT '出售时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_uid` (`uid`),
+  KEY `idx_pid` (`pid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户拥有球员数据表';
+```
+*/
+
 // ============================================================================
 // UserPlayerOwnQuery 用户球员拥有查询
 // ============================================================================

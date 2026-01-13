@@ -46,3 +46,9 @@ type PlayerWithOwned struct {
 	model.PlayerWithPriceChange
 	Owned []*model.OwnInfo `json:"owned"`
 }
+
+// UserFavPlayerReq 用户收藏球员请求
+type UserFavPlayerReq struct {
+	UserID   uint `json:"user_id"`
+	PlayerID uint `json:"player_id"`
+}

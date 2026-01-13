@@ -152,3 +152,31 @@ func (a *API) UserPlayers() http.HandlerFunc {
 		return api.UserPlayersRes{Rosters: rosters}, nil
 	})
 }
+
+// UserFavPlayer 用户收藏球员接口
+func (a *API) UserFavPlayer() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		var req api.UserFavPlayerReq
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+		}
+
+		ctx := r.Context()
+
+		// 检查是否已收藏
+		count, err := db.CountFavPlayer(ctx, a.db, req.UserID, req.PlayerID)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+		if count > 0 {
+			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "already fav this player"}
+		}
+
+		// 插入收藏记录
+		if err := db.InsertFavPlayer(ctx, a.db, req.UserID, req.PlayerID); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+
+		return nil, nil
+	})
+}

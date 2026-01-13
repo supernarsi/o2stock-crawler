@@ -7,6 +7,32 @@ import (
 	"time"
 )
 
+/*
+球员历史价格表
+```sql
+CREATE TABLE `p_p_history` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `player_id` int unsigned NOT NULL DEFAULT '0' COMMENT '球员 id',
+  `at_date` date NOT NULL COMMENT '价格对应的日期',
+  `at_date_hour` char(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '202601010000' COMMENT '价格对应的日期小时分钟，格式为：年月日时分（例 202601022305）',
+  `at_year` char(4) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '2026' COMMENT '价格对应的年份',
+  `at_month` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '01' COMMENT '价格对应的月份',
+  `at_day` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '01' COMMENT '价格对应的日期',
+  `at_hour` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '00' COMMENT '价格对应的小时',
+  `at_minute` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '00' COMMENT '价格对应的分钟',
+  `price_standard` int unsigned NOT NULL DEFAULT '0' COMMENT '基础卡片单卡价格',
+  `price_current_sale` int NOT NULL DEFAULT '-1' COMMENT '当前成交价，-1 代表无人出售',
+  `price_lower` int unsigned NOT NULL DEFAULT '0' COMMENT '出售最低价',
+  `price_upper` int unsigned NOT NULL DEFAULT '0' COMMENT '出售最高价',
+  `c_time` datetime NOT NULL COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_dh_pid` (`at_date_hour`,`player_id`),
+  KEY `idx_pid` (`player_id`),
+  KEY `idx_date` (`at_year`,`at_month`,`at_day`,`at_hour`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='球员历史价格';
+```
+*/
+
 // SQL 查询字段常量
 const (
 	selectPriceHistoryFields = `player_id, at_date, at_date_hour, at_year, at_month, at_day, at_hour, at_minute, price_standard, price_current_sale, price_lower, price_upper`
