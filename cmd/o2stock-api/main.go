@@ -43,6 +43,7 @@ func main() {
 	router.RegisterAPI("/player/in", apiCtl.PlayerIn(), http.MethodPost)
 	router.RegisterAPI("/player/out", apiCtl.PlayerOut(), http.MethodPost)
 	router.RegisterAPI("/u-players", apiCtl.UserPlayers(), http.MethodGet)
+	router.RegisterAPI("/player/fav", apiCtl.UserFavPlayer(), http.MethodPost)
 
 	mux := http.NewServeMux()
 	router.Apply(mux)
