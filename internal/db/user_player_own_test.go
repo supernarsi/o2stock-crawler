@@ -28,7 +28,8 @@ func TestCountOwnedPlayers(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	count, err := CountOwnedPlayers(ctx, db, 1, 10005)
+	query := NewUserPlayerOwnQuery(1)
+	count, err := query.CountOwnedPlayers(ctx, db, 10005)
 	if err != nil {
 		t.Fatalf("CountOwnedPlayers failed: %v", err)
 	}
@@ -53,7 +54,8 @@ func TestInsertPlayerOwn(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now()
-	err = InsertPlayerOwn(ctx, db, 1, 10005, 64, 1021310, now)
+	cmd := NewUserPlayerOwnCommand()
+	err = cmd.InsertPlayerOwn(ctx, db, 1, 10005, 64, 1021310, now)
 	if err != nil {
 		t.Fatalf("InsertPlayerOwn failed: %v", err)
 	}
@@ -77,7 +79,8 @@ func TestUpdatePlayerOwnToSold(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now()
-	err = UpdatePlayerOwnToSold(ctx, db, 1, 10005, 1200000, now)
+	cmd := NewUserPlayerOwnCommand()
+	err = cmd.UpdatePlayerOwnToSold(ctx, db, 1, 10005, 1200000, now)
 	if err != nil {
 		if err == ErrNoRows {
 			t.Log("No rows to update (expected if player not owned)")
@@ -104,7 +107,8 @@ func TestGetUserOwnedPlayers(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	players, err := GetUserOwnedPlayers(ctx, db, 1)
+	query := NewUserPlayerOwnQuery(1)
+	players, err := query.GetUserOwnedPlayers(ctx, db)
 	if err != nil {
 		t.Fatalf("GetUserOwnedPlayers failed: %v", err)
 	}
@@ -129,7 +133,8 @@ func TestGetOwnedInfoByPlayerIDs(t *testing.T) {
 
 	ctx := context.Background()
 	playerIDs := []uint{10005, 10006}
-	ownedMap, err := GetOwnedInfoByPlayerIDs(ctx, db, 1, playerIDs)
+	query := NewUserPlayerOwnQuery(1)
+	ownedMap, err := query.GetOwnedInfoByPlayerIDs(ctx, db, playerIDs)
 	if err != nil {
 		t.Fatalf("GetOwnedInfoByPlayerIDs failed: %v", err)
 	}

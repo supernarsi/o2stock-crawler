@@ -5,9 +5,7 @@ import (
 	"strconv"
 
 	"o2stock-crawler/api"
-	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/middleware"
-	"o2stock-crawler/internal/model"
 )
 
 // Players 获取球员列表
@@ -31,28 +29,12 @@ func (a *API) Players() http.HandlerFunc {
 			userID = &uid
 		}
 
-		query := db.NewPlayersQuery(page, limit, orderBy, orderAsc)
-		players, ownedMap, err := query.ListPlayersWithOwned(ctx, a.db, uint8(period), orderBy, orderAsc, userID)
+		players, err := a.playersService.ListPlayersWithOwned(ctx, page, limit, orderBy, orderAsc, uint8(period), userID)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
-		// 构建返回结果，总是包含 owned 字段
-		result := make([]api.PlayerWithOwned, len(players))
-		for i, p := range players {
-			result[i] = api.PlayerWithOwned{
-				PlayerWithPriceChange: *p,
-				Owned:                 []*model.OwnInfo{}, // 默认为空数组
-			}
-			// 如果有拥有信息，填充到结果中
-			if ownedMap != nil {
-				if owned, ok := ownedMap[p.PlayerID]; ok {
-					result[i].Owned = owned
-				}
-			}
-		}
-
-		return api.PlayersWithOwnedRes{Players: result}, nil
+		return api.PlayersWithOwnedRes{Players: players}, nil
 	})
 }
 
@@ -69,8 +51,7 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid player_id"}
 		}
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
-		query := db.NewPlayerHistoryQuery(uint32(id64), limit)
-		rows, err := query.GetPlayerHistory(ctx, a.db)
+		rows, err := a.playersService.GetPlayerHistory(ctx, uint32(id64), limit)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -95,11 +76,6 @@ func (a *API) MultiPlayersHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid player_ids"}
 		}
 
-		// 限制最多查询的球员数量
-		if len(playerIDStrs) > 30 {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "too many player_ids, maximum 50"}
-		}
-
 		playerIDs := make([]uint32, 0, len(playerIDStrs))
 		for _, idStr := range playerIDStrs {
 			id64, err := strconv.ParseUint(idStr, 10, 32)
@@ -109,23 +85,9 @@ func (a *API) MultiPlayersHistory() http.HandlerFunc {
 			playerIDs = append(playerIDs, uint32(id64))
 		}
 
-		query := db.NewMultiPlayersHistoryQuery(playerIDs, 200)
-		historyMap, err := query.GetMultiPlayersHistory(ctx, a.db)
+		historyList, err := a.playersService.GetMultiPlayersHistory(ctx, playerIDs, 200)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
-		}
-
-		// 将 map 转换为列表形式，保持请求的 player_ids 顺序
-		historyList := make([]api.PlayerHistoryItem, 0, len(playerIDs))
-		for _, pid := range playerIDs {
-			history, ok := historyMap[pid]
-			if !ok {
-				history = []*model.PriceHistoryRow{} // 如果没有数据，返回空数组
-			}
-			historyList = append(historyList, api.PlayerHistoryItem{
-				PlayerID: pid,
-				History:  history,
-			})
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: err.Error()}
 		}
 
 		return api.MultiPlayersHistoryRes{History: historyList}, nil

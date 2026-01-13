@@ -220,32 +220,3 @@ LIMIT 1`
 	}
 	return nil
 }
-
-// ============================================================================
-// 向后兼容的函数（保持 API 兼容性）
-// ============================================================================
-
-// CountOwnedPlayers 统计用户拥有的指定球员数量（向后兼容）
-func CountOwnedPlayers(ctx context.Context, database *DB, userID, playerID uint) (int, error) {
-	return NewUserPlayerOwnQuery(userID).CountOwnedPlayers(ctx, database, playerID)
-}
-
-// InsertPlayerOwn 插入一条购买记录（向后兼容）
-func InsertPlayerOwn(ctx context.Context, database *DB, userID, playerID, num, cost uint, dt time.Time) error {
-	return NewUserPlayerOwnCommand().InsertPlayerOwn(ctx, database, userID, playerID, num, cost, dt)
-}
-
-// UpdatePlayerOwnToSold 将已购买的球员标记为已出售（向后兼容）
-func UpdatePlayerOwnToSold(ctx context.Context, database *DB, userID, playerID, cost uint, dt time.Time) error {
-	return NewUserPlayerOwnCommand().UpdatePlayerOwnToSold(ctx, database, userID, playerID, cost, dt)
-}
-
-// GetUserOwnedPlayers 获取用户拥有的所有球员记录（向后兼容）
-func GetUserOwnedPlayers(ctx context.Context, database *DB, userID uint) ([]*model.UserPlayerOwn, error) {
-	return NewUserPlayerOwnQuery(userID).GetUserOwnedPlayers(ctx, database)
-}
-
-// GetOwnedInfoByPlayerIDs 根据球员 ID 列表获取用户的拥有信息（向后兼容）
-func GetOwnedInfoByPlayerIDs(ctx context.Context, database *DB, userID uint, playerIDs []uint) (map[uint][]*model.OwnInfo, error) {
-	return NewUserPlayerOwnQuery(userID).GetOwnedInfoByPlayerIDs(ctx, database, playerIDs)
-}
