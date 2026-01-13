@@ -75,7 +75,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 
 	// 查询球员详细信息
 	playersQuery := db.NewPlayersQuery(1, 100, "", true)
-	players, err := playersQuery.GetPlayersByIDs(ctx, s.db, playerIDs)
+	players, err := playersQuery.GetPlayersByIDs(ctx, s.db, playerIDs, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
 	}

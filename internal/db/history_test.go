@@ -24,7 +24,7 @@ func TestGetPlayerHistory(t *testing.T) {
 	ctx := context.Background()
 	query := NewPlayerHistoryQuery(10005, 10)
 	query.limit = 10
-	history, err := query.GetPlayerHistory(ctx, db)
+	history, err := query.GetPlayerHistory(ctx, db, Period1Day)
 	if err != nil {
 		t.Fatalf("GetPlayerHistory failed: %v", err)
 	}

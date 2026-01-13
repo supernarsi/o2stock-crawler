@@ -19,9 +19,9 @@ func NewPlayersService(database *db.DB) *PlayersService {
 }
 
 // ListPlayersWithOwned 获取球员列表，支持分页、排序，并可选地包含用户的拥有信息
-func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, page, limit int, orderBy string, orderAsc bool, period uint8, userID *uint) ([]api.PlayerWithOwned, error) {
+func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, page, limit int, orderBy string, orderAsc bool, period uint8, userID *uint, soldOut bool) ([]api.PlayerWithOwned, error) {
 	query := db.NewPlayersQuery(page, limit, orderBy, orderAsc)
-	players, ownedMap, err := query.ListPlayersWithOwned(ctx, s.db, period, orderBy, orderAsc, userID)
+	players, ownedMap, err := query.ListPlayersWithOwned(ctx, s.db, period, orderBy, orderAsc, userID, soldOut)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list players with owned: %w", err)
 	}
@@ -45,9 +45,9 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, page, limit i
 }
 
 // GetPlayerHistory 获取单个球员历史价格
-func (s *PlayersService) GetPlayerHistory(ctx context.Context, playerID uint32, limit int) ([]*model.PriceHistoryRow, error) {
+func (s *PlayersService) GetPlayerHistory(ctx context.Context, playerID uint32, period uint8, limit int) ([]*model.PriceHistoryRow, error) {
 	query := db.NewPlayerHistoryQuery(playerID, limit)
-	rows, err := query.GetPlayerHistory(ctx, s.db)
+	rows, err := query.GetPlayerHistory(ctx, s.db, period)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get player history: %w", err)
 	}

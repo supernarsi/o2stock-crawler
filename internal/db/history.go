@@ -3,7 +3,9 @@ package db
 import (
 	"context"
 	"fmt"
+	"log"
 	"o2stock-crawler/internal/model"
+	"strconv"
 	"time"
 )
 
@@ -56,18 +58,23 @@ func NewPlayerHistoryQuery(playerID uint32, limit int) *PlayerHistoryQuery {
 }
 
 // GetPlayerHistory 返回某个球员的历史价格，按时间升序。
-func (q *PlayerHistoryQuery) GetPlayerHistory(ctx context.Context, database *DB) ([]*model.PriceHistoryRow, error) {
+// period: 1-过去24小时（所有数据），2-过去3天（每小时1条），3-过去7天（每2小时1条）
+func (q *PlayerHistoryQuery) GetPlayerHistory(ctx context.Context, database *DB, period uint8) ([]*model.PriceHistoryRow, error) {
+	startTime := calculateHistoryStartTime(period)
+
 	query := fmt.Sprintf(`
 SELECT %s
 FROM p_p_history
 WHERE player_id = ?
+AND at_date_hour >= ?
 ORDER BY %s
 LIMIT ?`, selectPriceHistoryFields, q.orderBy.GetOrderByClause())
 
-	rows, err := database.QueryContext(ctx, query, q.playerID, q.limit)
+	rows, err := database.QueryContext(ctx, query, q.playerID, FormatDateTimeHour(startTime), q.limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query player history: %w", err)
 	}
+
 	defer rows.Close()
 
 	result := make([]*model.PriceHistoryRow, 0, q.limit)
@@ -82,9 +89,69 @@ LIMIT ?`, selectPriceHistoryFields, q.orderBy.GetOrderByClause())
 		return nil, fmt.Errorf("error iterating price history rows: %w", err)
 	}
 
-	// 倒序排列 result（因为查询是按降序，需要转为升序返回）
+	log.Println("result", len(result))
+
+	// 倒序排列（因为查询是按降序，需要转为升序返回）
 	reversePriceHistoryRows(result)
-	return result, nil
+
+	// 根据 period 过滤数据
+	filteredResult := filterHistoryByPeriod(result, period)
+
+	return filteredResult, nil
+}
+
+// calculateHistoryStartTime 根据 period 计算历史价格查询的开始时间
+func calculateHistoryStartTime(period uint8) time.Time {
+	now := time.Now()
+	switch period {
+	case Period1Day:
+		return now.AddDate(0, 0, -1)
+	case Period3Days:
+		return now.AddDate(0, 0, -3)
+	case Period1Week:
+		return now.AddDate(0, 0, -7)
+	default:
+		return now.AddDate(0, 0, -1) // 默认为1天
+	}
+}
+
+// filterHistoryByPeriod 根据 period 过滤历史价格数据
+func filterHistoryByPeriod(result []*model.PriceHistoryRow, period uint8) []*model.PriceHistoryRow {
+	switch period {
+	case Period1Day:
+		// 过去24小时：返回所有数据
+		return result
+	case Period3Days:
+		return filterHistoryByHourInterval(result)
+	case Period1Week:
+		return filterHistoryByHourInterval(result)
+	default:
+		return result
+	}
+}
+
+// filterHistoryByHourInterval 按小时间隔过滤历史数据
+func filterHistoryByHourInterval(result []*model.PriceHistoryRow) []*model.PriceHistoryRow {
+	if len(result) == 0 {
+		return result
+	}
+
+	filtered := make([]*model.PriceHistoryRow, 0, len(result))
+	stDh := 0
+	for _, r := range result {
+		atDateHour := r.AtDateHourStr[0:10]
+		log.Println("atDateHour", atDateHour)
+		atDateHourInt, err := strconv.Atoi(atDateHour)
+		if err != nil {
+			continue
+		}
+		if atDateHourInt > stDh {
+			filtered = append(filtered, r)
+			stDh = atDateHourInt
+		}
+	}
+
+	return filtered
 }
 
 // scanPriceHistoryRow 扫描价格历史行数据

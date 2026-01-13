@@ -16,6 +16,7 @@ func (a *API) Players() http.HandlerFunc {
 		page := parseIntDefault(r.URL.Query().Get("page"), 1)
 		orderBy := r.URL.Query().Get("order_by")
 		orderAsc := r.URL.Query().Get("order_asc") == "true"
+		soldOut := r.URL.Query().Get("sold_out") == "true"
 		period := parseIntDefault(r.URL.Query().Get("period"), 1)
 
 		// 解析可选的 user_id
@@ -29,7 +30,7 @@ func (a *API) Players() http.HandlerFunc {
 			userID = &uid
 		}
 
-		players, err := a.playersService.ListPlayersWithOwned(ctx, page, limit, orderBy, orderAsc, uint8(period), userID)
+		players, err := a.playersService.ListPlayersWithOwned(ctx, page, limit, orderBy, orderAsc, uint8(period), userID, soldOut)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -50,8 +51,9 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid player_id"}
 		}
+		period := parseIntDefault(r.URL.Query().Get("period"), 1)
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
-		rows, err := a.playersService.GetPlayerHistory(ctx, uint32(id64), limit)
+		rows, err := a.playersService.GetPlayerHistory(ctx, uint32(id64), uint8(period), limit)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
