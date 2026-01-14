@@ -1,0 +1,38 @@
+[Unit]
+Description=O2Stock API Service
+Documentation=https://github.com/narsihuang/o2stock-crawler
+After=network.target mysql.service
+
+[Service]
+# 运行用户，建议创建一个非 root 用户运行，例如 o2stock
+# useradd -r -s /bin/false o2stock
+User=root
+Group=root
+
+# 程序工作目录（建议修改为实际部署目录）
+WorkingDirectory=/app/o2stock
+
+# 可执行文件路径
+ExecStart=/app/o2stock/o2stock-api
+
+# 环境变量配置
+# 方式1：通过 EnvironmentFile 指定 .env 文件（推荐）
+# EnvironmentFile=/app/o2stock/.env
+
+# 方式2：直接在 Environment 指令中设置（适合少量配置）
+# Environment="API_ADDR=:8080"
+# Environment="DB_HOST=127.0.0.1"
+
+# 自动重启配置
+Restart=always
+RestartSec=5s
+
+# 资源限制（可选）
+LimitNOFILE=65535
+
+# 日志输出（CentOS 7+ 会自动对接 journalctl，不需要额外配置重定向）
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
