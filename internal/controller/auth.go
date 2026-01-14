@@ -47,7 +47,7 @@ func (c *AuthController) Login() http.HandlerFunc {
 	})
 }
 
-// Middleware 鉴权中间件
+// Middleware 鉴权中间件（强制登录）
 func (c *AuthController) Middleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -72,6 +72,29 @@ func (c *AuthController) Middleware(next http.HandlerFunc) http.HandlerFunc {
 		// 将 UserID 注入 Context
 		ctx := context.WithValue(r.Context(), "user_id", userID)
 		next(w, r.WithContext(ctx))
+	}
+}
+
+// OptionalMiddleware 可选鉴权中间件
+// 如果 Header 中包含 Token 且验证通过，则注入 UserID
+// 否则不注入（视为匿名用户），但不报错
+func (c *AuthController) OptionalMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				token := parts[1]
+				if userID, err := c.authService.VerifyToken(token); err == nil {
+					// 验证通过，注入 Context
+					ctx := context.WithValue(r.Context(), "user_id", userID)
+					next(w, r.WithContext(ctx))
+					return
+				}
+			}
+		}
+		// 验证失败或无 Token，直接放行（不注入 user_id）
+		next(w, r)
 	}
 }
 

@@ -2,7 +2,6 @@ package controller
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,15 +12,18 @@ import (
 // PlayerIn 标记购买接口
 func (a *API) PlayerIn() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
 		var req api.PlayerInReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
 		}
 
 		// 参数校验
-		if req.UserID == 0 {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing user_id"}
-		}
 		if req.PlayerID == 0 {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing player_id"}
 		}
@@ -32,10 +34,8 @@ func (a *API) PlayerIn() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid dt format, expected: 2006-01-02 15:04:05"}
 		}
 
-		ctx := r.Context()
-
 		// 调用服务层
-		err = a.userPlayerService.PlayerIn(ctx, req.UserID, req.PlayerID, req.Num, req.Cost, dt)
+		err = a.userPlayerService.PlayerIn(ctx, userID, req.PlayerID, req.Num, req.Cost, dt)
 		if err != nil {
 			// 处理业务错误
 			if strings.Contains(err.Error(), "already owned more than 2 players") {
@@ -51,15 +51,18 @@ func (a *API) PlayerIn() http.HandlerFunc {
 // PlayerOut 标记出售接口
 func (a *API) PlayerOut() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
 		var req api.PlayerOutReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
 		}
 
 		// 参数校验
-		if req.UserID == 0 {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing user_id"}
-		}
 		if req.PlayerID == 0 {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing player_id"}
 		}
@@ -70,10 +73,8 @@ func (a *API) PlayerOut() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid dt format, expected: 2006-01-02 15:04:05"}
 		}
 
-		ctx := r.Context()
-
 		// 调用服务层
-		err = a.userPlayerService.PlayerOut(ctx, req.UserID, req.PlayerID, req.Cost, dt)
+		err = a.userPlayerService.PlayerOut(ctx, userID, req.PlayerID, req.Cost, dt)
 		if err != nil {
 			// 处理业务错误
 			if strings.Contains(err.Error(), "not own this player yet") {
@@ -90,17 +91,12 @@ func (a *API) PlayerOut() http.HandlerFunc {
 func (a *API) UserPlayers() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		ctx := r.Context()
-
-		userIDStr := r.URL.Query().Get("user_id")
-		if userIDStr == "" {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing user_id"}
-		}
-		userID, err := strconv.ParseUint(userIDStr, 10, 32)
-		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid user_id"}
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
 		}
 
-		rosters, err := a.userPlayerService.GetUserPlayers(ctx, uint(userID))
+		rosters, err := a.userPlayerService.GetUserPlayers(ctx, userID)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -112,23 +108,24 @@ func (a *API) UserPlayers() http.HandlerFunc {
 // UserFavPlayer 用户收藏球员接口
 func (a *API) UserFavPlayer() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
 		var req api.UserFavPlayerReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
 		}
 
 		// 参数校验
-		if req.UserID == 0 {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing user_id"}
-		}
 		if req.PlayerID == 0 {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing player_id"}
 		}
 
-		ctx := r.Context()
-
 		// 调用服务层
-		err := a.userPlayerService.FavPlayer(ctx, req.UserID, req.PlayerID)
+		err := a.userPlayerService.FavPlayer(ctx, userID, req.PlayerID)
 		if err != nil {
 			// 处理业务错误
 			if strings.Contains(err.Error(), "already fav this player") {

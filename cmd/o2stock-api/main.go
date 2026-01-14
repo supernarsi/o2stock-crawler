@@ -43,7 +43,8 @@ func main() {
 	}
 
 	// 创建路由器并注册路由
-	router := middleware.NewRouter(globalMiddlewares...)
+	// 公开接口使用 OptionalMiddleware，以便在有 Token 时获取用户信息
+	router := middleware.NewRouter(append(globalMiddlewares, authCtl.OptionalMiddleware)...)
 	router.RegisterAPI("/healthz", apiCtl.Healthz(), "") // 允许所有方法
 
 	// 公开接口

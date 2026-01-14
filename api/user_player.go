@@ -4,7 +4,6 @@ import "o2stock-crawler/internal/model"
 
 // PlayerInReq 标记购买请求
 type PlayerInReq struct {
-	UserID   uint   `json:"user_id"`
 	PlayerID uint   `json:"player_id"`
 	Num      uint   `json:"num"`
 	Cost     uint   `json:"cost"`
@@ -13,7 +12,6 @@ type PlayerInReq struct {
 
 // PlayerOutReq 标记出售请求
 type PlayerOutReq struct {
-	UserID   uint   `json:"user_id"`
 	PlayerID uint   `json:"player_id"`
 	Cost     uint   `json:"cost"`
 	Dt       string `json:"dt"` // 格式: 2006-01-02 15:04:05
@@ -49,6 +47,5 @@ type PlayerWithOwned struct {
 
 // UserFavPlayerReq 用户收藏球员请求
 type UserFavPlayerReq struct {
-	UserID   uint `json:"user_id"`
 	PlayerID uint `json:"player_id"`
 }

@@ -19,14 +19,9 @@ func (a *API) Players() http.HandlerFunc {
 		soldOut := r.URL.Query().Get("sold_out") == "true"
 		period := parseIntDefault(r.URL.Query().Get("period"), 1)
 
-		// 解析可选的 user_id
+		// 解析可选的 user_id (从 Token 获取)
 		var userID *uint
-		if userIDStr := r.URL.Query().Get("user_id"); userIDStr != "" {
-			id, err := strconv.ParseUint(userIDStr, 10, 32)
-			if err != nil {
-				return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid user_id"}
-			}
-			uid := uint(id)
+		if uid, ok := GetUserIDFromContext(ctx); ok {
 			userID = &uid
 		}
 
