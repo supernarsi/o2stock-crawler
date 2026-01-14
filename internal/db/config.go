@@ -13,6 +13,11 @@ type Config struct {
 	User     string
 	Password string
 	DBName   string
+
+	// Wechat config
+	WxAppID     string
+	WxAppSecret string
+	JWTSecret   string
 }
 
 // LoadConfigFromEnv loads MySQL configuration from env vars.
@@ -23,6 +28,9 @@ type Config struct {
 //   - DB_USER: root
 //   - DB_PASS:
 //   - DB_NAME: ol2
+//   - WX_APP_ID:
+//   - WX_APP_SECRET:
+//   - JWT_SECRET: default_secret
 func LoadConfigFromEnv() (*Config, error) {
 	host := getenvDefault("DB_HOST", "127.0.0.1")
 	port := getenvDefault("DB_PORT", "3306")
@@ -30,16 +38,23 @@ func LoadConfigFromEnv() (*Config, error) {
 	pass := getenvDefault("DB_PASS", "")
 	dbname := getenvDefault("DB_NAME", "")
 
+	wxAppID := getenvDefault("WX_APP_ID", "")
+	wxAppSecret := getenvDefault("WX_APP_SECRET", "")
+	jwtSecret := getenvDefault("JWT_SECRET", "default_secret")
+
 	if host == "" || port == "" || user == "" || dbname == "" {
 		return nil, errors.New("invalid db config")
 	}
 
 	return &Config{
-		Host:     host,
-		Port:     port,
-		User:     user,
-		Password: pass,
-		DBName:   dbname,
+		Host:        host,
+		Port:        port,
+		User:        user,
+		Password:    pass,
+		DBName:      dbname,
+		WxAppID:     wxAppID,
+		WxAppSecret: wxAppSecret,
+		JWTSecret:   jwtSecret,
 	}, nil
 }
 

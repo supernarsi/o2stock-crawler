@@ -34,6 +34,7 @@ func main() {
 	defer database.Close()
 
 	apiCtl := controller.NewAPI(database)
+	authCtl := controller.NewAuthController(database, dbCfg)
 
 	// 定义全局中间件
 	globalMiddlewares := []middleware.Middleware{
@@ -44,16 +45,23 @@ func main() {
 	// 创建路由器并注册路由
 	router := middleware.NewRouter(globalMiddlewares...)
 	router.RegisterAPI("/healthz", apiCtl.Healthz(), "") // 允许所有方法
+
+	// 公开接口
+	router.RegisterAPI("/login", authCtl.Login(), http.MethodPost)
 	router.RegisterAPI("/players", apiCtl.Players(), http.MethodGet)
 	router.RegisterAPI("/player-history", apiCtl.PlayerHistory(), http.MethodGet)
 	router.RegisterAPI("/multi-players-history", apiCtl.MultiPlayersHistory(), http.MethodGet)
-	router.RegisterAPI("/player/in", apiCtl.PlayerIn(), http.MethodPost)
-	router.RegisterAPI("/player/out", apiCtl.PlayerOut(), http.MethodPost)
-	router.RegisterAPI("/u-players", apiCtl.UserPlayers(), http.MethodGet)
-	router.RegisterAPI("/player/fav", apiCtl.UserFavPlayer(), http.MethodPost)
+
+	// 需要鉴权的接口
+	authGroup := middleware.NewRouter(append(globalMiddlewares, authCtl.Middleware)...)
+	authGroup.RegisterAPI("/player/in", apiCtl.PlayerIn(), http.MethodPost)
+	authGroup.RegisterAPI("/player/out", apiCtl.PlayerOut(), http.MethodPost)
+	authGroup.RegisterAPI("/u-players", apiCtl.UserPlayers(), http.MethodGet)
+	authGroup.RegisterAPI("/player/fav", apiCtl.UserFavPlayer(), http.MethodPost)
 
 	mux := http.NewServeMux()
 	router.Apply(mux)
+	authGroup.Apply(mux)
 
 	addr := os.Getenv("API_ADDR")
 	if addr == "" {

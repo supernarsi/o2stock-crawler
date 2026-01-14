@@ -4,6 +4,7 @@ go 1.21
 
 require (
 	github.com/go-sql-driver/mysql v1.8.1
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/joho/godotenv v1.5.1
 	github.com/json-iterator/go v1.1.12
 )

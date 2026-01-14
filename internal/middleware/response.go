@@ -27,7 +27,7 @@ func API(handler func(r *http.Request) (any, *APIError)) http.HandlerFunc {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
+func WriteJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -35,4 +35,8 @@ func writeJSON(w http.ResponseWriter, v any) {
 		return
 	}
 	_, _ = w.Write(data)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	WriteJSON(w, v)
 }

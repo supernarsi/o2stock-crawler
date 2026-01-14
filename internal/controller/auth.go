@@ -1,0 +1,82 @@
+package controller
+
+import (
+	"context"
+	"net/http"
+	"strings"
+
+	"o2stock-crawler/api"
+	"o2stock-crawler/internal/db"
+	"o2stock-crawler/internal/middleware"
+	"o2stock-crawler/internal/service"
+)
+
+type AuthController struct {
+	authService *service.AuthService
+}
+
+func NewAuthController(database *db.DB, cfg *db.Config) *AuthController {
+	return &AuthController{
+		authService: service.NewAuthService(database, cfg),
+	}
+}
+
+// Login 登录接口
+func (c *AuthController) Login() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		var req struct {
+			Code string `json:"code"`
+		}
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body"}
+		}
+
+		if req.Code == "" {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing code"}
+		}
+
+		user, token, err := c.authService.LoginWithWechat(r.Context(), req.Code)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+
+		return map[string]any{
+			"user":  user,
+			"token": token,
+		}, nil
+	})
+}
+
+// Middleware 鉴权中间件
+func (c *AuthController) Middleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			middleware.WriteJSON(w, api.Error(http.StatusUnauthorized, "missing authorization header"))
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			middleware.WriteJSON(w, api.Error(http.StatusUnauthorized, "invalid authorization format"))
+			return
+		}
+
+		token := parts[1]
+		userID, err := c.authService.VerifyToken(token)
+		if err != nil {
+			middleware.WriteJSON(w, api.Error(http.StatusUnauthorized, "invalid token: "+err.Error()))
+			return
+		}
+
+		// 将 UserID 注入 Context
+		ctx := context.WithValue(r.Context(), "user_id", userID)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// GetUserIDFromContext 从 Context 获取 UserID
+func GetUserIDFromContext(ctx context.Context) (uint, bool) {
+	id, ok := ctx.Value("user_id").(uint)
+	return id, ok
+}
