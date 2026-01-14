@@ -21,7 +21,7 @@ type Config struct {
 //   - DB_HOST: 127.0.0.1
 //   - DB_PORT: 3306
 //   - DB_USER: root
-//   - DB_PASS: Don4pAn1c+1
+//   - DB_PASS:
 //   - DB_NAME: ol2
 func LoadConfigFromEnv() (*Config, error) {
 	host := getenvDefault("DB_HOST", "127.0.0.1")

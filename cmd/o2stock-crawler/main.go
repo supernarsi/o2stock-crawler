@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"math/rand"
+	"o2stock-crawler/internal/config"
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
 	"os"
@@ -13,8 +14,13 @@ import (
 )
 
 func main() {
-	// Load .env if present (optional for local dev)
+	// 1. Load .env file first (runtime config)
+	// This will NOT overwrite existing system env vars
 	_ = godotenv.Load()
+
+	// 2. Load embedded config (compile-time fallback)
+	// This will only set vars that are still missing
+	config.LoadEmbedded()
 
 	cfg, err := crawler.LoadConfigFromEnv()
 	if err != nil {

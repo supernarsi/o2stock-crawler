@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"o2stock-crawler/internal/config"
 	"o2stock-crawler/internal/controller"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/middleware"
@@ -13,7 +14,13 @@ import (
 )
 
 func main() {
+	// 1. Load .env file first (runtime config)
+	// This will NOT overwrite existing system env vars
 	_ = godotenv.Load()
+
+	// 2. Load embedded config (compile-time fallback)
+	// This will only set vars that are still missing
+	config.LoadEmbedded()
 
 	dbCfg, err := db.LoadConfigFromEnv()
 	if err != nil {
