@@ -86,3 +86,16 @@ func (s *PlayersService) GetMultiPlayersHistory(ctx context.Context, playerIDs [
 
 	return historyList, nil
 }
+
+// GetPlayerInfo 获取单个球员信息
+func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint) (*model.PlayerWithPriceChange, error) {
+	query := db.NewPlayersQuery(1, 1, "", true)
+	player, err := query.GetPlayerInfo(ctx, s.db, playerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get player info: %w", err)
+	}
+	return &model.PlayerWithPriceChange{
+		Players:     *player,
+		PriceChange: 0,
+	}, nil
+}

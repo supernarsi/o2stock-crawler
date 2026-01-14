@@ -181,13 +181,14 @@ func (s *PlayersQuery) ListPlayersWithOwned(ctx context.Context, database *DB, p
 	return players, ownedMap, nil
 }
 
-// extractPlayerIDsFromPlayersWithPriceChange 从 PlayerWithPriceChange 列表中提取ID
-func extractPlayerIDsFromPlayersWithPriceChange(players []*model.PlayerWithPriceChange) []uint {
-	ids := make([]uint, len(players))
-	for i, p := range players {
-		ids[i] = p.PlayerID
+// GetPlayerInfo 获取单个球员信息
+func (s *PlayersQuery) GetPlayerInfo(ctx context.Context, database *DB, playerID uint) (*model.Players, error) {
+	query := fmt.Sprintf(`SELECT %s FROM players WHERE player_id = ?`, selectPlayersFields)
+	player, err := queryPlayers(ctx, database, query, playerID)
+	if err != nil || len(player) == 0 {
+		return nil, fmt.Errorf("failed to get player info: %w", err)
 	}
-	return ids
+	return player[0], nil
 }
 
 // queryPlayersOrderByPrice 按价格排序查询球员价格
@@ -393,6 +394,15 @@ func mergeByPlayersOrder(players []*model.Players, priceRatioMap map[uint]*model
 		})
 	}
 	return res
+}
+
+// extractPlayerIDsFromPlayersWithPriceChange 从 PlayerWithPriceChange 列表中提取ID
+func extractPlayerIDsFromPlayersWithPriceChange(players []*model.PlayerWithPriceChange) []uint {
+	ids := make([]uint, len(players))
+	for i, p := range players {
+		ids[i] = p.PlayerID
+	}
+	return ids
 }
 
 // ============================================================================

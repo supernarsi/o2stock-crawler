@@ -47,17 +47,23 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		if playerIDStr == "" {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing player_id"}
 		}
-		id64, err := strconv.ParseUint(playerIDStr, 10, 32)
+		playerID, err := strconv.Atoi(playerIDStr)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid player_id"}
 		}
-		period := parseIntDefault(r.URL.Query().Get("period"), 1)
-		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
-		rows, err := a.playersService.GetPlayerHistory(ctx, uint32(id64), uint8(period), limit)
+		playerInfo, err := a.playersService.GetPlayerInfo(ctx, uint(playerID))
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
-		return api.PlayerHistoryRes{PlayerHistory: rows}, nil
+
+		period := parseIntDefault(r.URL.Query().Get("period"), 1)
+		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
+		rows, err := a.playersService.GetPlayerHistory(ctx, uint32(playerID), uint8(period), limit)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+
+		return api.PlayerHistoryRes{PlayerInfo: playerInfo, PlayerHistory: rows}, nil
 	})
 }
 
