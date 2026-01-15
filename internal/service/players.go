@@ -107,14 +107,38 @@ func (s *PlayersService) GetMultiPlayersHistory(ctx context.Context, playerIDs [
 }
 
 // GetPlayerInfo 获取单个球员信息
-func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint) (*model.PlayerWithPriceChange, error) {
+func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userID *uint) (*api.PlayerWithOwned, error) {
 	query := db.NewPlayersQuery(1, 1, "", true)
-	player, err := query.GetPlayerInfo(ctx, s.db, playerID)
+	pp, err := query.GetPlayerInfo(ctx, s.db, playerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get player info: %w", err)
 	}
-	return &model.PlayerWithPriceChange{
-		Players:     *player,
-		PriceChange: 0,
+
+	isFav := false
+	owned := []*model.OwnInfo{}
+	if userID != nil {
+		// 查询已拥有的球员
+		ownedMap, err := db.NewUserPlayerOwnQuery(*userID).GetOwnedInfoByPlayerIDs(ctx, s.db, []uint{playerID})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get owned info: %w", err)
+		}
+		if ownedR, ok := ownedMap[playerID]; ok {
+			owned = ownedR
+		}
+
+		// 查询已收藏的球员
+		favMap, err := db.GetFavMapByPlayerIDs(ctx, s.db, *userID, []uint{playerID})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get fav info: %w", err)
+		}
+		if isFavR, ok := favMap[playerID]; ok {
+			isFav = isFavR
+		}
+	}
+
+	return &api.PlayerWithOwned{
+		PlayerWithPriceChange: model.PlayerWithPriceChange{Players: *pp},
+		Owned:                 owned,
+		IsFav:                 isFav,
 	}, nil
 }

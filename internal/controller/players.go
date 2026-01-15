@@ -46,7 +46,12 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid player_id"}
 		}
-		playerInfo, err := a.playersService.GetPlayerInfo(ctx, uint(playerID))
+
+		var userID *uint
+		if uid, ok := GetUserIDFromContext(ctx); ok {
+			userID = &uid
+		}
+		playerInfo, err := a.playersService.GetPlayerInfo(ctx, uint(playerID), userID)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}

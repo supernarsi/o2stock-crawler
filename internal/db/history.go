@@ -89,7 +89,7 @@ LIMIT ?`, selectPriceHistoryFields, q.orderBy.GetOrderByClause())
 		return nil, fmt.Errorf("error iterating price history rows: %w", err)
 	}
 
-	log.Println("result", len(result))
+	// log.Println("result", len(result))
 
 	// 倒序排列（因为查询是按降序，需要转为升序返回）
 	reversePriceHistoryRows(result)
