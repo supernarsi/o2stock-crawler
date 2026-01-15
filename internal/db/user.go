@@ -70,11 +70,11 @@ func NewUserCommand() *UserCommand {
 // CreateUser 创建新用户
 func (c *UserCommand) CreateUser(ctx context.Context, database *DB, u *model.User) error {
 	const query = `
-INSERT INTO user (nick, avatar, wx_openid, wx_unionid, sta, c_time)
-VALUES (?, ?, ?, ?, ?, ?)`
+INSERT INTO user (nick, avatar, wx_openid, wx_unionid, wx_session_key, sta, c_time)
+VALUES (?, ?, ?, ?, ?, ?, ?)`
 
 	now := time.Now()
-	res, err := database.ExecContext(ctx, query, u.Nick, u.Avatar, u.WxOpenID, u.WxUnionID, 1, now)
+	res, err := database.ExecContext(ctx, query, u.Nick, u.Avatar, u.WxOpenID, u.WxUnionID, u.WxSessionKey, 1, now)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
@@ -93,10 +93,10 @@ VALUES (?, ?, ?, ?, ?, ?)`
 func (c *UserCommand) UpdateUser(ctx context.Context, database *DB, u *model.User) error {
 	const query = `
 UPDATE user
-SET nick = ?, avatar = ?
+SET nick = ?, avatar = ?, wx_session_key = ?
 WHERE id = ?`
 
-	_, err := database.ExecContext(ctx, query, u.Nick, u.Avatar, u.ID)
+	_, err := database.ExecContext(ctx, query, u.Nick, u.Avatar, u.WxSessionKey, u.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}

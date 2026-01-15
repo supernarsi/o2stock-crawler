@@ -72,10 +72,11 @@ func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserI
 	if user == nil {
 		// 注册新用户
 		user = &model.User{
-			WxOpenID:  wxResp.OpenID,
-			WxUnionID: wxResp.UnionID,
-			Nick:      info.Nick,
-			Avatar:    info.Avatar,
+			WxOpenID:     wxResp.OpenID,
+			WxUnionID:    wxResp.UnionID,
+			WxSessionKey: wxResp.SessionKey,
+			Nick:         info.Nick,
+			Avatar:       info.Avatar,
 		}
 		if err := s.userCmd.CreateUser(ctx, s.db, user); err != nil {
 			return nil, "", fmt.Errorf("create user failed: %w", err)
@@ -111,7 +112,7 @@ func (s *AuthService) GenerateToken(userID uint) (string, error) {
 
 // VerifyToken 验证 JWT Token 并返回 UserID
 func (s *AuthService) VerifyToken(tokenString string) (uint, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (any, error) {
 		// 验证签名算法
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
