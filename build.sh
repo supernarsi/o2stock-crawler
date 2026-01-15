@@ -8,6 +8,12 @@
 #   ./build.sh o2stock-api api           # Build o2stock-api
 #   ./build.sh myapp crawler             # Build crawler as myapp
 
+
+# --- 加载系统和用户的环境变量 ---
+source /etc/profile
+source ~/.bashrc
+# ---------------------------------------
+
 set -e
 
 OUTPUT_NAME="${1:-o2stock-crawler}"
