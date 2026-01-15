@@ -157,6 +157,130 @@ go test -short ./...
 
 **注意：** 数据库相关的测试需要配置真实的数据库连接。测试会自动跳过如果无法连接数据库。
 
+## 构建与部署
+
+项目提供了 `build.sh` 脚本用于快速构建，并支持将配置文件打包进二进制文件，方便部署。同时提供了 Systemd 服务配置文件，支持在 Linux (如 CentOS) 系统上以服务方式常驻运行。
+
+### 1. build.sh 脚本使用说明
+
+**脚本功能概述**
+`build.sh` 是一个自动化构建脚本，它会读取当前目录下的 `.env` 文件内容，并通过 Go 的 `-ldflags` 将其注入到二进制文件中。这样编译出来的程序在运行时如果没有找到外部 `.env` 文件，会自动使用编译时注入的配置，实现"零配置"部署。
+
+**运行环境要求**
+- 操作系统：Linux / macOS
+- 依赖软件：Go 1.18+
+- 依赖文件：项目根目录下需存在 `.env` 配置文件（用于注入默认配置）
+
+**执行步骤**
+
+1.  **权限设置**
+    ```bash
+    chmod +x build.sh
+    ```
+
+2.  **标准构建命令**
+    - 构建爬虫程序 (Crawler)：
+      ```bash
+      ./build.sh
+      ```
+      默认生成 `o2stock-crawler` 可执行文件。
+
+    - 构建 API 服务 (API)：
+      ```bash
+      ./build.sh o2stock-api o2stock-api
+      ```
+      生成 `o2stock-api` 可执行文件。
+
+3.  **可选参数说明**
+    脚本用法：`./build.sh [output_name] [target_cmd]`
+    - `output_name`: (可选) 输出的二进制文件名，默认为 `o2stock-crawler`。
+    - `target_cmd`: (可选) `cmd/` 目录下的目标程序目录名，默认为 `o2stock-crawler`。若要构建 API，请填 `o2stock-api`。
+
+**预期输出**
+执行成功后，当前目录下会生成指定名称的可执行文件（如 `o2stock-api`），且文件大小通常比未注入配置的版本略大（包含了 `.env` 内容）。
+
+### 2. Systemd 服务管理配置
+
+对于 CentOS 等使用 Systemd 的 Linux 发行版，推荐使用 Systemd 管理 `o2stock-api` 服务。
+
+**服务安装**
+
+1.  **修改配置文件**
+    根据实际部署路径，修改项目根目录下的 `o2stock-api.service` 文件：
+    - `WorkingDirectory`: 修改为程序所在的实际目录（如 `/opt/o2stock`）。
+    - `ExecStart`: 修改为可执行文件的绝对路径（如 `/opt/o2stock/o2stock-api`）。
+    - `User`: 建议修改为非 root 用户（可选）。
+
+2.  **复制文件**
+    将修改好的 unit 文件复制到系统服务目录：
+    ```bash
+    sudo cp o2stock-api.service /etc/systemd/system/
+    ```
+
+3.  **重载配置**
+    ```bash
+    sudo systemctl daemon-reload
+    ```
+
+**常用命令**
+
+- **启动服务**
+  ```bash
+  sudo systemctl start o2stock-api
+  ```
+
+- **设置开机自启**
+  ```bash
+  sudo systemctl enable o2stock-api
+  ```
+
+- **查看状态**
+  ```bash
+  sudo systemctl status o2stock-api
+  ```
+
+- **停止服务**
+  ```bash
+  sudo systemctl stop o2stock-api
+  ```
+
+- **重启服务**
+  ```bash
+  sudo systemctl restart o2stock-api
+  ```
+
+**日志查看**
+服务日志默认输出到系统日志，可以通过 `journalctl` 查看：
+```bash
+# 查看实时日志
+journalctl -u o2stock-api -f
+
+# 查看最近 100 行日志
+journalctl -u o2stock-api -n 100
+```
+
+**配置文件位置**
+- **Systemd Unit 文件**：`/etc/systemd/system/o2stock-api.service`
+- **程序配置文件**：通常位于程序运行目录下的 `.env` 文件（如果有），或者直接使用编译进二进制的内置配置。
+
+### 3. 注意事项
+
+**权限要求**
+- 执行构建脚本需要当前用户对项目目录有写权限。
+- 管理 Systemd 服务（start, stop, enable, cp 到 /etc/systemd/system）通常需要 `root` 权限或 `sudo` 权限。
+
+**常见问题**
+- **构建失败**：请检查 Go 环境是否安装正确，以及 `go mod tidy` 是否已执行。
+- **服务无法启动**：
+  - 检查 `WorkingDirectory` 和 `ExecStart` 路径是否正确。
+  - 检查二进制文件是否有执行权限 (`chmod +x o2stock-api`)。
+  - 通过 `journalctl -u o2stock-api -xe` 查看详细报错信息。
+- **配置未生效**：程序优先读取运行目录下的 `.env` 文件，如果不存在才会使用编译注入的配置。请确认配置文件的加载优先级。
+
+**版本兼容性**
+- **操作系统**：CentOS 7+, Ubuntu 16.04+, Debian 8+ 等支持 Systemd 的 Linux 发行版。
+- **Go 版本**：建议使用 Go 1.18 及以上版本进行编译。
+
 ### 后续可扩展点
 
 - 使用 cron（如 crontab 或系统级定时任务）调用 `run-once`。
