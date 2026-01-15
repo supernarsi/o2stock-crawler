@@ -82,6 +82,12 @@ func main() {
 }
 
 func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error {
+	// 如果当前时间在 03:00 ~ 08:00 之间，则不抓取球员数据
+	if time.Now().Hour() >= 3 && time.Now().Hour() < 8 {
+		log.Printf(">>> 当前时间在 03:00 ~ 08:00 之间，不抓取球员数据 <<<")
+		return nil
+	}
+
 	hasMore := true
 	rosterList := []crawler.RosterItemModel{}
 	log.Printf(">>> 开始抓取球员数据 <<<")
