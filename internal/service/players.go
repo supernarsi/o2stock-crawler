@@ -26,17 +26,36 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, page, limit i
 		return nil, fmt.Errorf("failed to list players with owned: %w", err)
 	}
 
+	var favMap map[uint]bool
+	if userID != nil && len(players) > 0 {
+		pids := make([]uint, len(players))
+		for i, p := range players {
+			pids[i] = p.PlayerID
+		}
+		favMap, err = db.GetFavMapByPlayerIDs(ctx, s.db, *userID, pids)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get fav info: %w", err)
+		}
+	}
+
 	// 构建返回结果，总是包含 owned 字段
 	result := make([]api.PlayerWithOwned, len(players))
 	for i, p := range players {
 		result[i] = api.PlayerWithOwned{
 			PlayerWithPriceChange: *p,
 			Owned:                 []*model.OwnInfo{}, // 默认为空数组
+			IsFav:                 false,
 		}
 		// 如果有拥有信息，填充到结果中
 		if ownedMap != nil {
 			if owned, ok := ownedMap[p.PlayerID]; ok {
 				result[i].Owned = owned
+			}
+		}
+		// 如果有收藏信息，填充到结果中
+		if favMap != nil {
+			if isFav, ok := favMap[p.PlayerID]; ok {
+				result[i].IsFav = isFav
 			}
 		}
 	}

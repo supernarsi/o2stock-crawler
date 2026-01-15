@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -46,4 +47,65 @@ VALUES (?, ?, ?)`
 		return fmt.Errorf("failed to insert fav player: %w", err)
 	}
 	return nil
+}
+
+// GetFavPlayerIDs 获取用户收藏的所有球员ID
+func GetFavPlayerIDs(ctx context.Context, database *DB, userID uint) ([]uint, error) {
+	const query = `
+SELECT pid 
+FROM u_p_fav 
+WHERE uid = ?`
+
+	rows, err := database.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query fav player ids: %w", err)
+	}
+	defer rows.Close()
+
+	var pids []uint
+	for rows.Next() {
+		var pid uint
+		if err := rows.Scan(&pid); err != nil {
+			return nil, fmt.Errorf("failed to scan fav player id: %w", err)
+		}
+		pids = append(pids, pid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating fav player rows: %w", err)
+	}
+	return pids, nil
+}
+
+// GetFavMapByPlayerIDs 批量获取用户对指定球员的收藏状态
+func GetFavMapByPlayerIDs(ctx context.Context, database *DB, userID uint, playerIDs []uint) (map[uint]bool, error) {
+	if len(playerIDs) == 0 {
+		return map[uint]bool{}, nil
+	}
+
+	// 构建 IN 查询
+	placeholders := make([]string, len(playerIDs))
+	args := make([]any, len(playerIDs)+1)
+	args[0] = userID
+	for i, pid := range playerIDs {
+		placeholders[i] = "?"
+		args[i+1] = pid
+	}
+
+	query := fmt.Sprintf(`SELECT pid FROM u_p_fav WHERE uid = ? AND pid IN (%s)`, strings.Join(placeholders, ","))
+
+	rows, err := database.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query fav status: %w", err)
+	}
+	defer rows.Close()
+
+	favMap := make(map[uint]bool)
+	for rows.Next() {
+		var pid uint
+		if err := rows.Scan(&pid); err != nil {
+			return nil, fmt.Errorf("failed to scan fav pid: %w", err)
+		}
+		favMap[pid] = true
+	}
+	return favMap, nil
 }

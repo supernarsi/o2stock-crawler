@@ -327,6 +327,21 @@ func (s *PlayersQuery) GetPlayersByIDs(ctx context.Context, database *DB, player
 	return queryPlayers(ctx, database, q, args...)
 }
 
+// GetPlayersWithPriceChangeByIDs 根据球员ID列表获取包含价格变动的球员信息
+func (s *PlayersQuery) GetPlayersWithPriceChangeByIDs(ctx context.Context, database *DB, playerIDs []uint, period uint8) ([]*model.PlayerWithPriceChange, error) {
+	if len(playerIDs) == 0 {
+		return []*model.PlayerWithPriceChange{}, nil
+	}
+
+	// 设置过滤条件
+	s.filter.PlayerIDs = playerIDs
+	s.filter.Period = period
+	s.filter.Limit = 0 // 不限制数量
+
+	// 复用按涨跌幅查询的逻辑（因为它已经支持了 PlayerIDs 过滤和数据组装）
+	return s.queryPlayersOrderByPriceRatio(ctx, database)
+}
+
 // ============================================================================
 // 数据合并函数
 // ============================================================================

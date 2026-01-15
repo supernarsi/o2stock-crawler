@@ -107,6 +107,51 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 	return rosters, nil
 }
 
+// GetUserFavPlayers 获取用户收藏球员列表
+func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) ([]api.PlayerWithOwned, error) {
+	// 1. 获取用户收藏的球员ID列表
+	favIDs, err := db.GetFavPlayerIDs(ctx, s.db, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get fav player ids: %w", err)
+	}
+
+	if len(favIDs) == 0 {
+		return []api.PlayerWithOwned{}, nil
+	}
+
+	// 2. 获取球员详细信息（包含价格变动）
+	// 默认 period = 1 (1天)
+	playersQuery := db.NewPlayersQuery(1, 100, "", true)
+	players, err := playersQuery.GetPlayersWithPriceChangeByIDs(ctx, s.db, favIDs, 1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get players with price change: %w", err)
+	}
+
+	// 3. 获取拥有信息
+	ownedQuery := db.NewUserPlayerOwnQuery(userID)
+	ownedMap, err := ownedQuery.GetOwnedInfoByPlayerIDs(ctx, s.db, favIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get owned info: %w", err)
+	}
+
+	// 4. 构建响应
+	result := make([]api.PlayerWithOwned, len(players))
+	for i, p := range players {
+		result[i] = api.PlayerWithOwned{
+			PlayerWithPriceChange: *p,
+			Owned:                 []*model.OwnInfo{},
+			IsFav:                 true, // 既然是收藏列表，肯定都是已收藏
+		}
+		if ownedMap != nil {
+			if owned, ok := ownedMap[p.PlayerID]; ok {
+				result[i].Owned = owned
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // FavPlayer 用户收藏球员
 func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint) error {
 	// 检查是否已收藏

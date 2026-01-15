@@ -105,6 +105,24 @@ func (a *API) UserPlayers() http.HandlerFunc {
 	})
 }
 
+// UserFavList 获取用户收藏球员列表
+func (a *API) UserFavList() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		players, err := a.userPlayerService.GetUserFavPlayers(ctx, userID)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+
+		return api.PlayersWithOwnedRes{Players: players}, nil
+	})
+}
+
 // UserFavPlayer 用户收藏球员接口
 func (a *API) UserFavPlayer() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {

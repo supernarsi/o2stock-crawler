@@ -43,6 +43,7 @@ type PlayersWithOwnedRes struct {
 type PlayerWithOwned struct {
 	model.PlayerWithPriceChange
 	Owned []*model.OwnInfo `json:"owned"`
+	IsFav bool             `json:"is_fav"`
 }
 
 // UserFavPlayerReq 用户收藏球员请求

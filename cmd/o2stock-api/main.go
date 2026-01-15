@@ -59,6 +59,7 @@ func main() {
 	authGroup.RegisterAPI("/player/out", apiCtl.PlayerOut(), http.MethodPost)
 	authGroup.RegisterAPI("/u-players", apiCtl.UserPlayers(), http.MethodGet)
 	authGroup.RegisterAPI("/player/fav", apiCtl.UserFavPlayer(), http.MethodPost)
+	authGroup.RegisterAPI("/u-fav-players", apiCtl.UserFavList(), http.MethodGet)
 
 	mux := http.NewServeMux()
 	router.Apply(mux)
