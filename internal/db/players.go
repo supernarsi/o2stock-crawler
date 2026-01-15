@@ -64,7 +64,7 @@ const (
     ROW_NUMBER() OVER ( PARTITION BY player_id ORDER BY at_date_hour DESC) AS rn_desc,
     ROW_NUMBER() OVER ( PARTITION BY player_id ORDER BY at_date_hour ASC) AS rn_asc
   FROM p_p_history
-  WHERE at_date_hour >= ?
+  WHERE at_date_hour >= ? AND price_standard >= 5000
   %s
 )
 SELECT
@@ -196,10 +196,11 @@ func (s *PlayersQuery) queryPlayersOrderByPrice(ctx context.Context, database *D
 	orderDir := s.filter.GetOrderDirection()
 	filterClause := ""
 	if s.filter.SoldOut {
-		filterClause = "WHERE price_current_lowest = 0"
+		filterClause = "AND price_current_lowest = 0"
 	}
 	q := fmt.Sprintf(`SELECT %s
 FROM players 
+WHERE price_standard >= 5000
 %s
 ORDER BY price_standard %s 
 LIMIT ? OFFSET ?`, selectPlayersFields, filterClause, orderDir)
