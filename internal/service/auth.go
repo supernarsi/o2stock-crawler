@@ -30,6 +30,13 @@ func NewAuthService(database *db.DB, dbConfig *db.Config) *AuthService {
 	}
 }
 
+// WechatLoginUserInfo 微信登录用户信息
+type WechatLoginUserInfo struct {
+	Code   string `json:"code"`
+	Nick   string `json:"nick"`
+	Avatar string `json:"avatar"`
+}
+
 // WechatLoginResponse 微信登录接口响应
 type WechatLoginResponse struct {
 	OpenID     string `json:"openid"`
@@ -49,9 +56,9 @@ type UserClaims struct {
 // 1. 调用微信接口获取 OpenID
 // 2. 查询用户是否存在，不存在则注册
 // 3. 生成 Token
-func (s *AuthService) LoginWithWechat(ctx context.Context, code string) (*model.User, string, error) {
+func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserInfo) (*model.User, string, error) {
 	// 1. 获取微信 OpenID
-	wxResp, err := s.code2Session(ctx, code)
+	wxResp, err := s.code2Session(ctx, info.Code)
 	if err != nil {
 		return nil, "", fmt.Errorf("wechat login failed: %w", err)
 	}
@@ -67,7 +74,8 @@ func (s *AuthService) LoginWithWechat(ctx context.Context, code string) (*model.
 		user = &model.User{
 			WxOpenID:  wxResp.OpenID,
 			WxUnionID: wxResp.UnionID,
-			Nick:      "微信用户", // 默认昵称
+			Nick:      info.Nick,
+			Avatar:    info.Avatar,
 		}
 		if err := s.userCmd.CreateUser(ctx, s.db, user); err != nil {
 			return nil, "", fmt.Errorf("create user failed: %w", err)

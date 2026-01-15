@@ -25,7 +25,9 @@ func NewAuthController(database *db.DB, cfg *db.Config) *AuthController {
 func (c *AuthController) Login() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		var req struct {
-			Code string `json:"code"`
+			Code   string `json:"code"`
+			Nick   string `json:"nickname"`
+			Avatar string `json:"avatar"`
 		}
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body"}
@@ -35,7 +37,11 @@ func (c *AuthController) Login() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing code"}
 		}
 
-		user, token, err := c.authService.LoginWithWechat(r.Context(), req.Code)
+		user, token, err := c.authService.LoginWithWechat(r.Context(), service.WechatLoginUserInfo{
+			Code:   req.Code,
+			Nick:   req.Nick,
+			Avatar: "",
+		})
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
