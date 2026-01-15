@@ -180,6 +180,19 @@ func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint
 	return nil
 }
 
+// UnFavPlayer 用户取消收藏球员
+func (s *UserPlayerService) UnFavPlayer(ctx context.Context, userID, playerID uint) error {
+	// 删除收藏记录
+	if err := db.DeleteFavPlayer(ctx, s.db, userID, playerID); err != nil {
+		if err == db.ErrNoRows {
+			return fmt.Errorf("player not in fav list")
+		}
+		return fmt.Errorf("failed to delete fav player: %w", err)
+	}
+
+	return nil
+}
+
 // formatTimeOrEmpty 格式化时间为字符串，如果为 nil 则返回空字符串
 func formatTimeOrEmpty(t *time.Time) string {
 	if t == nil {

@@ -64,6 +64,29 @@ VALUES (?, ?, ?)`
 	return nil
 }
 
+// DeleteFavPlayer 删除一条收藏记录
+func DeleteFavPlayer(ctx context.Context, database *DB, userID, playerID uint) error {
+	const query = `
+DELETE FROM u_p_fav 
+WHERE uid = ? AND pid = ?`
+
+	result, err := database.ExecContext(ctx, query, userID, playerID)
+	if err != nil {
+		return fmt.Errorf("failed to delete fav player: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrNoRows
+	}
+
+	return nil
+}
+
 // GetFavPlayerIDs 获取用户收藏的所有球员ID
 func GetFavPlayerIDs(ctx context.Context, database *DB, userID uint) ([]uint, error) {
 	const query = `

@@ -48,6 +48,43 @@ func (a *API) PlayerIn() http.HandlerFunc {
 	})
 }
 
+// UserUnFavPlayer 用户取消收藏球员接口
+func (a *API) UserUnFavPlayer() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		var playerID uint
+		// 只有当 Body 存在且不为空时才尝试解析
+		if r.Body != nil && r.ContentLength != 0 {
+			var req api.UserFavPlayerReq
+			if err := middleware.DecodeJSONBody(r, &req); err == nil {
+				playerID = req.PlayerID
+			}
+		}
+
+		// 参数校验
+		if playerID == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing player_id"}
+		}
+
+		// 调用服务层
+		err := a.userPlayerService.UnFavPlayer(ctx, userID, playerID)
+		if err != nil {
+			// 处理业务错误
+			if strings.Contains(err.Error(), "player not in fav list") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+
+		return nil, nil
+	})
+}
+
 // PlayerOut 标记出售接口
 func (a *API) PlayerOut() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
