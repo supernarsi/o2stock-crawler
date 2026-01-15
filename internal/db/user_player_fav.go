@@ -35,6 +35,21 @@ WHERE uid = ? AND pid = ?`
 	return count, nil
 }
 
+// CountUserFavs 统计用户收藏的总球员数量
+func CountUserFavs(ctx context.Context, database *DB, userID uint) (int, error) {
+	const query = `
+SELECT COUNT(*) 
+FROM u_p_fav 
+WHERE uid = ?`
+
+	var count int
+	err := database.QueryRowContext(ctx, query, userID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count user favs: %w", err)
+	}
+	return count, nil
+}
+
 // InsertFavPlayer 插入一条收藏记录
 func InsertFavPlayer(ctx context.Context, database *DB, userID, playerID uint) error {
 	const query = `

@@ -146,7 +146,7 @@ func (a *API) UserFavPlayer() http.HandlerFunc {
 		err := a.userPlayerService.FavPlayer(ctx, userID, req.PlayerID)
 		if err != nil {
 			// 处理业务错误
-			if strings.Contains(err.Error(), "already fav this player") {
+			if strings.Contains(err.Error(), "already fav this player") || strings.Contains(err.Error(), "fav limit exceeded") {
 				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
 			}
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}

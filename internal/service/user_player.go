@@ -163,6 +163,15 @@ func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint
 		return fmt.Errorf("already fav this player")
 	}
 
+	// 检查收藏数量是否已达上限 (50)
+	totalFavs, err := db.CountUserFavs(ctx, s.db, userID)
+	if err != nil {
+		return fmt.Errorf("failed to count user favs: %w", err)
+	}
+	if totalFavs >= 50 {
+		return fmt.Errorf("fav limit exceeded (max 50)")
+	}
+
 	// 插入收藏记录
 	if err := db.InsertFavPlayer(ctx, s.db, userID, playerID); err != nil {
 		return fmt.Errorf("failed to insert fav player: %w", err)

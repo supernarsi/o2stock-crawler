@@ -145,3 +145,38 @@ func TestUserFavPlayers(t *testing.T) {
 		}
 	}
 }
+
+func TestUserFavLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database test in short mode")
+	}
+
+	database, teardown := setupTestDB(t)
+	defer teardown()
+
+	ctx := context.Background()
+	userSvc := NewUserPlayerService(database)
+	userID := uint(99998) // Another Test User ID
+
+	// Clean up
+	database.ExecContext(ctx, "DELETE FROM u_p_fav WHERE uid = ?", userID)
+	defer database.ExecContext(ctx, "DELETE FROM u_p_fav WHERE uid = ?", userID)
+
+	// 1. Insert 50 favs
+	for i := 0; i < 50; i++ {
+		pid := uint(20000 + i)
+		err := userSvc.FavPlayer(ctx, userID, pid)
+		if err != nil {
+			t.Fatalf("failed to insert fav %d: %v", i, err)
+		}
+	}
+
+	// 2. Try to insert 51st fav
+	err := userSvc.FavPlayer(ctx, userID, 30000)
+	if err == nil {
+		t.Fatal("expected error when exceeding fav limit, got nil")
+	}
+	if err.Error() != "fav limit exceeded (max 50)" {
+		t.Fatalf("expected 'fav limit exceeded (max 50)', got '%v'", err)
+	}
+}
