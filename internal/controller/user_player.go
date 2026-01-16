@@ -29,7 +29,7 @@ func (a *API) PlayerIn() http.HandlerFunc {
 		}
 
 		// 解析时间
-		dt, err := time.Parse("2006-01-02 15:04:05", req.Dt)
+		dt, err := time.Parse("2006-01-02", req.Dt)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid dt format, expected: 2006-01-02 15:04:05"}
 		}
@@ -105,7 +105,7 @@ func (a *API) PlayerOut() http.HandlerFunc {
 		}
 
 		// 解析时间
-		dt, err := time.Parse("2006-01-02 15:04:05", req.Dt)
+		dt, err := time.Parse("2006-01-02", req.Dt)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid dt format, expected: 2006-01-02 15:04:05"}
 		}
