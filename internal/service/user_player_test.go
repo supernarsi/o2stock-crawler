@@ -110,7 +110,7 @@ func TestUserFavPlayers(t *testing.T) {
 
 	// 4. Check Player List (ListPlayersWithOwned)
 	// Try to find the player in a large list
-	list, err := playersSvc.ListPlayersWithOwned(ctx, 1, 5000, "", false, 1, &userID, false)
+	list, err := playersSvc.ListPlayersWithOwned(ctx, 1, 5000, "", false, 1, &userID, false, "")
 	if err != nil {
 		t.Fatalf("ListPlayersWithOwned failed: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestUserFavPlayers(t *testing.T) {
 
 	// 5. Test Access Control (Simulation)
 	// If we pass nil userID to ListPlayersWithOwned, IsFav should be false
-	listNoAuth, err := playersSvc.ListPlayersWithOwned(ctx, 1, 5000, "", false, 1, nil, false)
+	listNoAuth, err := playersSvc.ListPlayersWithOwned(ctx, 1, 5000, "", false, 1, nil, false, "")
 	if err != nil {
 		t.Fatalf("ListPlayersWithOwned (no auth) failed: %v", err)
 	}

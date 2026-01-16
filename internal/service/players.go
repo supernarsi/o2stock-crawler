@@ -19,9 +19,9 @@ func NewPlayersService(database *db.DB) *PlayersService {
 }
 
 // ListPlayersWithOwned 获取球员列表，支持分页、排序，并可选地包含用户的拥有信息
-func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, page, limit int, orderBy string, orderAsc bool, period uint8, userID *uint, soldOut bool) ([]api.PlayerWithOwned, error) {
+func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, page, limit int, orderBy string, orderAsc bool, period uint8, userID *uint, soldOut bool, pName string) ([]api.PlayerWithOwned, error) {
 	query := db.NewPlayersQuery(page, limit, orderBy, orderAsc)
-	players, ownedMap, err := query.ListPlayersWithOwned(ctx, s.db, period, userID, soldOut)
+	players, ownedMap, err := query.ListPlayersWithOwned(ctx, s.db, period, userID, soldOut, pName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list players with owned: %w", err)
 	}

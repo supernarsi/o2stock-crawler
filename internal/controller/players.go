@@ -18,6 +18,7 @@ func (a *API) Players() http.HandlerFunc {
 		orderAsc := r.URL.Query().Get("order_asc") == "true"
 		soldOut := r.URL.Query().Get("sold_out") == "true"
 		period := parseIntDefault(r.URL.Query().Get("period"), 1)
+		pName := r.URL.Query().Get("player_name")
 
 		// 解析可选的 user_id (从 Token 获取)
 		var userID *uint
@@ -25,7 +26,7 @@ func (a *API) Players() http.HandlerFunc {
 			userID = &uid
 		}
 
-		players, err := a.playersService.ListPlayersWithOwned(ctx, page, limit, orderBy, orderAsc, uint8(period), userID, soldOut)
+		players, err := a.playersService.ListPlayersWithOwned(ctx, page, limit, orderBy, orderAsc, uint8(period), userID, soldOut, pName)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -83,13 +84,14 @@ ORDER BY price_ratio %s`
 
 // PlayerFilter 封装查询条件
 type PlayerFilter struct {
-	Page      int
-	Limit     int
-	OrderBy   string
-	OrderAsc  bool
-	Period    uint8
-	SoldOut   bool
-	PlayerIDs []uint
+	Page       int
+	Limit      int
+	OrderBy    string
+	OrderAsc   bool
+	Period     uint8
+	SoldOut    bool
+	PlayerName string
+	PlayerIDs  []uint
 }
 
 // GetOffset 计算偏移量
@@ -143,10 +145,18 @@ func NewPlayersQuery(page, limit int, orderBy string, orderAsc bool) *PlayersQue
 }
 
 // ListPlayers 返回简单的球员列表，支持按价格或涨跌幅排序，可分页。
-func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB, period uint8, soldOut bool) ([]*model.PlayerWithPriceChange, error) {
+func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB, period uint8, soldOut bool, pName string) ([]*model.PlayerWithPriceChange, error) {
 	// 更新 Filter 中的条件
 	s.filter.Period = period
 	s.filter.SoldOut = soldOut
+	s.filter.PlayerName = pName
+
+	if s.filter.PlayerName != "" {
+		// 如果搜索名字，直接指定按价格倒序排序
+		s.filter.OrderAsc = false
+		s.filter.OrderBy = OrderByPriceStandard
+		// return s.queryPlayersOrderByPrice(ctx, database)
+	}
 
 	switch s.filter.OrderBy {
 	case OrderByPriceStandard:
@@ -162,8 +172,8 @@ func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB, period uin
 }
 
 // ListPlayersWithOwned 返回球员列表，并可选地包含用户的拥有信息
-func (s *PlayersQuery) ListPlayersWithOwned(ctx context.Context, database *DB, period uint8, userID *uint, soldOut bool) ([]*model.PlayerWithPriceChange, map[uint][]*model.OwnInfo, error) {
-	players, err := s.ListPlayers(ctx, database, period, soldOut)
+func (s *PlayersQuery) ListPlayersWithOwned(ctx context.Context, database *DB, period uint8, userID *uint, soldOut bool, pName string) ([]*model.PlayerWithPriceChange, map[uint][]*model.OwnInfo, error) {
+	players, err := s.ListPlayers(ctx, database, period, soldOut, pName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -198,13 +208,16 @@ func (s *PlayersQuery) queryPlayersOrderByPrice(ctx context.Context, database *D
 	if s.filter.SoldOut {
 		filterClause = "AND price_current_lowest = 0"
 	}
+	if s.filter.PlayerName != "" {
+		filterClause += " AND p_name_show LIKE '%" + s.filter.PlayerName + "%'"
+	}
 	q := fmt.Sprintf(`SELECT %s
 FROM players 
 WHERE price_standard >= 5000
 %s
 ORDER BY price_standard %s 
 LIMIT ? OFFSET ?`, selectPlayersFields, filterClause, orderDir)
-
+	log.Println("query: ", q)
 	players, err := s.queryPlayers(ctx, database, q, s.filter.Limit, s.filter.GetOffset())
 	if err != nil {
 		return nil, fmt.Errorf("failed to query players by price: %w", err)
