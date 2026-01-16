@@ -6,6 +6,7 @@ import (
 
 	"o2stock-crawler/api"
 	"o2stock-crawler/internal/middleware"
+	"o2stock-crawler/internal/service"
 )
 
 // Players 获取球员列表
@@ -26,7 +27,18 @@ func (a *API) Players() http.HandlerFunc {
 			userID = &uid
 		}
 
-		players, err := a.playersService.ListPlayersWithOwned(ctx, page, limit, orderBy, orderAsc, uint8(period), userID, soldOut, pName)
+		opts := service.PlayerListOptions{
+			Page:       page,
+			Limit:      limit,
+			OrderBy:    orderBy,
+			OrderAsc:   orderAsc,
+			Period:     uint8(period),
+			UserID:     userID,
+			SoldOut:    soldOut,
+			PlayerName: pName,
+		}
+
+		players, err := a.playersService.ListPlayersWithOwned(ctx, opts)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}

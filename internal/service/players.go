@@ -18,21 +18,54 @@ func NewPlayersService(database *db.DB) *PlayersService {
 	return &PlayersService{db: database}
 }
 
+// PlayerListOptions 封装球员列表查询参数
+type PlayerListOptions struct {
+	Page       int
+	Limit      int
+	OrderBy    string
+	OrderAsc   bool
+	Period     uint8
+	UserID     *uint
+	SoldOut    bool
+	PlayerName string
+}
+
 // ListPlayersWithOwned 获取球员列表，支持分页、排序，并可选地包含用户的拥有信息
-func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, page, limit int, orderBy string, orderAsc bool, period uint8, userID *uint, soldOut bool, pName string) ([]api.PlayerWithOwned, error) {
-	query := db.NewPlayersQuery(page, limit, orderBy, orderAsc)
-	players, ownedMap, err := query.ListPlayersWithOwned(ctx, s.db, period, userID, soldOut, pName)
+func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerListOptions) ([]api.PlayerWithOwned, error) {
+	// 参数校验与默认值
+	if opts.Limit <= 0 {
+		opts.Limit = 100
+	}
+	if opts.Limit > 500 {
+		opts.Limit = 500
+	}
+	if opts.Page <= 0 {
+		opts.Page = 1
+	}
+
+	filter := db.PlayerFilter{
+		Page:       opts.Page,
+		Limit:      opts.Limit,
+		OrderBy:    opts.OrderBy,
+		OrderAsc:   opts.OrderAsc,
+		Period:     opts.Period,
+		SoldOut:    opts.SoldOut,
+		PlayerName: opts.PlayerName,
+	}
+
+	query := db.NewPlayersQuery(filter)
+	players, ownedMap, err := query.ListPlayersWithOwned(ctx, s.db, opts.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list players with owned: %w", err)
 	}
 
 	var favMap map[uint]bool
-	if userID != nil && len(players) > 0 {
+	if opts.UserID != nil && len(players) > 0 {
 		pids := make([]uint, len(players))
 		for i, p := range players {
 			pids[i] = p.PlayerID
 		}
-		favMap, err = db.GetFavMapByPlayerIDs(ctx, s.db, *userID, pids)
+		favMap, err = db.GetFavMapByPlayerIDs(ctx, s.db, *opts.UserID, pids)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get fav info: %w", err)
 		}
@@ -65,6 +98,12 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, page, limit i
 
 // GetPlayerHistory 获取单个球员历史价格
 func (s *PlayersService) GetPlayerHistory(ctx context.Context, playerID uint32, period uint8, limit int) ([]*model.PriceHistoryRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
 	query := db.NewPlayerHistoryQuery(playerID, limit)
 	rows, err := query.GetPlayerHistory(ctx, s.db, period)
 	if err != nil {
@@ -82,6 +121,13 @@ func (s *PlayersService) GetMultiPlayersHistory(ctx context.Context, playerIDs [
 	// 限制最多查询的球员数量
 	if len(playerIDs) > 30 {
 		return nil, fmt.Errorf("too many player_ids, maximum 30")
+	}
+
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
 	}
 
 	query := db.NewMultiPlayersHistoryQuery(playerIDs, limit)
@@ -108,7 +154,7 @@ func (s *PlayersService) GetMultiPlayersHistory(ctx context.Context, playerIDs [
 
 // GetPlayerInfo 获取单个球员信息
 func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userID *uint) (*api.PlayerWithOwned, error) {
-	query := db.NewPlayersQuery(1, 1, "", true)
+	query := db.NewPlayersQuery(db.PlayerFilter{Page: 1, Limit: 1, OrderAsc: true})
 	pp, err := query.GetPlayerInfo(ctx, s.db, playerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get player info: %w", err)

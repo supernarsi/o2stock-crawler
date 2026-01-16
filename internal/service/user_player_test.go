@@ -43,7 +43,7 @@ func TestUserFavPlayers(t *testing.T) {
 	// Insert dummy player if not exists
 	_, err := database.ExecContext(ctx, `
 		INSERT IGNORE INTO players (player_id, p_name_show, p_name_en, team_abbr, version, card_type, player_img, price_standard)
-		VALUES (?, 'Test Player', 'Test Player En', 'LAL', 1, 1, 'img', 1000)
+		VALUES (?, 'Test Player', 'Test Player En', 'LAL', 1, 1, 'img', 6000)
 	`, playerID)
 	if err != nil {
 		t.Fatalf("failed to insert dummy player: %v", err)
@@ -54,7 +54,7 @@ func TestUserFavPlayers(t *testing.T) {
 	nowStr := db.FormatDateTimeHour(time.Now())
 	_, err = database.ExecContext(ctx, `
 		INSERT IGNORE INTO p_p_history (player_id, at_date_hour, price_standard, price_current_sale, c_time)
-		VALUES (?, ?, 1000, 1000, NOW())
+		VALUES (?, ?, 6000, 6000, NOW())
 	`, playerID, nowStr)
 	if err != nil {
 		t.Fatalf("failed to insert dummy p_p_history: %v", err)
@@ -110,7 +110,12 @@ func TestUserFavPlayers(t *testing.T) {
 
 	// 4. Check Player List (ListPlayersWithOwned)
 	// Try to find the player in a large list
-	list, err := playersSvc.ListPlayersWithOwned(ctx, 1, 5000, "", false, 1, &userID, false, "")
+	list, err := playersSvc.ListPlayersWithOwned(ctx, PlayerListOptions{
+		Page:   1,
+		Limit:  5000,
+		Period: 1,
+		UserID: &userID,
+	})
 	if err != nil {
 		t.Fatalf("ListPlayersWithOwned failed: %v", err)
 	}
@@ -133,7 +138,12 @@ func TestUserFavPlayers(t *testing.T) {
 
 	// 5. Test Access Control (Simulation)
 	// If we pass nil userID to ListPlayersWithOwned, IsFav should be false
-	listNoAuth, err := playersSvc.ListPlayersWithOwned(ctx, 1, 5000, "", false, 1, nil, false, "")
+	listNoAuth, err := playersSvc.ListPlayersWithOwned(ctx, PlayerListOptions{
+		Page:   1,
+		Limit:  5000,
+		Period: 1,
+		UserID: nil,
+	})
 	if err != nil {
 		t.Fatalf("ListPlayersWithOwned (no auth) failed: %v", err)
 	}

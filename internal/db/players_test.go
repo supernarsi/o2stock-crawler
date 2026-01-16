@@ -22,8 +22,14 @@ func TestListPlayers(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	query := NewPlayersQuery(10, 0, "price_change", true)
-	players, err := query.ListPlayers(ctx, db, 1, false, "")
+	query := NewPlayersQuery(PlayerFilter{
+		Page:     1,
+		Limit:    10,
+		OrderBy:  "price_change",
+		OrderAsc: true,
+		Period:   1,
+	})
+	players, err := query.ListPlayers(ctx, db)
 	if err != nil {
 		t.Fatalf("ListPlayers failed: %v", err)
 	}
@@ -48,7 +54,7 @@ func TestGetPlayersByIDs(t *testing.T) {
 
 	ctx := context.Background()
 	playerIDs := []uint{10005, 10006}
-	query := NewPlayersQuery(1, 100, "price_standard", true)
+	query := NewPlayersQuery(PlayerFilter{})
 	players, err := query.GetPlayersByIDs(ctx, db, playerIDs, false)
 	if err != nil {
 		t.Fatalf("GetPlayersByIDs failed: %v", err)

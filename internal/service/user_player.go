@@ -74,7 +74,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 	}
 
 	// 查询球员详细信息
-	playersQuery := db.NewPlayersQuery(1, 100, "", true)
+	playersQuery := db.NewPlayersQuery(db.PlayerFilter{})
 	players, err := playersQuery.GetPlayersByIDs(ctx, s.db, playerIDs, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
@@ -121,7 +121,7 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 
 	// 2. 获取球员详细信息（包含价格变动）
 	// 默认 period = 1 (1天)
-	playersQuery := db.NewPlayersQuery(1, 100, "", true)
+	playersQuery := db.NewPlayersQuery(db.PlayerFilter{})
 	players, err := playersQuery.GetPlayersWithPriceChangeByIDs(ctx, s.db, favIDs, 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players with price change: %w", err)

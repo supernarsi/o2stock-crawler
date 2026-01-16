@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -129,33 +128,22 @@ type PlayersQuery struct {
 }
 
 // NewPlayersQuery 创建一个 PlayersQuery
-func NewPlayersQuery(page, limit int, orderBy string, orderAsc bool) *PlayersQuery {
+func NewPlayersQuery(filter PlayerFilter) *PlayersQuery {
 	// 限制排序字段，只允许 price_change 和 price_standard
-	if orderBy != OrderByPriceChange && orderBy != OrderByPriceStandard {
-		orderBy = OrderByPlayerID
+	if filter.OrderBy != OrderByPriceChange && filter.OrderBy != OrderByPriceStandard {
+		filter.OrderBy = OrderByPlayerID
 	}
 	return &PlayersQuery{
-		filter: PlayerFilter{
-			Page:     page,
-			Limit:    limit,
-			OrderBy:  orderBy,
-			OrderAsc: orderAsc,
-		},
+		filter: filter,
 	}
 }
 
 // ListPlayers 返回简单的球员列表，支持按价格或涨跌幅排序，可分页。
-func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB, period uint8, soldOut bool, pName string) ([]*model.PlayerWithPriceChange, error) {
-	// 更新 Filter 中的条件
-	s.filter.Period = period
-	s.filter.SoldOut = soldOut
-	s.filter.PlayerName = pName
-
+func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB) ([]*model.PlayerWithPriceChange, error) {
 	if s.filter.PlayerName != "" {
 		// 如果搜索名字，直接指定按价格倒序排序
 		s.filter.OrderAsc = false
 		s.filter.OrderBy = OrderByPriceStandard
-		// return s.queryPlayersOrderByPrice(ctx, database)
 	}
 
 	switch s.filter.OrderBy {
@@ -172,8 +160,8 @@ func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB, period uin
 }
 
 // ListPlayersWithOwned 返回球员列表，并可选地包含用户的拥有信息
-func (s *PlayersQuery) ListPlayersWithOwned(ctx context.Context, database *DB, period uint8, userID *uint, soldOut bool, pName string) ([]*model.PlayerWithPriceChange, map[uint][]*model.OwnInfo, error) {
-	players, err := s.ListPlayers(ctx, database, period, soldOut, pName)
+func (s *PlayersQuery) ListPlayersWithOwned(ctx context.Context, database *DB, userID *uint) ([]*model.PlayerWithPriceChange, map[uint][]*model.OwnInfo, error) {
+	players, err := s.ListPlayers(ctx, database)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -204,21 +192,26 @@ func (s *PlayersQuery) GetPlayerInfo(ctx context.Context, database *DB, playerID
 // queryPlayersOrderByPrice 按价格排序查询球员价格
 func (s *PlayersQuery) queryPlayersOrderByPrice(ctx context.Context, database *DB) ([]*model.PlayerWithPriceChange, error) {
 	orderDir := s.filter.GetOrderDirection()
+	args := []any{}
 	filterClause := ""
 	if s.filter.SoldOut {
-		filterClause = "AND price_current_lowest = 0"
+		filterClause = " AND price_current_lowest = 0"
 	}
 	if s.filter.PlayerName != "" {
-		filterClause += " AND p_name_show LIKE '%" + s.filter.PlayerName + "%'"
+		filterClause += " AND p_name_show LIKE ?"
+		args = append(args, "%"+s.filter.PlayerName+"%")
 	}
+
+	args = append(args, s.filter.Limit, s.filter.GetOffset())
+
 	q := fmt.Sprintf(`SELECT %s
 FROM players 
 WHERE price_standard >= 5000
 %s
 ORDER BY price_standard %s 
 LIMIT ? OFFSET ?`, selectPlayersFields, filterClause, orderDir)
-	log.Println("query: ", q)
-	players, err := s.queryPlayers(ctx, database, q, s.filter.Limit, s.filter.GetOffset())
+	// log.Println("query: ", q)
+	players, err := s.queryPlayers(ctx, database, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query players by price: %w", err)
 	}
