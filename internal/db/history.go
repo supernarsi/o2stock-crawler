@@ -328,3 +328,230 @@ ORDER BY p1.player_id`
 
 	return priceHistoryMap, nil
 }
+
+// GetPlayerHistoryRealtime 获取分时数据（当天所有成交记录）
+// 返回当天（服务器当前日期）该球员的所有成交记录，按时间升序排列
+func GetPlayerHistoryRealtime(ctx context.Context, database *DB, playerID uint32) ([]*model.PriceHistoryRow, error) {
+	now := time.Now()
+	// 获取当天开始时间（00:00:00）
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	todayEnd := todayStart.AddDate(0, 0, 1) // 明天开始，即当天结束
+
+	query := fmt.Sprintf(`
+SELECT %s
+FROM p_p_history
+WHERE player_id = ?
+AND at_date_hour >= ?
+AND at_date_hour < ?
+ORDER BY at_date_hour ASC`, selectPriceHistoryFields)
+
+	rows, err := database.QueryContext(ctx, query, playerID, FormatDateTimeHour(todayStart), FormatDateTimeHour(todayEnd))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query player history realtime: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]*model.PriceHistoryRow, 0)
+	for rows.Next() {
+		var r model.PriceHistoryRow
+		if err := scanPriceHistoryRow(rows, &r); err != nil {
+			return nil, fmt.Errorf("failed to scan price history row: %w", err)
+		}
+		result = append(result, &r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating price history rows: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetPlayerHistory5Days 获取五日数据（最近5个自然日的所有成交记录）
+// 返回最近5个自然日（包含当天）的所有成交记录，按日期和时间综合排序
+func GetPlayerHistory5Days(ctx context.Context, database *DB, playerID uint32) ([]*model.PriceHistoryRow, error) {
+	now := time.Now()
+	// 获取5天前的开始时间（00:00:00）
+	fiveDaysAgo := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -4) // 包含当天，所以是-4
+	todayEnd := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, 1)     // 明天开始
+
+	query := fmt.Sprintf(`
+SELECT %s
+FROM p_p_history
+WHERE player_id = ?
+AND at_date_hour >= ?
+AND at_date_hour < ?
+ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
+
+	rows, err := database.QueryContext(ctx, query, playerID, FormatDateTimeHour(fiveDaysAgo), FormatDateTimeHour(todayEnd))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query player history 5days: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]*model.PriceHistoryRow, 0)
+	for rows.Next() {
+		var r model.PriceHistoryRow
+		if err := scanPriceHistoryRow(rows, &r); err != nil {
+			return nil, fmt.Errorf("failed to scan price history row: %w", err)
+		}
+		result = append(result, &r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating price history rows: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetPlayerHistoryDailyK 获取日K线数据（最近30个自然日的K线数据）
+// 返回最近30个自然日的K线数据，每日最多4条：开盘（第一条）、收盘（最后一条）、最高、最低
+// 若无成交的日期应标记为"无数据"状态（返回空数组，由调用方处理）
+func GetPlayerHistoryDailyK(ctx context.Context, database *DB, playerID uint32) ([]*model.PriceHistoryRow, error) {
+	now := time.Now()
+	// 获取30天前的开始时间（00:00:00）
+	thirtyDaysAgo := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -29) // 包含当天，所以是-29
+	todayEnd := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, 1)        // 明天开始
+
+	// 查询所有数据，然后在内存中聚合
+	query := fmt.Sprintf(`
+SELECT %s
+FROM p_p_history
+WHERE player_id = ?
+AND at_date_hour >= ?
+AND at_date_hour < ?
+ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
+
+	rows, err := database.QueryContext(ctx, query, playerID, FormatDateTimeHour(thirtyDaysAgo), FormatDateTimeHour(todayEnd))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query player history dailyk: %w", err)
+	}
+	defer rows.Close()
+
+	// 读取所有数据
+	allRows := make([]*model.PriceHistoryRow, 0)
+	for rows.Next() {
+		var r model.PriceHistoryRow
+		if err := scanPriceHistoryRow(rows, &r); err != nil {
+			return nil, fmt.Errorf("failed to scan price history row: %w", err)
+		}
+		allRows = append(allRows, &r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating price history rows: %w", err)
+	}
+
+	// 按日期分组并聚合K线数据
+	result := aggregateDailyKLine(allRows, thirtyDaysAgo, now)
+
+	return result, nil
+}
+
+// aggregateDailyKLine 聚合日K线数据
+// 每日返回最多4条：开盘（第一条）、收盘（最后一条）、最高、最低
+func aggregateDailyKLine(rows []*model.PriceHistoryRow, startDate, endDate time.Time) []*model.PriceHistoryRow {
+	if len(rows) == 0 {
+		return []*model.PriceHistoryRow{}
+	}
+
+	// 按日期分组
+	dateGroups := make(map[string][]*model.PriceHistoryRow)
+	for _, row := range rows {
+		dateKey := row.AtDate.Format("2006-01-02")
+		dateGroups[dateKey] = append(dateGroups[dateKey], row)
+	}
+
+	result := make([]*model.PriceHistoryRow, 0)
+	// 遍历从开始日期到结束日期的每一天
+	currentDate := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
+	endDateDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, endDate.Location())
+
+	for currentDate.Before(endDateDay) || currentDate.Equal(endDateDay) {
+		dateKey := currentDate.Format("2006-01-02")
+		dayRows, hasData := dateGroups[dateKey]
+
+		if !hasData || len(dayRows) == 0 {
+			// 该日无数据，跳过（不添加记录，保持空数组状态）
+			currentDate = currentDate.AddDate(0, 0, 1)
+			continue
+		}
+
+		// 找到开盘（第一条）、收盘（最后一条）、最高、最低
+		var openRow, closeRow, highRow, lowRow *model.PriceHistoryRow
+		var highPrice, lowPrice uint32
+
+		// 开盘价（第一条，按时间排序）
+		openRow = dayRows[0]
+		for _, row := range dayRows {
+			if row.AtDateHourStr < openRow.AtDateHourStr {
+				openRow = row
+			}
+		}
+
+		// 收盘价（最后一条，按时间排序）
+		closeRow = dayRows[0]
+		for _, row := range dayRows {
+			if row.AtDateHourStr > closeRow.AtDateHourStr {
+				closeRow = row
+			}
+		}
+
+		// 最高价和最低价（基于 price_current_sale，如果为-1则使用 price_standard）
+		highPrice = 0
+		lowPrice = ^uint32(0) // 最大uint32值
+		for _, row := range dayRows {
+			var price uint32
+			if row.PriceCurrentSale >= 0 {
+				price = uint32(row.PriceCurrentSale)
+			} else {
+				price = row.PriceStandard
+			}
+
+			if price > highPrice {
+				highPrice = price
+				highRow = row
+			}
+			if price < lowPrice {
+				lowPrice = price
+				lowRow = row
+			}
+		}
+
+		// 添加K线数据：开盘、最低、最高、收盘（按时间顺序）
+		// 使用 map 去重，然后按时间排序添加
+		uniqueRows := make(map[string]*model.PriceHistoryRow)
+		if openRow != nil {
+			uniqueRows[openRow.AtDateHourStr] = openRow
+		}
+		if lowRow != nil {
+			uniqueRows[lowRow.AtDateHourStr] = lowRow
+		}
+		if highRow != nil {
+			uniqueRows[highRow.AtDateHourStr] = highRow
+		}
+		if closeRow != nil {
+			uniqueRows[closeRow.AtDateHourStr] = closeRow
+		}
+
+		// 将去重后的行转换为切片并按时间排序
+		dayKLineRows := make([]*model.PriceHistoryRow, 0, len(uniqueRows))
+		for _, row := range uniqueRows {
+			dayKLineRows = append(dayKLineRows, row)
+		}
+
+		// 按时间排序
+		for i := 0; i < len(dayKLineRows)-1; i++ {
+			for j := i + 1; j < len(dayKLineRows); j++ {
+				if dayKLineRows[i].AtDateHourStr > dayKLineRows[j].AtDateHourStr {
+					dayKLineRows[i], dayKLineRows[j] = dayKLineRows[j], dayKLineRows[i]
+				}
+			}
+		}
+
+		// 添加到结果中
+		result = append(result, dayKLineRows...)
+
+		currentDate = currentDate.AddDate(0, 0, 1)
+	}
+
+	return result
+}

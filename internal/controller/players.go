@@ -6,6 +6,7 @@ import (
 
 	"o2stock-crawler/api"
 	"o2stock-crawler/internal/middleware"
+	"o2stock-crawler/internal/model"
 	"o2stock-crawler/internal/service"
 )
 
@@ -69,9 +70,23 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
-		period := parseIntDefault(r.URL.Query().Get("period"), 1)
-		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
-		rows, err := a.playersService.GetPlayerHistory(ctx, uint32(playerID), uint8(period), limit)
+		mode := r.URL.Query().Get("mode")
+		if mode == "" {
+			mode = "realtime" // 默认模式为分时数据
+		}
+
+		var rows []*model.PriceHistoryRow
+		switch mode {
+		case "realtime":
+			rows, err = a.playersService.GetPlayerHistoryRealtime(ctx, uint32(playerID))
+		case "5days":
+			rows, err = a.playersService.GetPlayerHistory5Days(ctx, uint32(playerID))
+		case "dailyk":
+			rows, err = a.playersService.GetPlayerHistoryDailyK(ctx, uint32(playerID))
+		default:
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid mode, must be one of: realtime, 5days, dailyk"}
+		}
+
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
