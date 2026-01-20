@@ -215,3 +215,12 @@ func (s *PlayersService) GetPlayerHistoryDailyK(ctx context.Context, playerID ui
 	}
 	return rows, nil
 }
+
+// GetPlayerHistoryDays 获取指定天数的历史数据（每天一条）
+func (s *PlayersService) GetPlayerHistoryDays(ctx context.Context, playerID uint32, days int) ([]*model.PriceHistoryRow, error) {
+	rows, err := db.GetPlayerHistoryDays(ctx, s.db, playerID, days)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get player history days: %w", err)
+	}
+	return rows, nil
+}

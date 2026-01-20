@@ -6,6 +6,7 @@ import "o2stock-crawler/internal/model"
 type PlayerHistoryRes struct {
 	PlayerInfo    *PlayerWithOwned         `json:"player_info"`
 	PlayerHistory []*model.PriceHistoryRow `json:"history"`
+	Mode          string                   `json:"mode"`
 }
 
 // MultiPlayersHistoryRes 批量球员历史价格响应

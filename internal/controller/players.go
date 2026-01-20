@@ -79,19 +79,23 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		switch mode {
 		case "realtime":
 			rows, err = a.playersService.GetPlayerHistoryRealtime(ctx, uint32(playerID))
-		case "5days":
+		case "5d":
 			rows, err = a.playersService.GetPlayerHistory5Days(ctx, uint32(playerID))
+		case "10d":
+			rows, err = a.playersService.GetPlayerHistoryDays(ctx, uint32(playerID), 10)
+		case "30d":
+			rows, err = a.playersService.GetPlayerHistoryDays(ctx, uint32(playerID), 30)
 		case "dailyk":
 			rows, err = a.playersService.GetPlayerHistoryDailyK(ctx, uint32(playerID))
 		default:
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid mode, must be one of: realtime, 5days, dailyk"}
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid mode, must be one of: realtime, 5days, 10d, 30d, dailyk"}
 		}
 
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
-		return api.PlayerHistoryRes{PlayerInfo: playerInfo, PlayerHistory: rows}, nil
+		return api.PlayerHistoryRes{PlayerInfo: playerInfo, PlayerHistory: rows, Mode: mode}, nil
 	})
 }
 

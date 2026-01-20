@@ -446,6 +446,113 @@ ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
 	return result, nil
 }
 
+// GetPlayerHistoryDays 获取指定天数的历史数据（每天一条）
+// days: 天数（如10或30）
+// 规则：优先返回当天12:00:00之后的第一条数据；如果未到12:00:00或无12点后数据，返回当天最后一条
+func GetPlayerHistoryDays(ctx context.Context, database *DB, playerID uint32, days int) ([]*model.PriceHistoryRow, error) {
+	now := time.Now()
+	// 获取指定天数前的开始时间（00:00:00）
+	startDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -(days - 1))
+	todayEnd := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, 1) // 明天开始
+
+	// 查询所有数据
+	query := fmt.Sprintf(`
+SELECT %s
+FROM p_p_history
+WHERE player_id = ?
+AND at_date_hour >= ?
+AND at_date_hour < ?
+ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
+
+	rows, err := database.QueryContext(ctx, query, playerID, FormatDateTimeHour(startDate), FormatDateTimeHour(todayEnd))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query player history days: %w", err)
+	}
+	defer rows.Close()
+
+	// 读取所有数据
+	allRows := make([]*model.PriceHistoryRow, 0)
+	for rows.Next() {
+		var r model.PriceHistoryRow
+		if err := scanPriceHistoryRow(rows, &r); err != nil {
+			return nil, fmt.Errorf("failed to scan price history row: %w", err)
+		}
+		allRows = append(allRows, &r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating price history rows: %w", err)
+	}
+
+	// 按规则筛选数据
+	result := selectDailyRecords(allRows, startDate, now)
+
+	return result, nil
+}
+
+// selectDailyRecords 按规则筛选每日数据
+func selectDailyRecords(rows []*model.PriceHistoryRow, startDate, endDate time.Time) []*model.PriceHistoryRow {
+	if len(rows) == 0 {
+		return []*model.PriceHistoryRow{}
+	}
+
+	// 按日期分组
+	dateGroups := make(map[string][]*model.PriceHistoryRow)
+	for _, row := range rows {
+		dateKey := row.AtDate.Format("2006-01-02")
+		dateGroups[dateKey] = append(dateGroups[dateKey], row)
+	}
+
+	result := make([]*model.PriceHistoryRow, 0)
+	// 遍历从开始日期到结束日期的每一天
+	currentDate := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
+	endDateDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, endDate.Location())
+
+	for currentDate.Before(endDateDay) || currentDate.Equal(endDateDay) {
+		dateKey := currentDate.Format("2006-01-02")
+		dayRows, hasData := dateGroups[dateKey]
+
+		if !hasData || len(dayRows) == 0 {
+			// 该日无数据
+			currentDate = currentDate.AddDate(0, 0, 1)
+			continue
+		}
+
+		// 规则：
+		// 1. 优先返回当天12:00:00之后的第一条数据
+		// 2. 如果没有12:00:00之后的数据，返回当天最后一条数据
+
+		var selectedRow *model.PriceHistoryRow
+
+		// at_date_hour is "YYYYMMDDHHMM"
+		// construct target comparison string
+		targetDateHour := currentDate.Format("20060102") + "1200"
+
+		// dayRows are already sorted by ASC time because SQL query ordered them
+
+		foundAfter12 := false
+		for _, row := range dayRows {
+			if row.AtDateHourStr >= targetDateHour {
+				selectedRow = row
+				foundAfter12 = true
+				break // Found the first one after or at 12:00
+			}
+		}
+
+		if !foundAfter12 {
+			// Fallback to the latest one (last in the sorted list)
+			selectedRow = dayRows[len(dayRows)-1]
+		}
+
+		if selectedRow != nil {
+			result = append(result, selectedRow)
+		}
+
+		currentDate = currentDate.AddDate(0, 0, 1)
+	}
+
+	return result
+}
+
 // aggregateDailyKLine 聚合日K线数据
 // 每日返回最多4条：开盘（第一条）、收盘（最后一条）、最高、最低
 func aggregateDailyKLine(rows []*model.PriceHistoryRow, startDate, endDate time.Time) []*model.PriceHistoryRow {
