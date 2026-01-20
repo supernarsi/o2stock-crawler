@@ -191,7 +191,7 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 
 // GetPlayerHistoryRealtime 获取分时数据（当天所有成交记录）
 func (s *PlayersService) GetPlayerHistoryRealtime(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
-	rows, err := db.GetPlayerHistoryRealtime(ctx, s.db, playerID)
+	rows, err := db.NewPlayerHistoryQuery(playerID, 0).GetRealtime(ctx, s.db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get player history realtime: %w", err)
 	}
@@ -200,7 +200,7 @@ func (s *PlayersService) GetPlayerHistoryRealtime(ctx context.Context, playerID 
 
 // GetPlayerHistory5Days 获取五日数据（最近5个自然日的所有成交记录）
 func (s *PlayersService) GetPlayerHistory5Days(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
-	rows, err := db.GetPlayerHistory5Days(ctx, s.db, playerID)
+	rows, err := db.NewPlayerHistoryQuery(playerID, 0).Get5Days(ctx, s.db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get player history 5days: %w", err)
 	}
@@ -209,7 +209,7 @@ func (s *PlayersService) GetPlayerHistory5Days(ctx context.Context, playerID uin
 
 // GetPlayerHistoryDailyK 获取日K线数据（最近30个自然日的K线数据）
 func (s *PlayersService) GetPlayerHistoryDailyK(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
-	rows, err := db.GetPlayerHistoryDailyK(ctx, s.db, playerID)
+	rows, err := db.NewPlayerHistoryQuery(playerID, 0).GetDailyK(ctx, s.db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get player history dailyk: %w", err)
 	}
@@ -218,7 +218,7 @@ func (s *PlayersService) GetPlayerHistoryDailyK(ctx context.Context, playerID ui
 
 // GetPlayerHistoryDays 获取指定天数的历史数据（每天一条）
 func (s *PlayersService) GetPlayerHistoryDays(ctx context.Context, playerID uint32, days int) ([]*model.PriceHistoryRow, error) {
-	rows, err := db.GetPlayerHistoryDays(ctx, s.db, playerID, days)
+	rows, err := db.NewPlayerHistoryQuery(playerID, 0).GetDays(ctx, s.db, days)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get player history days: %w", err)
 	}

@@ -329,9 +329,9 @@ ORDER BY p1.player_id`
 	return priceHistoryMap, nil
 }
 
-// GetPlayerHistoryRealtime 获取分时数据（当天所有成交记录）
+// GetRealtime 获取分时数据（当天所有成交记录）
 // 返回当天（服务器当前日期）该球员的所有成交记录，按时间升序排列
-func GetPlayerHistoryRealtime(ctx context.Context, database *DB, playerID uint32) ([]*model.PriceHistoryRow, error) {
+func (q *PlayerHistoryQuery) GetRealtime(ctx context.Context, database *DB) ([]*model.PriceHistoryRow, error) {
 	now := time.Now()
 	// 获取当天开始时间（00:00:00）
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -345,7 +345,7 @@ AND at_date_hour >= ?
 AND at_date_hour < ?
 ORDER BY at_date_hour ASC`, selectPriceHistoryFields)
 
-	rows, err := database.QueryContext(ctx, query, playerID, FormatDateTimeHour(todayStart), FormatDateTimeHour(todayEnd))
+	rows, err := database.QueryContext(ctx, query, q.playerID, FormatDateTimeHour(todayStart), FormatDateTimeHour(todayEnd))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query player history realtime: %w", err)
 	}
@@ -366,9 +366,9 @@ ORDER BY at_date_hour ASC`, selectPriceHistoryFields)
 	return result, nil
 }
 
-// GetPlayerHistory5Days 获取五日数据（最近5个自然日的所有成交记录）
+// Get5Days 获取五日数据（最近5个自然日的所有成交记录）
 // 返回最近5个自然日（包含当天）的所有成交记录，按日期和时间综合排序
-func GetPlayerHistory5Days(ctx context.Context, database *DB, playerID uint32) ([]*model.PriceHistoryRow, error) {
+func (q *PlayerHistoryQuery) Get5Days(ctx context.Context, database *DB) ([]*model.PriceHistoryRow, error) {
 	now := time.Now()
 	// 获取5天前的开始时间（00:00:00）
 	fiveDaysAgo := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -4) // 包含当天，所以是-4
@@ -382,7 +382,7 @@ AND at_date_hour >= ?
 AND at_date_hour < ?
 ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
 
-	rows, err := database.QueryContext(ctx, query, playerID, FormatDateTimeHour(fiveDaysAgo), FormatDateTimeHour(todayEnd))
+	rows, err := database.QueryContext(ctx, query, q.playerID, FormatDateTimeHour(fiveDaysAgo), FormatDateTimeHour(todayEnd))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query player history 5days: %w", err)
 	}
@@ -403,10 +403,10 @@ ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
 	return result, nil
 }
 
-// GetPlayerHistoryDailyK 获取日K线数据（最近30个自然日的K线数据）
+// GetDailyK 获取日K线数据（最近30个自然日的K线数据）
 // 返回最近30个自然日的K线数据，每日最多4条：开盘（第一条）、收盘（最后一条）、最高、最低
 // 若无成交的日期应标记为"无数据"状态（返回空数组，由调用方处理）
-func GetPlayerHistoryDailyK(ctx context.Context, database *DB, playerID uint32) ([]*model.PriceHistoryRow, error) {
+func (q *PlayerHistoryQuery) GetDailyK(ctx context.Context, database *DB) ([]*model.PriceHistoryRow, error) {
 	now := time.Now()
 	// 获取30天前的开始时间（00:00:00）
 	thirtyDaysAgo := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -29) // 包含当天，所以是-29
@@ -421,7 +421,7 @@ AND at_date_hour >= ?
 AND at_date_hour < ?
 ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
 
-	rows, err := database.QueryContext(ctx, query, playerID, FormatDateTimeHour(thirtyDaysAgo), FormatDateTimeHour(todayEnd))
+	rows, err := database.QueryContext(ctx, query, q.playerID, FormatDateTimeHour(thirtyDaysAgo), FormatDateTimeHour(todayEnd))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query player history dailyk: %w", err)
 	}
@@ -446,10 +446,10 @@ ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
 	return result, nil
 }
 
-// GetPlayerHistoryDays 获取指定天数的历史数据（每天一条）
+// GetDays 获取指定天数的历史数据（每天一条）
 // days: 天数（如10或30）
 // 规则：优先返回当天12:00:00之后的第一条数据；如果未到12:00:00或无12点后数据，返回当天最后一条
-func GetPlayerHistoryDays(ctx context.Context, database *DB, playerID uint32, days int) ([]*model.PriceHistoryRow, error) {
+func (q *PlayerHistoryQuery) GetDays(ctx context.Context, database *DB, days int) ([]*model.PriceHistoryRow, error) {
 	now := time.Now()
 	// 获取指定天数前的开始时间（00:00:00）
 	startDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -(days - 1))
@@ -464,7 +464,7 @@ AND at_date_hour >= ?
 AND at_date_hour < ?
 ORDER BY at_date ASC, at_date_hour ASC`, selectPriceHistoryFields)
 
-	rows, err := database.QueryContext(ctx, query, playerID, FormatDateTimeHour(startDate), FormatDateTimeHour(todayEnd))
+	rows, err := database.QueryContext(ctx, query, q.playerID, FormatDateTimeHour(startDate), FormatDateTimeHour(todayEnd))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query player history days: %w", err)
 	}
