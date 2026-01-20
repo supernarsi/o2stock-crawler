@@ -40,6 +40,7 @@ func main() {
 	globalMiddlewares := []middleware.Middleware{
 		middleware.CORS,
 		middleware.Logging,
+		middleware.SignatureMiddleware(dbCfg),
 	}
 
 	// 创建路由器并注册路由

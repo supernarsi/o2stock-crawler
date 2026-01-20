@@ -18,6 +18,10 @@ type Config struct {
 	WxAppID     string
 	WxAppSecret string
 	JWTSecret   string
+
+	// Signature config
+	SignatureSecret string
+	EnableSignature bool
 }
 
 // LoadConfigFromEnv loads MySQL configuration from env vars.
@@ -31,6 +35,8 @@ type Config struct {
 //   - WX_APP_ID:
 //   - WX_APP_SECRET:
 //   - JWT_SECRET: default_secret
+//   - SIGNATURE_SECRET: default_sig_secret
+//   - ENABLE_SIGNATURE: false
 func LoadConfigFromEnv() (*Config, error) {
 	host := getenvDefault("DB_HOST", "127.0.0.1")
 	port := getenvDefault("DB_PORT", "3306")
@@ -42,19 +48,24 @@ func LoadConfigFromEnv() (*Config, error) {
 	wxAppSecret := getenvDefault("WX_APP_SECRET", "")
 	jwtSecret := getenvDefault("JWT_SECRET", "default_secret")
 
+	signatureSecret := getenvDefault("SIGNATURE_SECRET", "default_sig_secret")
+	enableSignature := getenvDefault("ENABLE_SIGNATURE", "false") == "true"
+
 	if host == "" || port == "" || user == "" || dbname == "" {
 		return nil, errors.New("invalid db config")
 	}
 
 	return &Config{
-		Host:        host,
-		Port:        port,
-		User:        user,
-		Password:    pass,
-		DBName:      dbname,
-		WxAppID:     wxAppID,
-		WxAppSecret: wxAppSecret,
-		JWTSecret:   jwtSecret,
+		Host:            host,
+		Port:            port,
+		User:            user,
+		Password:        pass,
+		DBName:          dbname,
+		WxAppID:         wxAppID,
+		WxAppSecret:     wxAppSecret,
+		JWTSecret:       jwtSecret,
+		SignatureSecret: signatureSecret,
+		EnableSignature: enableSignature,
 	}, nil
 }
 
