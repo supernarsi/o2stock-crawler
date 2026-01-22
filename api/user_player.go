@@ -7,18 +7,35 @@ type PlayerInReq struct {
 	PlayerID uint   `json:"player_id"`
 	Num      uint   `json:"num"`
 	Cost     uint   `json:"cost"`
-	Dt       string `json:"dt"` // 格式: 2006-01-02 15:04:05
+	Dt       string `json:"dt"` // 格式: 2006-01-02
 }
 
 // PlayerOutReq 标记出售请求
 type PlayerOutReq struct {
 	PlayerID uint   `json:"player_id"`
 	Cost     uint   `json:"cost"`
-	Dt       string `json:"dt"` // 格式: 2006-01-02 15:04:05
+	Dt       string `json:"dt"` // 格式: 2006-01-02
+}
+
+// PlayerOwnReq 修改持仓记录请求
+type PlayerOwnEditReq struct {
+	RecordId uint   `json:"r_id" dc:"持仓记录 id"`
+	PriceIn  uint   `json:"price_in" dc:"购买价格"`
+	PriceOut uint   `json:"price_out" dc:"出售价格"`
+	Num      uint   `json:"num" dc:"数量"`
+	SoldOut  bool   `json:"sold_out" dc:"是否已出售"`
+	DtIn     string `json:"dt_in" dc:"购买时间"`  // 格式: 2006-01-02
+	DtOut    string `json:"dt_out" dc:"出售时间"` // 格式: 2006-01-02
+}
+
+// PlayerOwnDeleteReq 删除持仓记录请求
+type PlayerOwnDeleteReq struct {
+	RecordId uint `json:"r_id" dc:"持仓记录 id"`
 }
 
 // OwnedPlayer 用户拥有的球员（包含球员信息）
 type OwnedPlayer struct {
+	Id       uint          `json:"id" dc:"持仓记录 id"`
 	PlayerID uint          `json:"player_id"`
 	PriceIn  uint          `json:"price_in"`
 	PriceOut uint          `json:"price_out"`

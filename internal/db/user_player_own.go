@@ -143,6 +143,34 @@ ORDER BY dt_in DESC`, placeholders)
 	return result, nil
 }
 
+// 根据记录 id 查询持仓数据
+func (q *UserPlayerOwnQuery) GetPlayerOwnByRecordID(ctx context.Context, database *DB, recordId, uId uint) (*model.UserPlayerOwn, error) {
+	const query = `
+SELECT id, uid, pid, own_sta, price_in, price_out, num_in, dt_in, dt_out
+FROM u_p_own
+WHERE id = ? AND uid = ?
+LIMIT 1`
+	var r model.UserPlayerOwn
+	err := database.QueryRowContext(ctx, query, recordId, uId).Scan(
+		&r.ID,
+		&r.UserID,
+		&r.PlayerID,
+		&r.OwnSta,
+		&r.PriceIn,
+		&r.PriceOut,
+		&r.NumIn,
+		&r.DtIn,
+		&r.DtOut,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get player own by record id: %w", err)
+	}
+	return &r, nil
+}
+
 // scanUserPlayerOwnRow 扫描用户球员拥有行数据
 func scanUserPlayerOwnRow(rows interface {
 	Scan(dest ...any) error
@@ -201,6 +229,57 @@ LIMIT 1`
 	result, err := database.ExecContext(ctx, query, cost, dt, userID, playerID)
 	if err != nil {
 		return fmt.Errorf("failed to update player own to sold: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrNoRows
+	}
+	return nil
+}
+
+// UpdatePlayerOwn 更新持仓记录
+func (c *UserPlayerOwnCommand) UpdatePlayerOwn(ctx context.Context, database *DB, userID, recordId, priceIn, priceOut, num uint, dtIn, dtOut *time.Time) error {
+	args := []any{priceIn, priceOut, num, dtIn}
+	setClause := ""
+	if dtOut != nil {
+		setClause = ", dt_out = ?"
+		args = append(args, dtOut)
+	}
+	args = append(args, userID, recordId)
+
+	query := fmt.Sprintf(`
+UPDATE u_p_own 
+SET price_in = ?, price_out = ?, num_in = ?, dt_in = ? %s
+WHERE uid = ? AND id = ?
+LIMIT 1`, setClause)
+
+	result, err := database.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update player own: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrNoRows
+	}
+	return nil
+}
+
+// DeletePlayerOwn 删除持仓记录
+func (c *UserPlayerOwnCommand) DeletePlayerOwn(ctx context.Context, database *DB, userID, recordId uint) error {
+	const query = `
+DELETE FROM u_p_own 
+WHERE uid = ? AND id = ?
+LIMIT 1`
+
+	result, err := database.ExecContext(ctx, query, userID, recordId)
+	if err != nil {
+		return fmt.Errorf("failed to delete player own: %w", err)
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {

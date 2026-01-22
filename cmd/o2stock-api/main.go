@@ -48,19 +48,29 @@ func main() {
 	router := middleware.NewRouter(append(globalMiddlewares, authCtl.OptionalMiddleware)...)
 	router.RegisterAPI("/healthz", apiCtl.Healthz(), "") // 允许所有方法
 
-	// 公开接口
+	// --- 公开接口 --- //
 	router.RegisterAPI("/login", authCtl.Login(), http.MethodPost)
 	router.RegisterAPI("/players", apiCtl.Players(), http.MethodGet)
 	router.RegisterAPI("/player-history", apiCtl.PlayerHistory(), http.MethodGet)
 	router.RegisterAPI("/multi-players-history", apiCtl.MultiPlayersHistory(), http.MethodGet)
 
-	// 需要鉴权的接口
+	// --- 需要鉴权的接口 --- //
 	authGroup := middleware.NewRouter(append(globalMiddlewares, authCtl.Middleware)...)
+	// 标记购买
 	authGroup.RegisterAPI("/player/in", apiCtl.PlayerIn(), http.MethodPost)
+	// 标记出售
 	authGroup.RegisterAPI("/player/out", apiCtl.PlayerOut(), http.MethodPost)
+	// 修改持仓记录
+	authGroup.RegisterAPI("/u-player/record", apiCtl.PlayerOwnEdit(), http.MethodPut)
+	// 删除持仓记录
+	authGroup.RegisterAPI("/u-player/record", apiCtl.PlayerOwnDel(), http.MethodDelete)
+	// 用户拥有球员列表
 	authGroup.RegisterAPI("/u-players", apiCtl.UserPlayers(), http.MethodGet)
+	// 用户收藏球员列表
 	authGroup.RegisterAPI("/u-fav-players", apiCtl.UserFavList(), http.MethodGet)
+	// 用户收藏球员
 	authGroup.RegisterAPI("/player/fav", apiCtl.UserFavPlayer(), http.MethodPost)
+	// 用户取消收藏球员
 	authGroup.RegisterAPI("/player/fav", apiCtl.UserUnFavPlayer(), http.MethodDelete)
 
 	mux := http.NewServeMux()

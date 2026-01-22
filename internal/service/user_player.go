@@ -54,6 +54,37 @@ func (s *UserPlayerService) PlayerOut(ctx context.Context, userID, playerID, cos
 	return nil
 }
 
+// EditPlayerOwn 修改持仓记录
+func (s *UserPlayerService) EditPlayerOwn(ctx context.Context, userID, recordId, priceIn, priceOut, num uint, dtIn, dtOut *time.Time) error {
+	// 更新持仓记录
+	cmd := db.NewUserPlayerOwnCommand()
+	if err := cmd.UpdatePlayerOwn(ctx, s.db, userID, recordId, priceIn, priceOut, num, dtIn, dtOut); err != nil {
+		return fmt.Errorf("failed to update player own: %w", err)
+	}
+	return nil
+}
+
+// DeletePlayerOwn 删除持仓记录
+func (s *UserPlayerService) DeletePlayerOwn(ctx context.Context, userID, recordId uint) error {
+	// 删除持仓记录
+	cmd := db.NewUserPlayerOwnCommand()
+	if err := cmd.DeletePlayerOwn(ctx, s.db, userID, recordId); err != nil {
+		return fmt.Errorf("failed to delete player own: %w", err)
+	}
+	return nil
+}
+
+// GetPlayerOwn 获取持仓记录
+func (s *UserPlayerService) GetPlayerOwn(ctx context.Context, userID, recordId uint) (*model.UserPlayerOwn, error) {
+	// 获取持仓记录
+	query := db.NewUserPlayerOwnQuery(userID)
+	record, err := query.GetPlayerOwnByRecordID(ctx, s.db, recordId, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get player own: %w", err)
+	}
+	return record, nil
+}
+
 // GetUserPlayers 获取用户拥有球员列表
 func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]api.OwnedPlayer, error) {
 	// 获取用户拥有的球员记录
@@ -93,6 +124,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 			continue // 跳过找不到球员信息的记录
 		}
 		rosters = append(rosters, api.OwnedPlayer{
+			Id:       o.ID,
 			PlayerID: o.PlayerID,
 			PriceIn:  o.PriceIn,
 			PriceOut: o.PriceOut,

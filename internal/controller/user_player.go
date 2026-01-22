@@ -124,6 +124,98 @@ func (a *API) PlayerOut() http.HandlerFunc {
 	})
 }
 
+// PlayerOwn 修改持仓记录接口
+func (a *API) PlayerOwnEdit() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		var req api.PlayerOwnEditReq
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+		}
+
+		// 参数校验
+		if req.RecordId == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing record_id"}
+		}
+		if req.PriceIn == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing price_in"}
+		}
+		if req.Num == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing num"}
+		}
+
+		// 解析时间
+		var dtOut *time.Time
+		dtInTime, err := time.Parse("2006-01-02", req.DtIn)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid dt format, expected: 2006-01-02"}
+		}
+		if req.SoldOut {
+			// 已出售
+			dtOutTime, err := time.Parse("2006-01-02", req.DtOut)
+			if err != nil {
+				return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid dt format, expected: 2006-01-02"}
+			}
+			dtOut = &dtOutTime
+			if dtOutTime.Before(dtInTime) {
+				return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "dt_out must be after dt_in"}
+			}
+		} else {
+			dtOut = nil
+			req.PriceOut = 0
+		}
+		// 查询记录是否存在
+		record, err := a.userPlayerService.GetPlayerOwn(ctx, userID, req.RecordId)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+		}
+		if record == nil {
+			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "record not found"}
+		}
+
+		// 调用服务层
+		err = a.userPlayerService.EditPlayerOwn(ctx, userID, req.RecordId, req.PriceIn, req.PriceOut, req.Num, &dtInTime, dtOut)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+		}
+		return nil, nil
+	})
+}
+
+// PlayerOwn 删除持仓记录接口
+func (a *API) PlayerOwnDel() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		var req api.PlayerOwnDeleteReq
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+		}
+
+		// 参数校验
+		if req.RecordId == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing record_id"}
+		}
+
+		// 调用服务层
+		err := a.userPlayerService.DeletePlayerOwn(ctx, userID, req.RecordId)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+		}
+
+		return nil, nil
+	})
+}
+
 // UserPlayers 获取用户拥有球员列表
 func (a *API) UserPlayers() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
