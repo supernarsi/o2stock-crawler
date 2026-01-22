@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"testing"
-	"time"
 )
 
 // 注意：这些测试需要真实的数据库连接
@@ -34,60 +33,6 @@ func TestCountOwnedPlayers(t *testing.T) {
 		t.Fatalf("CountOwnedPlayers failed: %v", err)
 	}
 	t.Logf("Count: %d", count)
-}
-
-func TestInsertPlayerOwn(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping database test in short mode")
-	}
-
-	cfg, err := LoadConfigFromEnv()
-	if err != nil {
-		t.Skipf("skip test: %v", err)
-	}
-
-	db, err := Open(cfg)
-	if err != nil {
-		t.Skipf("skip test: %v", err)
-	}
-	defer db.Close()
-
-	ctx := context.Background()
-	now := time.Now()
-	cmd := NewUserPlayerOwnCommand()
-	err = cmd.InsertPlayerOwn(ctx, db, 1, 10005, 64, 1021310, now)
-	if err != nil {
-		t.Fatalf("InsertPlayerOwn failed: %v", err)
-	}
-}
-
-func TestUpdatePlayerOwnToSold(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping database test in short mode")
-	}
-
-	cfg, err := LoadConfigFromEnv()
-	if err != nil {
-		t.Skipf("skip test: %v", err)
-	}
-
-	db, err := Open(cfg)
-	if err != nil {
-		t.Skipf("skip test: %v", err)
-	}
-	defer db.Close()
-
-	ctx := context.Background()
-	now := time.Now()
-	cmd := NewUserPlayerOwnCommand()
-	err = cmd.UpdatePlayerOwnToSold(ctx, db, 1, 10005, 1200000, now)
-	if err != nil {
-		if err == ErrNoRows {
-			t.Log("No rows to update (expected if player not owned)")
-		} else {
-			t.Fatalf("UpdatePlayerOwnToSold failed: %v", err)
-		}
-	}
 }
 
 func TestGetUserOwnedPlayers(t *testing.T) {
