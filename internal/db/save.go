@@ -83,8 +83,8 @@ func (s *SaveSnapshotDb) upsertPlayer(ctx context.Context, tx *sql.Tx, item *cra
 	const q = `
 INSERT INTO players
 	(player_id, p_name_show, p_name_en, team_abbr, version, card_type,
-	 player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper)
-VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	 player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, over_all)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 ON DUPLICATE KEY UPDATE
 	p_name_show = VALUES(p_name_show),
 	p_name_en = VALUES(p_name_en),
@@ -95,7 +95,8 @@ ON DUPLICATE KEY UPDATE
 	price_standard = VALUES(price_standard),
 	price_current_lowest = VALUES(price_current_lowest),
 	price_sale_lower = VALUES(price_sale_lower),
-	price_sale_upper = VALUES(price_sale_upper)
+	price_sale_upper = VALUES(price_sale_upper),
+	over_all = VALUES(over_all)
 `
 
 	_, err := tx.ExecContext(ctx, q,
@@ -110,6 +111,7 @@ ON DUPLICATE KEY UPDATE
 		currentLowest,
 		priceSaleLower,
 		priceSaleUpper,
+		item.OverAll,
 	)
 	if err != nil {
 		return err

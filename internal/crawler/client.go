@@ -67,6 +67,7 @@ type RosterItem struct {
 	TeamAbbr    string `json:"teamAbbr" dc:"球队"`
 	CardTypeStr string `json:"cardType" dc:"系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏"`
 	VersionStr  string `json:"Version" dc:"球员年代，0 表示现役"`
+	OverAll     int    `json:"overAll" dc:"球员能力值"`
 	Price       struct {
 		StandardPrice      int    `json:"standardPrice" dc:"标准价格"`
 		CurrentLowestPrice string `json:"currentLowestPrice" dc:"当前出售的最低价格"`
@@ -86,6 +87,7 @@ type RosterItemModel struct {
 	TeamAbbr    string `json:"teamAbbr" dc:"球队"`
 	CardTypeStr string `json:"cardType" dc:"系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏"`
 	VersionStr  string `json:"Version" dc:"球员年代，0 表示现役"`
+	OverAll     int    `json:"overAll" dc:"球员能力值"`
 	Price       struct {
 		StandardPrice      int    `json:"standardPrice" dc:"标准价格"`
 		CurrentLowestPrice string `json:"currentLowestPrice" dc:"当前出售的最低价格"`
@@ -112,8 +114,8 @@ func (c *Client) FetchRoster(ctx context.Context, page int) (*APIResponse, error
 	nonceStr := c.generateNonceStr(5)
 
 	q := req.URL.Query()
-	q.Set("openid", c.cfg.OpenID)                       // 用户 openid
-	q.Set("access_token", c.cfg.AccessToken)            // 用户 access_token
+	// q.Set("openid", c.cfg.OpenID)                       // 用户 openid
+	// q.Set("access_token", c.cfg.AccessToken)            // 用户 access_token
 	q.Set("page", strconv.Itoa(page))                   // 页码
 	q.Set("orderBy", "price")                           // 排序方式: price 价格，grade 等级，popularity 人气
 	q.Set("orientation", "desc")                        // 排序方向: desc 降序，asc 升序
@@ -185,6 +187,7 @@ func (c *Client) parseRosterItem(item RosterItem) RosterItemModel {
 		CardTypeStr: item.CardTypeStr,
 		VersionStr:  item.VersionStr,
 		Price:       item.Price,
+		OverAll:     item.OverAll,
 	}
 }
 
