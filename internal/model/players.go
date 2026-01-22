@@ -14,6 +14,7 @@ type Players struct {
 	PriceCurrentLower uint   `json:"price_current_lowest"`
 	PriceSaleLower    uint   `json:"price_sale_lower"`
 	PriceSaleUpper    uint   `json:"price_sale_upper"`
+	OverAll           uint   `json:"over_all"`
 }
 
 type PlayerWithPriceChange struct {

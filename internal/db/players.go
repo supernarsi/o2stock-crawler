@@ -55,7 +55,7 @@ const (
 // SQL 查询模板
 const (
 	// selectPlayersFields 球员表查询字段
-	selectPlayersFields = `player_id, p_name_show, p_name_en, team_abbr, version, card_type, player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper`
+	selectPlayersFields = `player_id, p_name_show, p_name_en, team_abbr, version, card_type, player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, over_all`
 
 	// queryPriceRatioBase SQL 基础查询（价格变动）
 	queryPriceRatioBase = `WITH recent_data AS (
@@ -474,6 +474,7 @@ func scanPlayerRow(rows interface {
 		&r.PriceCurrentLower,
 		&r.PriceSaleLower,
 		&r.PriceSaleUpper,
+		&r.OverAll,
 	)
 }
 
