@@ -114,8 +114,8 @@ func (c *Client) FetchRoster(ctx context.Context, page int) (*APIResponse, error
 	nonceStr := c.generateNonceStr(5)
 
 	q := req.URL.Query()
-	// q.Set("openid", c.cfg.OpenID)                       // 用户 openid
-	// q.Set("access_token", c.cfg.AccessToken)            // 用户 access_token
+	q.Set("openid", c.cfg.OpenID)                       // 用户 openid
+	q.Set("access_token", c.cfg.AccessToken)            // 用户 access_token
 	q.Set("page", strconv.Itoa(page))                   // 页码
 	q.Set("orderBy", "price")                           // 排序方式: price 价格，grade 等级，popularity 人气
 	q.Set("orientation", "desc")                        // 排序方向: desc 降序，asc 升序
