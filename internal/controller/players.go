@@ -95,7 +95,40 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
-		return api.PlayerHistoryRes{PlayerInfo: playerInfo, PlayerHistory: rows, Mode: mode}, nil
+		mockGameData := &api.GameData{
+			PlayerID:       uint32(playerID),
+			PlayerNameShow: playerInfo.Players.ShowName,
+			Standard: &api.GameDataStandard{
+				Time:                 28.6,
+				Points:               29.5,
+				Rebound:              6.9,
+				ReboundOffense:       2.3,
+				ReboundDefense:       4.6,
+				Assists:              2.8,
+				Blocks:               0.3,
+				Steals:               0.7,
+				Turnovers:            1.2,
+				Fouls:                2.1,
+				PercentOfThrees:      0.3,
+				PercentOfTwoPointers: 0.5,
+				PercentOfFreeThrows:  0.8,
+			},
+			NbaToday: []*api.GameDataNbaToday{
+				{
+					Date:      "2026-01-23",
+					VsHome:    "湖人",
+					VsAway:    "勇士",
+					IsHome:    true,
+					Points:    29,
+					Rebound:   7,
+					Assists:   6,
+					Blocks:    3,
+					Steals:    1,
+					Turnovers: 2,
+				},
+			},
+		}
+		return api.PlayerHistoryRes{PlayerInfo: playerInfo, PlayerHistory: rows, GameData: mockGameData}, nil
 	})
 }
 
