@@ -383,6 +383,72 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 	return nil
 }
 
+// SyncAllPlayersPriceChanges 计算并同步所有球员的日涨跌幅（1天）和周涨跌幅（7天）
+func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
+	log.Printf(">>> 开始同步球员价格涨跌幅 <<<")
+	startTime := time.Now()
+
+	// 1. 获取所有球员列表
+	playersQuery := db.NewPlayersQuery(db.PlayerFilter{Limit: 10000}) // 设置一个足够大的 Limit 以获取所有球员
+	players, _, err := playersQuery.ListPlayersWithOwned(ctx, s.db, nil)
+	if err != nil {
+		return fmt.Errorf("failed to list players: %w", err)
+	}
+
+	// 2. 获取 1 天前和 7 天前的价格快照
+	now := time.Now()
+	oneDayAgo := now.AddDate(0, 0, -1)
+	sevenDaysAgo := now.AddDate(0, 0, -7)
+
+	historyMapQuery := db.NewPriceHistoryMapQuery()
+	map1d, err := historyMapQuery.GetPriceHistoryMap(ctx, s.db, oneDayAgo)
+	if err != nil {
+		log.Printf("获取 1d 历史价格快照失败: %v", err)
+	}
+	map7d, err := historyMapQuery.GetPriceHistoryMap(ctx, s.db, sevenDaysAgo)
+	if err != nil {
+		log.Printf("获取 7d 历史价格快照失败: %v", err)
+	}
+
+	total := len(players)
+	successCount := 0
+	log.Printf("找到球员数量: %d", total)
+
+	for _, p := range players {
+		pc1d := 0.0
+		pc7d := 0.0
+
+		// 计算 1d 涨跌幅
+		if h1d, ok := map1d[p.PlayerID]; ok && h1d.PriceStandard > 0 {
+			pc1d = float64(int(p.PriceStandard)-int(h1d.PriceStandard)) / float64(h1d.PriceStandard)
+		} else if h1d, ok := map1d[p.PlayerID]; ok && h1d.PriceStandard == 0 {
+			log.Printf("[PlayerID: %d] 1d 历史价格为 0，跳过计算", p.PlayerID)
+		}
+
+		// 计算 7d 涨跌幅
+		if h7d, ok := map7d[p.PlayerID]; ok && h7d.PriceStandard > 0 {
+			pc7d = float64(int(p.PriceStandard)-int(h7d.PriceStandard)) / float64(h7d.PriceStandard)
+		} else if h7d, ok := map7d[p.PlayerID]; ok && h7d.PriceStandard == 0 {
+			log.Printf("[PlayerID: %d] 7d 历史价格为 0，跳过计算", p.PlayerID)
+		}
+
+		// 保留两位小数
+		pc1d = round(pc1d, 2)
+		pc7d = round(pc7d, 2)
+
+		// 更新到数据库
+		if err := playersQuery.UpdatePlayerPriceChanges(ctx, s.db, p.PlayerID, pc1d, pc7d); err != nil {
+			log.Printf("[PlayerID: %d] 更新涨跌幅失败: %v", p.PlayerID, err)
+		} else {
+			successCount++
+		}
+	}
+
+	log.Printf(">>> 同步球员价格涨跌幅完成，耗时: %v, 总数: %d, 成功: %d <<<",
+		time.Since(startTime), total, successCount)
+	return nil
+}
+
 func round(val float64, precision int) float64 {
 	p := math.Pow10(precision)
 	return math.Round(val*p) / p

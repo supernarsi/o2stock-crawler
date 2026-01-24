@@ -61,30 +61,7 @@ const (
 // SQL 查询模板
 const (
 	// selectPlayersFields 球员表查询字段
-	selectPlayersFields = `player_id, nba_player_id, p_name_show, p_name_en, team_abbr, version, card_type, player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, over_all, power_per5, power_per10`
-
-	// queryPriceRatioBase SQL 基础查询（价格变动）
-	queryPriceRatioBase = `WITH recent_data AS (
-  SELECT
-    player_id, at_date_hour, price_standard, price_current_sale,
-    ROW_NUMBER() OVER ( PARTITION BY player_id ORDER BY at_date_hour DESC) AS rn_desc,
-    ROW_NUMBER() OVER ( PARTITION BY player_id ORDER BY at_date_hour ASC) AS rn_asc
-  FROM p_p_history
-  WHERE at_date_hour >= ? AND price_standard >= 5000
-  %s
-)
-SELECT
-  cur.player_id,
-  old.price_standard AS price_old,
-  cur.price_standard AS price_now,
-  (CAST(cur.price_standard AS SIGNED) - CAST(old.price_standard AS SIGNED)) / old.price_standard AS price_ratio
-FROM recent_data cur
-JOIN recent_data old ON cur.player_id = old.player_id
-WHERE cur.rn_desc = 1
-  AND old.rn_asc = 1
-  AND old.price_standard > 0
-  %s
-ORDER BY price_ratio %s`
+	selectPlayersFields = `player_id, nba_player_id, p_name_show, p_name_en, team_abbr, version, card_type, player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, over_all, power_per5, power_per10, price_change_1d, price_change_7d`
 )
 
 // PlayerFilter 封装查询条件
@@ -154,6 +131,12 @@ func NewPlayersQuery(filter PlayerFilter) *PlayersQuery {
 	}
 }
 
+// GetAllPlayers 获取所有球员基础信息（无价格过滤）
+func (s *PlayersQuery) GetAllPlayers(ctx context.Context, database *DB) ([]*model.Players, error) {
+	q := fmt.Sprintf(`SELECT %s FROM players`, selectPlayersFields)
+	return queryPlayers(ctx, database, q)
+}
+
 // ListPlayers 返回简单的球员列表，支持按价格或涨跌幅排序，可分页。
 func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB) ([]*model.PlayerWithPriceChange, error) {
 	if s.filter.PlayerName != "" {
@@ -164,17 +147,17 @@ func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB) ([]*model.
 
 	switch s.filter.OrderBy {
 	case OrderByPriceStandard:
-		// 如果按价格排序，直接查询 players 表，按 price_standard 排序，再查 p_p_history 表计算涨跌幅
+		// 如果按价格排序，直接查询 players 表，按 price_standard 排序
 		return s.queryPlayersOrderByPrice(ctx, database)
 	case OrderByPriceChange:
-		// 如果按涨跌幅排序，先使用窗口函数从 p_p_history 表中获取按涨跌幅排序后的球员 id，再使用 in 查询从 players 表中获取球员信息
-		return s.queryPlayersOrderByPriceRatio(ctx, database)
+		// 如果按涨跌幅排序，直接查询 players 表
+		return s.queryPlayersOrderByPriceRatioNew(ctx, database)
 	case OrderByPowerPer5, OrderByPowerPer10, OrderByOverAll:
 		// 按战力值或能力值排序
 		return s.queryPlayersOrderByPower(ctx, database)
 	default:
 		// 默认按涨跌幅排序
-		return s.queryPlayersOrderByPriceRatio(ctx, database)
+		return s.queryPlayersOrderByPriceRatioNew(ctx, database)
 	}
 }
 
@@ -251,48 +234,78 @@ LIMIT ? OFFSET ?`, selectPlayersFields, filterClause, orderDir)
 		return []*model.PlayerWithPriceChange{}, nil
 	}
 
-	// 提取球员ID列表
-	playerIds := extractPlayerIDs(players)
-
-	// 查询涨跌幅数据（注意：这里不需要排序和分页，因为已经按价格排序了）
-	// 创建一个新的 Filter 用于查询比率，不带分页
-	ratioFilter := s.filter
-	ratioFilter.PlayerIDs = playerIds
-	ratioFilter.Limit = 0 // 不分页
-
-	priceRatio, err := s.queryPlayersRatio(ctx, database, ratioFilter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query price ratio: %w", err)
+	// 组装成 []*model.PlayerWithPriceChange 数据
+	result := make([]*model.PlayerWithPriceChange, len(players))
+	for i, p := range players {
+		changeRatio := p.PriceChange1d
+		if s.filter.Period == Period1Week {
+			changeRatio = p.PriceChange7d
+		}
+		result[i] = &model.PlayerWithPriceChange{
+			Players:     *p,
+			PriceChange: changeRatio,
+		}
 	}
-
-	// 组装成 []*model.PlayerWithPriceChange 数据（以球员价格为基准）
-	return s.mergePlayersPriceChangeByPriceStandard(players, priceRatio), nil
+	return result, nil
 }
 
-// queryPlayersOrderByPriceRatio 按涨跌幅排序查询球员价格变动
-func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, database *DB) ([]*model.PlayerWithPriceChange, error) {
-	// 查询涨跌幅数据（已按涨跌幅排序和分页）
-	priceRatio, err := s.queryPlayersRatio(ctx, database, s.filter)
+// queryPlayersOrderByPriceRatioNew 按涨跌幅排序查询球员价格变动（使用预计算字段）
+func (s *PlayersQuery) queryPlayersOrderByPriceRatioNew(ctx context.Context, database *DB) ([]*model.PlayerWithPriceChange, error) {
+	orderDir := s.filter.GetOrderDirection()
+	args := []any{}
+	filterClause := ""
+
+	orderByField := "price_change_1d"
+	if s.filter.Period == Period1Week {
+		orderByField = "price_change_7d"
+	}
+
+	if s.filter.SoldOut {
+		filterClause = " AND price_current_lowest = 0"
+	}
+	if s.filter.PlayerName != "" {
+		filterClause += " AND p_name_show LIKE ?"
+		args = append(args, "%"+s.filter.PlayerName+"%")
+	}
+	if s.filter.MinPrice > 0 {
+		filterClause += " AND price_sale_lower >= ?"
+		args = append(args, s.filter.MinPrice)
+	}
+	if s.filter.MaxPrice > 0 {
+		filterClause += " AND price_sale_upper <= ?"
+		args = append(args, s.filter.MaxPrice)
+	}
+	if s.filter.ExFree {
+		filterClause += " AND team_abbr != '自由球员'"
+	}
+
+	args = append(args, s.filter.Limit, s.filter.GetOffset())
+
+	q := fmt.Sprintf(`SELECT %s
+FROM players 
+WHERE price_standard >= 5000
+%s
+ORDER BY %s %s 
+LIMIT ? OFFSET ?`, selectPlayersFields, filterClause, orderByField, orderDir)
+
+	players, err := s.queryPlayers(ctx, database, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query price ratio: %w", err)
+		return nil, fmt.Errorf("failed to query players by price ratio: %w", err)
 	}
 
-	// 如果没有查询到涨跌幅数据，直接返回空结果
-	if len(priceRatio) == 0 {
-		return []*model.PlayerWithPriceChange{}, nil
+	// 组装成 []*model.PlayerWithPriceChange 数据
+	result := make([]*model.PlayerWithPriceChange, len(players))
+	for i, p := range players {
+		changeRatio := p.PriceChange1d
+		if s.filter.Period == Period1Week {
+			changeRatio = p.PriceChange7d
+		}
+		result[i] = &model.PlayerWithPriceChange{
+			Players:     *p,
+			PriceChange: changeRatio,
+		}
 	}
-
-	// 提取球员ID列表
-	playerIds := extractPlayerIDsFromPriceChange(priceRatio)
-
-	// 查询球员数据，应用所有过滤条件
-	players, err := s.GetPlayersByIDsWithFilter(ctx, database, playerIds, s.filter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
-	}
-
-	// 组装成 []*model.PlayerWithPriceChange 数据（以涨跌幅为基准）
-	return s.mergePlayersPriceChangeByPriceRatio(players, priceRatio), nil
+	return result, nil
 }
 
 // queryPlayersOrderByPower 按战力值或能力值排序查询球员
@@ -346,65 +359,17 @@ LIMIT ? OFFSET ?`, selectPlayersFields, filterClause, s.filter.OrderBy, orderDir
 		return []*model.PlayerWithPriceChange{}, nil
 	}
 
-	// 提取球员ID列表
-	playerIds := extractPlayerIDs(players)
-
-	// 查询涨跌幅数据（可选，允许缺失）
-	ratioFilter := s.filter
-	ratioFilter.PlayerIDs = playerIds
-	ratioFilter.Limit = 0 // 不分页
-
-	priceRatio, err := s.queryPlayersRatio(ctx, database, ratioFilter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query price ratio: %w", err)
-	}
-
-	// 组装成 []*model.PlayerWithPriceChange 数据（以球员为基准）
-	return s.mergePlayersPriceChangeByPriceStandard(players, priceRatio), nil
-}
-
-// queryPlayersRatio 查询球员价格变动（涨跌幅）
-func (s *PlayersQuery) queryPlayersRatio(ctx context.Context, database *DB, filter PlayerFilter) ([]*model.PlayerPriceChange, error) {
-	orderDir := filter.GetOrderDirection()
-	atDateHour := FormatDateTimeHour(filter.GetStartTime())
-
-	// 构建查询参数
-	args := []any{atDateHour}
-	playerFilterClause := buildPlayerIDFilter(filter.PlayerIDs, &args)
-	soldOutFilterClause := ""
-	if filter.SoldOut {
-		soldOutFilterClause = " AND cur.price_current_sale = -1"
-	}
-	// 构建 SQL 查询
-	q := fmt.Sprintf(queryPriceRatioBase, playerFilterClause, soldOutFilterClause, orderDir)
-	if filter.Limit > 0 {
-		q += " LIMIT ? OFFSET ?"
-		args = append(args, filter.Limit, filter.GetOffset())
-	}
-
-	// log.Println("查询语句：", q, "参数：", args)
-
-	rows, err := database.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query price ratio: %w", err)
-	}
-	defer rows.Close()
-
-	result := make([]*model.PlayerPriceChange, 0)
-	for rows.Next() {
-		var r model.PlayerPriceChange
-		if err := rows.Scan(
-			&r.PlayerID,
-			&r.PriceOld,
-			&r.PriceNow,
-			&r.ChangeRatio,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan price change row: %w", err)
+	// 组装成 []*model.PlayerWithPriceChange 数据
+	result := make([]*model.PlayerWithPriceChange, len(players))
+	for i, p := range players {
+		changeRatio := p.PriceChange1d
+		if s.filter.Period == Period1Week {
+			changeRatio = p.PriceChange7d
 		}
-		result = append(result, &r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating price change rows: %w", err)
+		result[i] = &model.PlayerWithPriceChange{
+			Players:     *p,
+			PriceChange: changeRatio,
+		}
 	}
 	return result, nil
 }
@@ -487,85 +452,19 @@ func (s *PlayersQuery) GetPlayersWithPriceChangeByIDs(ctx context.Context, datab
 		return []*model.PlayerWithPriceChange{}, nil
 	}
 
-	// 2. 尝试获取价格变动数据（允许失败或为空）
-	s.filter.PlayerIDs = playerIDs
-	s.filter.Period = period
-	s.filter.Limit = 0 // 不限制数量
-
-	priceRatio, _ := s.queryPlayersRatio(ctx, database, s.filter)
-	// 即使查询失败或为空，也继续处理
-
-	// 3. 合并数据（以球员为基准，价格变动可选）
-	return s.mergePlayersPriceChangeByPriceStandard(players, priceRatio), nil
-}
-
-// ============================================================================
-// 数据合并函数
-// ============================================================================
-
-// mergePlayersPriceChangeByPriceRatio 合并球员信息和价格变动（以涨跌幅为基准）
-// 保持 priceChange 的顺序，只包含在 players 中存在的球员
-func (s *PlayersQuery) mergePlayersPriceChangeByPriceRatio(players []*model.Players, priceChange []*model.PlayerPriceChange) []*model.PlayerWithPriceChange {
-	playersMap := buildPlayersMap(players)
-	return mergeByPriceChangeOrder(priceChange, playersMap)
-}
-
-// mergePlayersPriceChangeByPriceStandard 合并球员信息和价格变动（以球员价格为基准）
-// 保持 players 的顺序，只包含有价格变动数据的球员
-func (s *PlayersQuery) mergePlayersPriceChangeByPriceStandard(players []*model.Players, priceChange []*model.PlayerPriceChange) []*model.PlayerWithPriceChange {
-	priceRatioMap := buildPriceChangeMap(priceChange)
-	return mergeByPlayersOrder(players, priceRatioMap)
-}
-
-// buildPlayersMap 构建球员ID到球员信息的映射
-func buildPlayersMap(players []*model.Players) map[uint]*model.Players {
-	playersMap := make(map[uint]*model.Players, len(players))
-	for _, p := range players {
-		playersMap[p.PlayerID] = p
-	}
-	return playersMap
-}
-
-// buildPriceChangeMap 构建球员ID到价格变动的映射
-func buildPriceChangeMap(priceChange []*model.PlayerPriceChange) map[uint]*model.PlayerPriceChange {
-	priceRatioMap := make(map[uint]*model.PlayerPriceChange, len(priceChange))
-	for _, pc := range priceChange {
-		priceRatioMap[pc.PlayerID] = pc
-	}
-	return priceRatioMap
-}
-
-// mergeByPriceChangeOrder 按价格变动顺序合并（以 priceChange 为基准）
-func mergeByPriceChangeOrder(priceChange []*model.PlayerPriceChange, playersMap map[uint]*model.Players) []*model.PlayerWithPriceChange {
-	res := make([]*model.PlayerWithPriceChange, 0, len(priceChange))
-	for _, pRatio := range priceChange {
-		playerInfo, ok := playersMap[pRatio.PlayerID]
-		if !ok || playerInfo == nil {
-			continue
+	// 2. 组装成 []*model.PlayerWithPriceChange 数据（注意：现在直接使用预计算字段）
+	result := make([]*model.PlayerWithPriceChange, len(players))
+	for i, p := range players {
+		changeRatio := p.PriceChange1d
+		if period == Period1Week {
+			changeRatio = p.PriceChange7d
 		}
-		res = append(res, &model.PlayerWithPriceChange{
-			Players:     *playerInfo,
-			PriceChange: pRatio.ChangeRatio,
-		})
-	}
-	return res
-}
-
-// mergeByPlayersOrder 按球员顺序合并（以 players 为基准）
-func mergeByPlayersOrder(players []*model.Players, priceRatioMap map[uint]*model.PlayerPriceChange) []*model.PlayerWithPriceChange {
-	res := make([]*model.PlayerWithPriceChange, 0, len(players))
-	for _, player := range players {
-		changRatio := 0.0
-		priceRatio, ok := priceRatioMap[player.PlayerID]
-		if ok && priceRatio != nil {
-			changRatio = priceRatio.ChangeRatio
+		result[i] = &model.PlayerWithPriceChange{
+			Players:     *p,
+			PriceChange: changeRatio,
 		}
-		res = append(res, &model.PlayerWithPriceChange{
-			Players:     *player,
-			PriceChange: changRatio,
-		})
 	}
-	return res
+	return result, nil
 }
 
 // extractPlayerIDsFromPlayersWithPriceChange 从 PlayerWithPriceChange 列表中提取ID
@@ -628,7 +527,16 @@ func scanPlayerRow(rows interface {
 		&r.OverAll,
 		&r.PowerPer5,
 		&r.PowerPer10,
+		&r.PriceChange1d,
+		&r.PriceChange7d,
 	)
+}
+
+// UpdatePlayerPriceChanges 更新球员涨跌幅
+func (s *PlayersQuery) UpdatePlayerPriceChanges(ctx context.Context, database *DB, playerID uint, pc1d, pc7d float64) error {
+	q := `UPDATE players SET price_change_1d = ?, price_change_7d = ? WHERE player_id = ?`
+	_, err := database.ExecContext(ctx, q, pc1d, pc7d, playerID)
+	return err
 }
 
 // GetAllTargetPlayers 获取需要更新战力值的球员（nba_player_id > 0 且不是自由球员）

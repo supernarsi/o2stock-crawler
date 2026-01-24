@@ -132,9 +132,15 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 	}
 	log.Printf(">>> 抓取球员数据完成 <<<")
 
+	playersService := service.NewPlayersService(database)
+
+	// 同步涨跌幅逻辑：在抓取完成后执行
+	if err := playersService.SyncAllPlayersPriceChanges(ctx); err != nil {
+		log.Printf("同步球员涨跌幅失败: %v", err)
+	}
+
 	// 战力值更新逻辑：仅在 15:00 ~ 16:00 之间执行
 	if isPowerCalculationWindow(time.Now()) {
-		playersService := service.NewPlayersService(database)
 		if err := playersService.CalculateAndSyncPower(ctx); err != nil {
 			log.Printf("同步球员战力值失败: %v", err)
 		}
@@ -152,7 +158,7 @@ func shouldSkipCrawl(t time.Time) bool {
 // isPowerCalculationWindow 检查当前时间是否在战力计算的时间窗口（15:00 ~ 16:00）
 func isPowerCalculationWindow(t time.Time) bool {
 	hour := t.Hour()
-	return hour == 18
+	return hour == 15
 }
 
 // getNextRunTime 计算下次应该执行的时间

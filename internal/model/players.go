@@ -18,6 +18,8 @@ type Players struct {
 	OverAll           uint    `json:"over_all"`
 	PowerPer5         float64 `json:"power_per5"`
 	PowerPer10        float64 `json:"power_per10"`
+	PriceChange1d     float64 `json:"price_change_1d"`
+	PriceChange7d     float64 `json:"price_change_7d"`
 }
 
 type PlayerWithPriceChange struct {
