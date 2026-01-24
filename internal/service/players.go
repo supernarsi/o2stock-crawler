@@ -31,6 +31,9 @@ type PlayerListOptions struct {
 	UserID     *uint
 	SoldOut    bool
 	PlayerName string
+	MinPrice   uint
+	MaxPrice   uint
+	ExFree     bool
 }
 
 // ListPlayersWithOwned 获取球员列表，支持分页、排序，并可选地包含用户的拥有信息
@@ -54,6 +57,9 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 		Period:     opts.Period,
 		SoldOut:    opts.SoldOut,
 		PlayerName: opts.PlayerName,
+		MinPrice:   opts.MinPrice,
+		MaxPrice:   opts.MaxPrice,
+		ExFree:     opts.ExFree,
 	}
 
 	query := db.NewPlayersQuery(filter)
@@ -300,6 +306,7 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 
 	totalPlayers := len(targetPlayers)
 	successCount := 0
+	skippedCount := 0
 	log.Printf("找到符合条件的球员数量: %d", totalPlayers)
 
 	for _, p := range targetPlayers {
@@ -311,12 +318,19 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 		}
 
 		if len(recentGames) == 0 {
-			// 如果没有记录，设置为 0
-			// if err := playersQuery.UpdatePlayerPower(ctx, s.db, p.PlayerID, 0, 0); err != nil {
-			// 	log.Printf("[PlayerID: %d] 更新战力值为0失败: %v", p.PlayerID, err)
+			// 如果没有记录，且当前值不为 0，则更新为 0
+			// if p.PowerPer5 != 0 || p.PowerPer10 != 0 {
+			// 	if err := playersQuery.UpdatePlayerPower(ctx, s.db, p.PlayerID, 0, 0); err != nil {
+			// 		log.Printf("[PlayerID: %d] 更新战力值为0失败: %v", p.PlayerID, err)
+			// 	} else {
+			// 		successCount++
+			// 	}
 			// } else {
-			// 	successCount++
+			// 	skippedCount++
 			// }
+
+			// 先不更新
+			skippedCount++
 			continue
 		}
 
@@ -348,6 +362,12 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 		}
 		avg10 := round(sum10/float64(num10), 1)
 
+		// 检查是否有变化
+		if avg5 == p.PowerPer5 && avg10 == p.PowerPer10 {
+			skippedCount++
+			continue
+		}
+
 		if err := playersQuery.UpdatePlayerPower(ctx, s.db, p.PlayerID, avg5, avg10); err != nil {
 			log.Printf("[PlayerID: %d] 更新战力值失败: %v", p.PlayerID, err)
 		} else {
@@ -357,7 +377,8 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 
 	endTime := time.Now()
 	log.Printf(">>> 球员战力值计算任务结束 <<<")
-	log.Printf("耗时: %v, 处理球员总数: %d, 成功更新数量: %d", endTime.Sub(startTime), totalPlayers, successCount)
+	log.Printf("耗时: %v, 处理球员总数: %d, 成功更新数量: %d, 跳过未变化数量: %d",
+		endTime.Sub(startTime), totalPlayers, successCount, skippedCount)
 
 	return nil
 }

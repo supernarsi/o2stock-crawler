@@ -21,6 +21,9 @@ func (a *API) Players() http.HandlerFunc {
 		soldOut := r.URL.Query().Get("sold_out") == "true"
 		period := parseIntDefault(r.URL.Query().Get("period"), 1)
 		pName := r.URL.Query().Get("player_name")
+		minPrice := parseIntDefault(r.URL.Query().Get("min_price"), 0)
+		maxPrice := parseIntDefault(r.URL.Query().Get("max_price"), 0)
+		exFree := r.URL.Query().Get("ex_free") == "true"
 
 		// 解析可选的 user_id (从 Token 获取)
 		var userID *uint
@@ -37,6 +40,9 @@ func (a *API) Players() http.HandlerFunc {
 			UserID:     userID,
 			SoldOut:    soldOut,
 			PlayerName: pName,
+			MinPrice:   uint(minPrice),
+			MaxPrice:   uint(maxPrice),
+			ExFree:     exFree,
 		}
 
 		players, err := a.playersService.ListPlayersWithOwned(ctx, opts)

@@ -41,6 +41,12 @@ const (
 	OrderByPriceChange = "price_change"
 	// OrderByPlayerID 按球员ID排序（默认）
 	OrderByPlayerID = "player_id"
+	// OrderByPowerPer5 按近5场战力值排序
+	OrderByPowerPer5 = "power_per5"
+	// OrderByPowerPer10 按近10场战力值排序
+	OrderByPowerPer10 = "power_per10"
+	// OrderByOverAll 按球员能力值排序
+	OrderByOverAll = "over_all"
 )
 
 const (
@@ -91,6 +97,9 @@ type PlayerFilter struct {
 	SoldOut    bool
 	PlayerName string
 	PlayerIDs  []uint
+	MinPrice   uint
+	MaxPrice   uint
+	ExFree     bool
 }
 
 // GetOffset 计算偏移量
@@ -129,8 +138,15 @@ type PlayersQuery struct {
 
 // NewPlayersQuery 创建一个 PlayersQuery
 func NewPlayersQuery(filter PlayerFilter) *PlayersQuery {
-	// 限制排序字段，只允许 price_change 和 price_standard
-	if filter.OrderBy != OrderByPriceChange && filter.OrderBy != OrderByPriceStandard {
+	// 限制排序字段
+	validOrderBy := map[string]bool{
+		OrderByPriceChange:   true,
+		OrderByPriceStandard: true,
+		OrderByPowerPer5:     true,
+		OrderByPowerPer10:    true,
+		OrderByOverAll:       true,
+	}
+	if !validOrderBy[filter.OrderBy] {
 		filter.OrderBy = OrderByPlayerID
 	}
 	return &PlayersQuery{
@@ -153,6 +169,9 @@ func (s *PlayersQuery) ListPlayers(ctx context.Context, database *DB) ([]*model.
 	case OrderByPriceChange:
 		// 如果按涨跌幅排序，先使用窗口函数从 p_p_history 表中获取按涨跌幅排序后的球员 id，再使用 in 查询从 players 表中获取球员信息
 		return s.queryPlayersOrderByPriceRatio(ctx, database)
+	case OrderByPowerPer5, OrderByPowerPer10, OrderByOverAll:
+		// 按战力值或能力值排序
+		return s.queryPlayersOrderByPower(ctx, database)
 	default:
 		// 默认按涨跌幅排序
 		return s.queryPlayersOrderByPriceRatio(ctx, database)
@@ -200,6 +219,17 @@ func (s *PlayersQuery) queryPlayersOrderByPrice(ctx context.Context, database *D
 	if s.filter.PlayerName != "" {
 		filterClause += " AND p_name_show LIKE ?"
 		args = append(args, "%"+s.filter.PlayerName+"%")
+	}
+	if s.filter.MinPrice > 0 {
+		filterClause += " AND price_sale_lower >= ?"
+		args = append(args, s.filter.MinPrice)
+	}
+	if s.filter.MaxPrice > 0 {
+		filterClause += " AND price_sale_upper <= ?"
+		args = append(args, s.filter.MaxPrice)
+	}
+	if s.filter.ExFree {
+		filterClause += " AND team_abbr != '自由球员'"
 	}
 
 	args = append(args, s.filter.Limit, s.filter.GetOffset())
@@ -263,6 +293,74 @@ func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, databa
 
 	// 组装成 []*model.PlayerWithPriceChange 数据（以涨跌幅为基准）
 	return s.mergePlayersPriceChangeByPriceRatio(players, priceRatio), nil
+}
+
+// queryPlayersOrderByPower 按战力值或能力值排序查询球员
+func (s *PlayersQuery) queryPlayersOrderByPower(ctx context.Context, database *DB) ([]*model.PlayerWithPriceChange, error) {
+	orderDir := s.filter.GetOrderDirection()
+	args := []any{}
+	filterClause := ""
+
+	// 根据排序字段添加过滤条件
+	if s.filter.OrderBy == OrderByPowerPer5 {
+		filterClause = " AND power_per5 > 0"
+	} else if s.filter.OrderBy == OrderByPowerPer10 {
+		filterClause = " AND power_per10 > 0"
+	}
+
+	if s.filter.SoldOut {
+		filterClause += " AND price_current_lowest = 0"
+	}
+	if s.filter.PlayerName != "" {
+		filterClause += " AND p_name_show LIKE ?"
+		args = append(args, "%"+s.filter.PlayerName+"%")
+	}
+	if s.filter.MinPrice > 0 {
+		filterClause += " AND price_sale_lower >= ?"
+		args = append(args, s.filter.MinPrice)
+	}
+	if s.filter.MaxPrice > 0 {
+		filterClause += " AND price_sale_upper <= ?"
+		args = append(args, s.filter.MaxPrice)
+	}
+	if s.filter.ExFree {
+		filterClause += " AND team_abbr != '自由球员'"
+	}
+
+	args = append(args, s.filter.Limit, s.filter.GetOffset())
+
+	q := fmt.Sprintf(`SELECT %s
+FROM players 
+WHERE price_standard >= 5000
+%s
+ORDER BY %s %s 
+LIMIT ? OFFSET ?`, selectPlayersFields, filterClause, s.filter.OrderBy, orderDir)
+
+	players, err := s.queryPlayers(ctx, database, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query players by power: %w", err)
+	}
+
+	// 如果没有查询到球员，直接返回空结果
+	if len(players) == 0 {
+		return []*model.PlayerWithPriceChange{}, nil
+	}
+
+	// 提取球员ID列表
+	playerIds := extractPlayerIDs(players)
+
+	// 查询涨跌幅数据（可选，允许缺失）
+	ratioFilter := s.filter
+	ratioFilter.PlayerIDs = playerIds
+	ratioFilter.Limit = 0 // 不分页
+
+	priceRatio, err := s.queryPlayersRatio(ctx, database, ratioFilter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query price ratio: %w", err)
+	}
+
+	// 组装成 []*model.PlayerWithPriceChange 数据（以球员为基准）
+	return s.mergePlayersPriceChangeByPriceStandard(players, priceRatio), nil
 }
 
 // queryPlayersRatio 查询球员价格变动（涨跌幅）
@@ -340,13 +438,26 @@ func (s *PlayersQuery) GetPlayersWithPriceChangeByIDs(ctx context.Context, datab
 		return []*model.PlayerWithPriceChange{}, nil
 	}
 
-	// 设置过滤条件
+	// 1. 先获取所有球员基础信息
+	players, err := s.GetPlayersByIDs(ctx, database, playerIDs, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
+	}
+
+	if len(players) == 0 {
+		return []*model.PlayerWithPriceChange{}, nil
+	}
+
+	// 2. 尝试获取价格变动数据（允许失败或为空）
 	s.filter.PlayerIDs = playerIDs
 	s.filter.Period = period
 	s.filter.Limit = 0 // 不限制数量
 
-	// 复用按涨跌幅查询的逻辑（因为它已经支持了 PlayerIDs 过滤和数据组装）
-	return s.queryPlayersOrderByPriceRatio(ctx, database)
+	priceRatio, _ := s.queryPlayersRatio(ctx, database, s.filter)
+	// 即使查询失败或为空，也继续处理
+
+	// 3. 合并数据（以球员为基准，价格变动可选）
+	return s.mergePlayersPriceChangeByPriceStandard(players, priceRatio), nil
 }
 
 // ============================================================================
