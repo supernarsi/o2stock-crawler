@@ -95,40 +95,23 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
-		mockGameData := &api.GameData{
+		var standard *api.GameDataStandard
+		var nbaToday []*api.GameDataNbaToday
+		if playerInfo.Players.NBAPlayerID > 0 {
+			standard, nbaToday, err = a.playersService.GetPlayerGameData(ctx, playerInfo.Players.NBAPlayerID)
+			if err != nil {
+				// 记录错误但不阻塞返回
+				// log.Printf("failed to get player game data for player %d: %v", playerID, err)
+			}
+		}
+
+		gameData := &api.GameData{
 			PlayerID:       uint32(playerID),
 			PlayerNameShow: playerInfo.Players.ShowName,
-			Standard: &api.GameDataStandard{
-				Time:                 28.6,
-				Points:               29.5,
-				Rebound:              6.9,
-				ReboundOffense:       2.3,
-				ReboundDefense:       4.6,
-				Assists:              2.8,
-				Blocks:               0.3,
-				Steals:               0.7,
-				Turnovers:            1.2,
-				Fouls:                2.1,
-				PercentOfThrees:      0.3,
-				PercentOfTwoPointers: 0.5,
-				PercentOfFreeThrows:  0.8,
-			},
-			NbaToday: []*api.GameDataNbaToday{
-				{
-					Date:      "2026-01-23",
-					VsHome:    "湖人",
-					VsAway:    "勇士",
-					IsHome:    true,
-					Points:    29,
-					Rebound:   7,
-					Assists:   6,
-					Blocks:    3,
-					Steals:    1,
-					Turnovers: 2,
-				},
-			},
+			Standard:       standard,
+			NbaToday:       nbaToday,
 		}
-		return api.PlayerHistoryRes{PlayerInfo: playerInfo, PlayerHistory: rows, GameData: mockGameData}, nil
+		return api.PlayerHistoryRes{PlayerInfo: playerInfo, PlayerHistory: rows, GameData: gameData}, nil
 	})
 }
 

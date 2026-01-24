@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
 	"o2stock-crawler/api"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/model"
+	"time"
 )
 
 // PlayersService 球员服务
@@ -223,4 +226,143 @@ func (s *PlayersService) GetPlayerHistoryDays(ctx context.Context, playerID uint
 		return nil, fmt.Errorf("failed to get player history days: %w", err)
 	}
 	return rows, nil
+}
+
+// GetPlayerGameData 获取球员比赛数据和赛季平均数据
+func (s *PlayersService) GetPlayerGameData(ctx context.Context, nbaPlayerID uint) (*api.GameDataStandard, []*api.GameDataNbaToday, error) {
+	statsQuery := db.NewPlayerStatsQuery(nbaPlayerID)
+
+	// 1. 查询赛季平均数据
+	seasonStats, err := statsQuery.GetSeasonStats(ctx, s.db)
+	if err != nil && err != db.ErrNoRows {
+		fmt.Printf("GetPlayerSeasonStats error: %v\n", err)
+	}
+
+	standard := &api.GameDataStandard{} // 默认全 0
+	if seasonStats != nil {
+		timePerGame := 0.0
+		if seasonStats.GamesPlayed > 0 {
+			// 保留1位小数
+			timePerGame = math.Round(seasonStats.Minutes / float64(seasonStats.GamesPlayed))
+		}
+		standard = &api.GameDataStandard{
+			Time:                 timePerGame,
+			Points:               seasonStats.Points,
+			Rebound:              seasonStats.Rebounds,
+			ReboundOffense:       seasonStats.ReboundsOffensive,
+			ReboundDefense:       seasonStats.ReboundsDefensive,
+			Assists:              seasonStats.Assists,
+			Blocks:               seasonStats.Blocks,
+			Steals:               seasonStats.Steals,
+			Turnovers:            seasonStats.Turnovers,
+			Fouls:                seasonStats.Fouls,
+			PercentOfThrees:      seasonStats.ThreePointPercentage * 100,
+			PercentOfTwoPointers: seasonStats.FieldGoalPercentage * 100,
+			PercentOfFreeThrows:  seasonStats.FreeThrowPercentage * 100,
+		}
+	}
+
+	// 2. 查询最近 5 场比赛
+	gameStats, err := statsQuery.GetRecentGameStats(ctx, s.db, 5)
+	if err != nil && err != db.ErrNoRows {
+		fmt.Printf("GetRecentPlayerGameStats error: %v\n", err)
+	}
+
+	nbaToday := []*api.GameDataNbaToday{} // 默认空数组
+	for _, gs := range gameStats {
+		nbaToday = append(nbaToday, &api.GameDataNbaToday{
+			Date:      gs.GameDate.Format("2006-01-02"),
+			VsHome:    gs.PlayerTeamName,
+			VsAway:    gs.VsTeamName,
+			IsHome:    gs.IsHome,
+			Points:    gs.Points,
+			Rebound:   gs.Rebounds,
+			Assists:   gs.Assists,
+			Blocks:    gs.Blocks,
+			Steals:    gs.Steals,
+			Turnovers: gs.Turnovers,
+		})
+	}
+
+	return standard, nbaToday, nil
+}
+
+// CalculateAndSyncPower 计算并同步所有球员的战力值（近5场和近10场平均值）
+func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
+	log.Printf(">>> 开始执行球员战力值计算任务 <<<")
+	startTime := time.Now()
+
+	playersQuery := db.NewPlayersQuery(db.PlayerFilter{})
+	targetPlayers, err := playersQuery.GetAllTargetPlayers(ctx, s.db)
+	if err != nil {
+		return fmt.Errorf("failed to get target players: %w", err)
+	}
+
+	totalPlayers := len(targetPlayers)
+	successCount := 0
+	log.Printf("找到符合条件的球员数量: %d", totalPlayers)
+
+	for _, p := range targetPlayers {
+		statsQuery := db.NewPlayerStatsQuery(p.NBAPlayerID)
+		recentGames, err := statsQuery.GetRecentGameStats(ctx, s.db, 10)
+		if err != nil {
+			log.Printf("[PlayerID: %d] 获取比赛记录失败: %v", p.PlayerID, err)
+			continue
+		}
+
+		if len(recentGames) == 0 {
+			// 如果没有记录，设置为 0
+			// if err := playersQuery.UpdatePlayerPower(ctx, s.db, p.PlayerID, 0, 0); err != nil {
+			// 	log.Printf("[PlayerID: %d] 更新战力值为0失败: %v", p.PlayerID, err)
+			// } else {
+			// 	successCount++
+			// }
+			continue
+		}
+
+		// 计算每一场的战力值
+		powers := make([]float64, len(recentGames))
+		for i, gs := range recentGames {
+			// 单场战力值 = 得分 + (1.2 * 篮板) + (1.5 * 助攻) + (3 * 抢断) + (3 * 盖帽) - 失误
+			powers[i] = float64(gs.Points) +
+				1.2*float64(gs.Rebounds) +
+				1.5*float64(gs.Assists) +
+				3.0*float64(gs.Steals) +
+				3.0*float64(gs.Blocks) -
+				float64(gs.Turnovers)
+		}
+
+		// 计算近 5 场平均
+		num5 := min(len(powers), 5)
+		sum5 := 0.0
+		for i := 0; i < num5; i++ {
+			sum5 += powers[i]
+		}
+		avg5 := round(sum5/float64(num5), 1)
+
+		// 计算近 10 场平均
+		num10 := len(powers)
+		sum10 := 0.0
+		for i := 0; i < num10; i++ {
+			sum10 += powers[i]
+		}
+		avg10 := round(sum10/float64(num10), 1)
+
+		if err := playersQuery.UpdatePlayerPower(ctx, s.db, p.PlayerID, avg5, avg10); err != nil {
+			log.Printf("[PlayerID: %d] 更新战力值失败: %v", p.PlayerID, err)
+		} else {
+			successCount++
+		}
+	}
+
+	endTime := time.Now()
+	log.Printf(">>> 球员战力值计算任务结束 <<<")
+	log.Printf("耗时: %v, 处理球员总数: %d, 成功更新数量: %d", endTime.Sub(startTime), totalPlayers, successCount)
+
+	return nil
+}
+
+func round(val float64, precision int) float64 {
+	p := math.Pow10(precision)
+	return math.Round(val*p) / p
 }

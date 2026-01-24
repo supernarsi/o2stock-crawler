@@ -55,7 +55,7 @@ const (
 // SQL 查询模板
 const (
 	// selectPlayersFields 球员表查询字段
-	selectPlayersFields = `player_id, p_name_show, p_name_en, team_abbr, version, card_type, player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, over_all`
+	selectPlayersFields = `player_id, nba_player_id, p_name_show, p_name_en, team_abbr, version, card_type, player_img, price_standard, price_current_lowest, price_sale_lower, price_sale_upper, over_all, power_per5, power_per10`
 
 	// queryPriceRatioBase SQL 基础查询（价格变动）
 	queryPriceRatioBase = `WITH recent_data AS (
@@ -464,6 +464,7 @@ func scanPlayerRow(rows interface {
 }, r *model.Players) error {
 	return rows.Scan(
 		&r.PlayerID,
+		&r.NBAPlayerID,
 		&r.ShowName,
 		&r.EnName,
 		&r.TeamAbbr,
@@ -475,7 +476,22 @@ func scanPlayerRow(rows interface {
 		&r.PriceSaleLower,
 		&r.PriceSaleUpper,
 		&r.OverAll,
+		&r.PowerPer5,
+		&r.PowerPer10,
 	)
+}
+
+// GetAllTargetPlayers 获取需要更新战力值的球员（nba_player_id > 0 且不是自由球员）
+func (s *PlayersQuery) GetAllTargetPlayers(ctx context.Context, database *DB) ([]*model.Players, error) {
+	q := fmt.Sprintf(`SELECT %s FROM players WHERE nba_player_id > 0 AND team_abbr != '自由球员'`, selectPlayersFields)
+	return queryPlayers(ctx, database, q)
+}
+
+// UpdatePlayerPower 更新球员战力值
+func (s *PlayersQuery) UpdatePlayerPower(ctx context.Context, database *DB, playerID uint, power5, power10 float64) error {
+	q := `UPDATE players SET power_per5 = ?, power_per10 = ? WHERE player_id = ?`
+	_, err := database.ExecContext(ctx, q, power5, power10, playerID)
+	return err
 }
 
 // ============================================================================
