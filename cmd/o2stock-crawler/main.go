@@ -152,7 +152,7 @@ func shouldSkipCrawl(t time.Time) bool {
 // isPowerCalculationWindow 检查当前时间是否在战力计算的时间窗口（15:00 ~ 16:00）
 func isPowerCalculationWindow(t time.Time) bool {
 	hour := t.Hour()
-	return hour == 15
+	return hour == 18
 }
 
 // getNextRunTime 计算下次应该执行的时间
