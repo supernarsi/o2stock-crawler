@@ -101,13 +101,23 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
-		var standard *api.GameDataStandard
-		var nbaToday []*api.GameDataNbaToday
+		// 初始化默认值，确保不会返回 null
+		standard := &api.GameDataStandard{} // 默认全 0
+		nbaToday := []*api.GameDataNbaToday{} // 默认空数组
+		
 		if playerInfo.Players.NBAPlayerID > 0 {
-			standard, nbaToday, err = a.playersService.GetPlayerGameData(ctx, playerInfo.Players.NBAPlayerID)
+			standardResult, nbaTodayResult, err := a.playersService.GetPlayerGameData(ctx, playerInfo.Players.NBAPlayerID)
 			if err != nil {
-				// 记录错误但不阻塞返回
+				// 记录错误但不阻塞返回，使用默认值
 				// log.Printf("failed to get player game data for player %d: %v", playerID, err)
+			} else {
+				// 如果查询成功，使用查询结果
+				if standardResult != nil {
+					standard = standardResult
+				}
+				if nbaTodayResult != nil {
+					nbaToday = nbaTodayResult
+				}
 			}
 		}
 

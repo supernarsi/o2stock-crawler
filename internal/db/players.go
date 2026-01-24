@@ -285,8 +285,8 @@ func (s *PlayersQuery) queryPlayersOrderByPriceRatio(ctx context.Context, databa
 	// 提取球员ID列表
 	playerIds := extractPlayerIDsFromPriceChange(priceRatio)
 
-	// 查询球员数据
-	players, err := s.GetPlayersByIDs(ctx, database, playerIds, s.filter.SoldOut)
+	// 查询球员数据，应用所有过滤条件
+	players, err := s.GetPlayersByIDsWithFilter(ctx, database, playerIds, s.filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
 	}
@@ -428,6 +428,45 @@ func (s *PlayersQuery) GetPlayersByIDs(ctx context.Context, database *DB, player
 		filter = " AND price_current_lowest = 0"
 	}
 	q := fmt.Sprintf(`SELECT %s FROM players WHERE player_id IN (%s)%s`, selectPlayersFields, strings.Join(placeholders, ","), filter)
+
+	return queryPlayers(ctx, database, q, args...)
+}
+
+// GetPlayersByIDsWithFilter 根据球员 ID 列表获取球员信息，应用完整的过滤条件
+func (s *PlayersQuery) GetPlayersByIDsWithFilter(ctx context.Context, database *DB, playerIDs []uint, filter PlayerFilter) ([]*model.Players, error) {
+	if len(playerIDs) == 0 {
+		return []*model.Players{}, nil
+	}
+
+	// 构建 IN 查询
+	placeholders := make([]string, len(playerIDs))
+	args := make([]any, len(playerIDs))
+	for i, pid := range playerIDs {
+		placeholders[i] = "?"
+		args[i] = pid
+	}
+
+	filterClause := ""
+	if filter.SoldOut {
+		filterClause += " AND price_current_lowest = 0"
+	}
+	if filter.PlayerName != "" {
+		filterClause += " AND p_name_show LIKE ?"
+		args = append(args, "%"+filter.PlayerName+"%")
+	}
+	if filter.MinPrice > 0 {
+		filterClause += " AND price_sale_lower >= ?"
+		args = append(args, filter.MinPrice)
+	}
+	if filter.MaxPrice > 0 {
+		filterClause += " AND price_sale_upper <= ?"
+		args = append(args, filter.MaxPrice)
+	}
+	if filter.ExFree {
+		filterClause += " AND team_abbr != '自由球员'"
+	}
+
+	q := fmt.Sprintf(`SELECT %s FROM players WHERE player_id IN (%s)%s`, selectPlayersFields, strings.Join(placeholders, ","), filterClause)
 
 	return queryPlayers(ctx, database, q, args...)
 }
