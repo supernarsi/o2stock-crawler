@@ -15,16 +15,15 @@ func TestGetPlayerHistory(t *testing.T) {
 		t.Skipf("skip test: %v", err)
 	}
 
-	db, err := Open(cfg)
+	database, err := Open(cfg)
 	if err != nil {
 		t.Skipf("skip test: %v", err)
 	}
-	defer db.Close()
+	defer database.Close()
 
 	ctx := context.Background()
-	query := NewPlayerHistoryQuery(10005, 10)
-	query.limit = 10
-	history, err := query.GetPlayerHistory(ctx, db, Period1Day)
+	query := NewHistoryQuery(database, 10005)
+	history, err := query.GetPlayerHistory(ctx, Period1Day)
 	if err != nil {
 		t.Fatalf("GetPlayerHistory failed: %v", err)
 	}

@@ -7,6 +7,8 @@ import (
 	"math"
 	"o2stock-crawler/api"
 	"o2stock-crawler/internal/db"
+	"o2stock-crawler/internal/db/models"
+	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/model"
 	"time"
 )
@@ -49,7 +51,7 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 		opts.Page = 1
 	}
 
-	filter := db.PlayerFilter{
+	filter := repositories.PlayerFilter{
 		Page:       opts.Page,
 		Limit:      opts.Limit,
 		OrderBy:    opts.OrderBy,
@@ -62,10 +64,23 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 		ExFree:     opts.ExFree,
 	}
 
-	query := db.NewPlayersQuery(filter)
-	players, ownedMap, err := query.ListPlayersWithOwned(ctx, s.db, opts.UserID)
+	query := db.NewPlayersQuery(s.db, filter)
+	players, err := query.ListPlayers(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list players with owned: %w", err)
+		return nil, fmt.Errorf("failed to list players: %w", err)
+	}
+
+	var ownedMap map[uint][]model.OwnInfo
+	if opts.UserID != nil && len(players) > 0 {
+		pids := make([]uint, len(players))
+		for i, p := range players {
+			pids[i] = p.PlayerID
+		}
+		ownedQuery := db.NewUserPlayerOwnQuery(s.db, *opts.UserID)
+		ownedMap, err = ownedQuery.GetOwnedInfoByPlayerIDs(ctx, s.db, pids)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get owned info: %w", err)
+		}
 	}
 
 	var favMap map[uint]bool
@@ -74,24 +89,27 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 		for i, p := range players {
 			pids[i] = p.PlayerID
 		}
-		favMap, err = db.GetFavMapByPlayerIDs(ctx, s.db, *opts.UserID, pids)
+		favQuery := db.NewFavQuery(s.db)
+		favMap, err = favQuery.GetFavMapByPlayerIDs(ctx, *opts.UserID, pids)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get fav info: %w", err)
 		}
 	}
 
-	// 构建返回结果，总是包含 owned 字段
+	// 构建返回结果
 	result := make([]api.PlayerWithOwned, len(players))
 	for i, p := range players {
 		result[i] = api.PlayerWithOwned{
-			PlayerWithPriceChange: *p,
+			PlayerWithPriceChange: p,
 			Owned:                 []*model.OwnInfo{}, // 默认为空数组
 			IsFav:                 false,
 		}
 		// 如果有拥有信息，填充到结果中
 		if ownedMap != nil {
 			if owned, ok := ownedMap[p.PlayerID]; ok {
-				result[i].Owned = owned
+				for j := range owned {
+					result[i].Owned = append(result[i].Owned, &owned[j])
+				}
 			}
 		}
 		// 如果有收藏信息，填充到结果中
@@ -106,19 +124,53 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 }
 
 // GetPlayerHistory 获取单个球员历史价格
-func (s *PlayersService) GetPlayerHistory(ctx context.Context, playerID uint32, period uint8, limit int) ([]*model.PriceHistoryRow, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 500 {
-		limit = 500
-	}
-	query := db.NewPlayerHistoryQuery(playerID, limit)
-	rows, err := query.GetPlayerHistory(ctx, s.db, period)
+func (s *PlayersService) GetPlayerHistory(ctx context.Context, playerID uint, period uint8, limit int) ([]*model.PriceHistoryRow, error) {
+	query := db.NewHistoryQuery(s.db, playerID)
+	rows, err := query.GetPlayerHistory(ctx, period)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get player history: %w", err)
+		return nil, err
 	}
-	return rows, nil
+	return s.mapToHistoryRows(rows), nil
+}
+
+// GetPlayerHistoryRealtime 获取分时数据（当天所有成交记录）
+func (s *PlayersService) GetPlayerHistoryRealtime(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
+	repo := repositories.NewHistoryRepository(s.db.DB)
+	rows, err := repo.GetRealtime(ctx, uint(playerID))
+	if err != nil {
+		return nil, err
+	}
+	return s.mapToHistoryRows(rows), nil
+}
+
+// GetPlayerHistory5Days 获取五日数据（最近5个自然日的所有成交记录）
+func (s *PlayersService) GetPlayerHistory5Days(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
+	repo := repositories.NewHistoryRepository(s.db.DB)
+	rows, err := repo.Get5Days(ctx, uint(playerID))
+	if err != nil {
+		return nil, err
+	}
+	return s.mapToHistoryRows(rows), nil
+}
+
+// GetPlayerHistoryDailyK 获取日K线数据（最近30个自然日的K线数据）
+func (s *PlayersService) GetPlayerHistoryDailyK(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
+	repo := repositories.NewHistoryRepository(s.db.DB)
+	rows, err := repo.GetDailyK(ctx, uint(playerID))
+	if err != nil {
+		return nil, err
+	}
+	return s.mapToHistoryRows(rows), nil
+}
+
+// GetPlayerHistoryDays 获取指定天数的历史数据（每天一条）
+func (s *PlayersService) GetPlayerHistoryDays(ctx context.Context, playerID uint32, days int) ([]*model.PriceHistoryRow, error) {
+	repo := repositories.NewHistoryRepository(s.db.DB)
+	rows, err := repo.GetDays(ctx, uint(playerID), days)
+	if err != nil {
+		return nil, err
+	}
+	return s.mapToHistoryRows(rows), nil
 }
 
 // GetMultiPlayersHistory 批量获取球员历史价格
@@ -127,44 +179,48 @@ func (s *PlayersService) GetMultiPlayersHistory(ctx context.Context, playerIDs [
 		return []api.PlayerHistoryItem{}, nil
 	}
 
-	// 限制最多查询的球员数量
-	if len(playerIDs) > 30 {
-		return nil, fmt.Errorf("too many player_ids, maximum 30")
+	uIDs := make([]uint, len(playerIDs))
+	for i, id := range playerIDs {
+		uIDs[i] = uint(id)
 	}
 
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 500 {
-		limit = 500
-	}
-
-	query := db.NewMultiPlayersHistoryQuery(playerIDs, limit)
-	historyMap, err := query.GetMultiPlayersHistory(ctx, s.db)
+	repo := repositories.NewHistoryRepository(s.db.DB)
+	historyMap, err := repo.GetMultiPlayersHistory(ctx, uIDs, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get multi players history: %w", err)
+		return nil, err
 	}
 
-	// 将 map 转换为列表形式，保持请求的 player_ids 顺序
-	historyList := make([]api.PlayerHistoryItem, 0, len(playerIDs))
+	result := make([]api.PlayerHistoryItem, 0, len(playerIDs))
 	for _, pid := range playerIDs {
-		history, ok := historyMap[pid]
-		if !ok {
-			history = []*model.PriceHistoryRow{} // 如果没有数据，返回空数组
-		}
-		historyList = append(historyList, api.PlayerHistoryItem{
+		rows := historyMap[uint(pid)]
+		result = append(result, api.PlayerHistoryItem{
 			PlayerID: pid,
-			History:  history,
+			History:  s.mapToHistoryRows(rows),
 		})
 	}
+	return result, nil
+}
 
-	return historyList, nil
+func (s *PlayersService) mapToHistoryRows(rows []models.PlayerPriceHistory) []*model.PriceHistoryRow {
+	res := make([]*model.PriceHistoryRow, len(rows))
+	for i, r := range rows {
+		res[i] = &model.PriceHistoryRow{
+			PlayerId:         r.PlayerID,
+			AtDate:           r.AtDate,
+			AtDateHourStr:    r.AtDateHour,
+			PriceStandard:    uint32(r.PriceStandard),
+			PriceCurrentSale: int32(r.PriceCurrentSale),
+			PriceLower:       uint32(r.PriceLower),
+			PriceUpper:       uint32(r.PriceUpper),
+		}
+	}
+	return res
 }
 
 // GetPlayerInfo 获取单个球员信息
 func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userID *uint) (*api.PlayerWithOwned, error) {
-	query := db.NewPlayersQuery(db.PlayerFilter{Page: 1, Limit: 1, OrderAsc: true})
-	pp, err := query.GetPlayerInfo(ctx, s.db, playerID)
+	query := db.NewPlayersQuery(s.db, repositories.PlayerFilter{Page: 1, Limit: 1, OrderAsc: true})
+	pp, err := query.GetPlayerInfo(ctx, playerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get player info: %w", err)
 	}
@@ -173,16 +229,19 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 	owned := []*model.OwnInfo{}
 	if userID != nil {
 		// 查询已拥有的球员
-		ownedMap, err := db.NewUserPlayerOwnQuery(*userID).GetOwnedInfoByPlayerIDs(ctx, s.db, []uint{playerID})
+		ownedMap, err := db.NewUserPlayerOwnQuery(s.db, *userID).GetOwnedInfoByPlayerIDs(ctx, s.db, []uint{playerID})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get owned info: %w", err)
 		}
 		if ownedR, ok := ownedMap[playerID]; ok {
-			owned = ownedR
+			for i := range ownedR {
+				owned = append(owned, &ownedR[i])
+			}
 		}
 
 		// 查询已收藏的球员
-		favMap, err := db.GetFavMapByPlayerIDs(ctx, s.db, *userID, []uint{playerID})
+		favQuery := db.NewFavQuery(s.db)
+		favMap, err := favQuery.GetFavMapByPlayerIDs(ctx, *userID, []uint{playerID})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get fav info: %w", err)
 		}
@@ -192,55 +251,40 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 	}
 
 	return &api.PlayerWithOwned{
-		PlayerWithPriceChange: model.PlayerWithPriceChange{Players: *pp},
-		Owned:                 owned,
-		IsFav:                 isFav,
+		PlayerWithPriceChange: model.PlayerWithPriceChange{
+			Players: model.Players{
+				PlayerID:          pp.PlayerID,
+				NBAPlayerID:       pp.NBAPlayerID,
+				ShowName:          pp.ShowName,
+				EnName:            pp.EnName,
+				TeamAbbr:          pp.TeamAbbr,
+				Version:           pp.Version,
+				CardType:          pp.CardType,
+				PlayerImg:         pp.PlayerImg,
+				PriceStandard:     pp.PriceStandard,
+				PriceCurrentLower: pp.PriceCurrentLowest,
+				PriceSaleLower:    pp.PriceSaleLower,
+				PriceSaleUpper:    pp.PriceSaleUpper,
+				OverAll:           pp.OverAll,
+				PowerPer5:         pp.PowerPer5,
+				PowerPer10:        pp.PowerPer10,
+				PriceChange1d:     pp.PriceChange1d,
+				PriceChange7d:     pp.PriceChange7d,
+			},
+			PriceChange: pp.PriceChange1d,
+		},
+		Owned: owned,
+		IsFav: isFav,
 	}, nil
-}
-
-// GetPlayerHistoryRealtime 获取分时数据（当天所有成交记录）
-func (s *PlayersService) GetPlayerHistoryRealtime(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
-	rows, err := db.NewPlayerHistoryQuery(playerID, 0).GetRealtime(ctx, s.db)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get player history realtime: %w", err)
-	}
-	return rows, nil
-}
-
-// GetPlayerHistory5Days 获取五日数据（最近5个自然日的所有成交记录）
-func (s *PlayersService) GetPlayerHistory5Days(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
-	rows, err := db.NewPlayerHistoryQuery(playerID, 0).Get5Days(ctx, s.db)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get player history 5days: %w", err)
-	}
-	return rows, nil
-}
-
-// GetPlayerHistoryDailyK 获取日K线数据（最近30个自然日的K线数据）
-func (s *PlayersService) GetPlayerHistoryDailyK(ctx context.Context, playerID uint32) ([]*model.PriceHistoryRow, error) {
-	rows, err := db.NewPlayerHistoryQuery(playerID, 0).GetDailyK(ctx, s.db)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get player history dailyk: %w", err)
-	}
-	return rows, nil
-}
-
-// GetPlayerHistoryDays 获取指定天数的历史数据（每天一条）
-func (s *PlayersService) GetPlayerHistoryDays(ctx context.Context, playerID uint32, days int) ([]*model.PriceHistoryRow, error) {
-	rows, err := db.NewPlayerHistoryQuery(playerID, 0).GetDays(ctx, s.db, days)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get player history days: %w", err)
-	}
-	return rows, nil
 }
 
 // GetPlayerGameData 获取球员比赛数据和赛季平均数据
 func (s *PlayersService) GetPlayerGameData(ctx context.Context, nbaPlayerID uint) (*api.GameDataStandard, []*api.GameDataNbaToday, error) {
-	statsQuery := db.NewPlayerStatsQuery(nbaPlayerID)
+	statsQuery := db.NewPlayerStatsQuery(s.db, nbaPlayerID)
 
 	// 1. 查询赛季平均数据
-	seasonStats, err := statsQuery.GetSeasonStats(ctx, s.db)
-	if err != nil && err != db.ErrNoRows {
+	seasonStats, err := statsQuery.GetSeasonStats(ctx)
+	if err != nil {
 		fmt.Printf("GetPlayerSeasonStats error: %v\n", err)
 	}
 
@@ -269,8 +313,8 @@ func (s *PlayersService) GetPlayerGameData(ctx context.Context, nbaPlayerID uint
 	}
 
 	// 2. 查询最近 5 场比赛
-	gameStats, err := statsQuery.GetRecentGameStats(ctx, s.db, 5)
-	if err != nil && err != db.ErrNoRows {
+	gameStats, err := statsQuery.GetRecentGameStats(ctx, 5)
+	if err != nil {
 		fmt.Printf("GetRecentPlayerGameStats error: %v\n", err)
 	}
 
@@ -281,12 +325,12 @@ func (s *PlayersService) GetPlayerGameData(ctx context.Context, nbaPlayerID uint
 			VsHome:    gs.PlayerTeamName,
 			VsAway:    gs.VsTeamName,
 			IsHome:    gs.IsHome,
-			Points:    gs.Points,
-			Rebound:   gs.Rebounds,
-			Assists:   gs.Assists,
-			Blocks:    gs.Blocks,
-			Steals:    gs.Steals,
-			Turnovers: gs.Turnovers,
+			Points:    uint(gs.Points),
+			Rebound:   uint(gs.Rebounds),
+			Assists:   uint(gs.Assists),
+			Blocks:    uint(gs.Blocks),
+			Steals:    uint(gs.Steals),
+			Turnovers: uint(gs.Turnovers),
 		})
 	}
 
@@ -298,8 +342,8 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 	log.Printf(">>> 开始执行球员战力值计算任务 <<<")
 	startTime := time.Now()
 
-	playersQuery := db.NewPlayersQuery(db.PlayerFilter{})
-	targetPlayers, err := playersQuery.GetAllTargetPlayers(ctx, s.db)
+	playersQuery := db.NewPlayersQuery(s.db, repositories.PlayerFilter{})
+	targetPlayers, err := playersQuery.GetAllTargetPlayers(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get target players: %w", err)
 	}
@@ -310,26 +354,14 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 	log.Printf("找到符合条件的球员数量: %d", totalPlayers)
 
 	for _, p := range targetPlayers {
-		statsQuery := db.NewPlayerStatsQuery(p.NBAPlayerID)
-		recentGames, err := statsQuery.GetRecentGameStats(ctx, s.db, 10)
+		statsQuery := db.NewPlayerStatsQuery(s.db, p.NBAPlayerID)
+		recentGames, err := statsQuery.GetRecentGameStats(ctx, 10)
 		if err != nil {
 			log.Printf("[PlayerID: %d] 获取比赛记录失败: %v", p.PlayerID, err)
 			continue
 		}
 
 		if len(recentGames) == 0 {
-			// 如果没有记录，且当前值不为 0，则更新为 0
-			// if p.PowerPer5 != 0 || p.PowerPer10 != 0 {
-			// 	if err := playersQuery.UpdatePlayerPower(ctx, s.db, p.PlayerID, 0, 0); err != nil {
-			// 		log.Printf("[PlayerID: %d] 更新战力值为0失败: %v", p.PlayerID, err)
-			// 	} else {
-			// 		successCount++
-			// 	}
-			// } else {
-			// 	skippedCount++
-			// }
-
-			// 先不更新
 			skippedCount++
 			continue
 		}
@@ -368,7 +400,7 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 			continue
 		}
 
-		if err := playersQuery.UpdatePlayerPower(ctx, s.db, p.PlayerID, avg5, avg10); err != nil {
+		if err := playersQuery.UpdatePlayerPower(ctx, p.PlayerID, avg5, avg10); err != nil {
 			log.Printf("[PlayerID: %d] 更新战力值失败: %v", p.PlayerID, err)
 		} else {
 			successCount++
@@ -389,8 +421,8 @@ func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
 	startTime := time.Now()
 
 	// 1. 获取所有球员列表
-	playersQuery := db.NewPlayersQuery(db.PlayerFilter{Limit: 10000}) // 设置一个足够大的 Limit 以获取所有球员
-	players, _, err := playersQuery.ListPlayersWithOwned(ctx, s.db, nil)
+	playersQuery := db.NewPlayersQuery(s.db, repositories.PlayerFilter{Limit: 10000}) // 设置一个足够大的 Limit 以获取所有球员
+	players, err := playersQuery.ListPlayers(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list players: %w", err)
 	}
@@ -400,12 +432,12 @@ func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
 	oneDayAgo := now.AddDate(0, 0, -1)
 	sevenDaysAgo := now.AddDate(0, 0, -7)
 
-	historyMapQuery := db.NewPriceHistoryMapQuery()
-	map1d, err := historyMapQuery.GetPriceHistoryMap(ctx, s.db, oneDayAgo)
+	historyRepo := repositories.NewHistoryRepository(s.db.DB)
+	map1d, err := historyRepo.GetPriceHistoryMap(ctx, oneDayAgo)
 	if err != nil {
 		log.Printf("获取 1d 历史价格快照失败: %v", err)
 	}
-	map7d, err := historyMapQuery.GetPriceHistoryMap(ctx, s.db, sevenDaysAgo)
+	map7d, err := historyRepo.GetPriceHistoryMap(ctx, sevenDaysAgo)
 	if err != nil {
 		log.Printf("获取 7d 历史价格快照失败: %v", err)
 	}
@@ -421,15 +453,11 @@ func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
 		// 计算 1d 涨跌幅
 		if h1d, ok := map1d[p.PlayerID]; ok && h1d.PriceStandard > 0 {
 			pc1d = float64(int(p.PriceStandard)-int(h1d.PriceStandard)) / float64(h1d.PriceStandard)
-		} else if h1d, ok := map1d[p.PlayerID]; ok && h1d.PriceStandard == 0 {
-			log.Printf("[PlayerID: %d] 1d 历史价格为 0，跳过计算", p.PlayerID)
 		}
 
 		// 计算 7d 涨跌幅
 		if h7d, ok := map7d[p.PlayerID]; ok && h7d.PriceStandard > 0 {
 			pc7d = float64(int(p.PriceStandard)-int(h7d.PriceStandard)) / float64(h7d.PriceStandard)
-		} else if h7d, ok := map7d[p.PlayerID]; ok && h7d.PriceStandard == 0 {
-			log.Printf("[PlayerID: %d] 7d 历史价格为 0，跳过计算", p.PlayerID)
 		}
 
 		// 保留两位小数
@@ -437,7 +465,7 @@ func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
 		pc7d = round(pc7d, 2)
 
 		// 更新到数据库
-		if err := playersQuery.UpdatePlayerPriceChanges(ctx, s.db, p.PlayerID, pc1d, pc7d); err != nil {
+		if err := playersQuery.UpdatePlayerPriceChanges(ctx, p.PlayerID, pc1d, pc7d); err != nil {
 			log.Printf("[PlayerID: %d] 更新涨跌幅失败: %v", p.PlayerID, err)
 		} else {
 			successCount++
@@ -452,4 +480,11 @@ func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
 func round(val float64, precision int) float64 {
 	p := math.Pow10(precision)
 	return math.Round(val*p) / p
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

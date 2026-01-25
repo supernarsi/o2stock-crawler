@@ -20,15 +20,15 @@ func TestCountOwnedPlayers(t *testing.T) {
 		t.Skipf("skip test: %v", err)
 	}
 
-	db, err := Open(cfg)
+	database, err := Open(cfg)
 	if err != nil {
 		t.Skipf("skip test: %v", err)
 	}
-	defer db.Close()
+	defer database.Close()
 
 	ctx := context.Background()
-	query := NewUserPlayerOwnQuery(1)
-	count, err := query.CountOwnedPlayers(ctx, db, 10005)
+	query := NewUserPlayerOwnQuery(database, 1)
+	count, err := query.CountOwnedPlayers(ctx, database, 10005)
 	if err != nil {
 		t.Fatalf("CountOwnedPlayers failed: %v", err)
 	}
@@ -45,15 +45,15 @@ func TestGetUserOwnedPlayers(t *testing.T) {
 		t.Skipf("skip test: %v", err)
 	}
 
-	db, err := Open(cfg)
+	database, err := Open(cfg)
 	if err != nil {
 		t.Skipf("skip test: %v", err)
 	}
-	defer db.Close()
+	defer database.Close()
 
 	ctx := context.Background()
-	query := NewUserPlayerOwnQuery(1)
-	players, err := query.GetUserOwnedPlayers(ctx, db)
+	query := NewUserPlayerOwnQuery(database, 1)
+	players, err := query.GetUserOwnedPlayers(ctx, database)
 	if err != nil {
 		t.Fatalf("GetUserOwnedPlayers failed: %v", err)
 	}
@@ -70,16 +70,16 @@ func TestGetOwnedInfoByPlayerIDs(t *testing.T) {
 		t.Skipf("skip test: %v", err)
 	}
 
-	db, err := Open(cfg)
+	database, err := Open(cfg)
 	if err != nil {
 		t.Skipf("skip test: %v", err)
 	}
-	defer db.Close()
+	defer database.Close()
 
 	ctx := context.Background()
 	playerIDs := []uint{10005, 10006}
-	query := NewUserPlayerOwnQuery(1)
-	ownedMap, err := query.GetOwnedInfoByPlayerIDs(ctx, db, playerIDs)
+	query := NewUserPlayerOwnQuery(database, 1)
+	ownedMap, err := query.GetOwnedInfoByPlayerIDs(ctx, database, playerIDs)
 	if err != nil {
 		t.Fatalf("GetOwnedInfoByPlayerIDs failed: %v", err)
 	}

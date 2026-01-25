@@ -2,291 +2,132 @@ package db
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
+	"o2stock-crawler/internal/db/models"
+	"o2stock-crawler/internal/db/repositories"
+	"o2stock-crawler/internal/model"
 	"time"
 
-	"o2stock-crawler/internal/model"
+	"gorm.io/gorm"
 )
 
-/*
-用户拥有球员数据表
-```sql
-CREATE TABLE `u_p_own` (
-  `id` int unsigned NOT NULL AUTO_INCREMENT,
-  `uid` int unsigned NOT NULL DEFAULT '0' COMMENT '用户 id',
-  `pid` int unsigned NOT NULL DEFAULT '0' COMMENT '球员 id',
-  `own_sta` tinyint unsigned NOT NULL DEFAULT '0' COMMENT '状态：0.未拥有；1.已购买；2.已出售',
-  `price_in` int unsigned NOT NULL DEFAULT '0' COMMENT '购买时的总价格',
-  `price_out` int unsigned NOT NULL DEFAULT '0' COMMENT '出售时的总价格',
-  `num_in` int unsigned NOT NULL DEFAULT '0' COMMENT '购买的卡数',
-  `dt_in` datetime NOT NULL COMMENT '购买时间',
-  `dt_out` datetime DEFAULT NULL COMMENT '出售时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_uid` (`uid`),
-  KEY `idx_pid` (`pid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户拥有球员数据表';
-```
-*/
-
-// ============================================================================
 // UserPlayerOwnQuery 用户球员拥有查询
-// ============================================================================
-
-// UserPlayerOwnQuery 用户球员拥有相关查询
 type UserPlayerOwnQuery struct {
-	QueryBase
+	repo   *repositories.OwnRepository
 	userID uint
 }
 
 // NewUserPlayerOwnQuery 创建一个 UserPlayerOwnQuery
-func NewUserPlayerOwnQuery(userID uint) *UserPlayerOwnQuery {
+func NewUserPlayerOwnQuery(database *DB, userID uint) *UserPlayerOwnQuery {
 	return &UserPlayerOwnQuery{
-		QueryBase: QueryBase{},
-		userID:    userID,
+		repo:   repositories.NewOwnRepository(database.DB),
+		userID: userID,
 	}
 }
 
-// CountOwnedPlayers 统计用户拥有的指定球员数量（状态为 1：已购买）
+// CountOwnedPlayers 统计用户拥有的指定球员数量
 func (q *UserPlayerOwnQuery) CountOwnedPlayers(ctx context.Context, database *DB, playerID uint) (int, error) {
-	const query = `
-SELECT COUNT(*) 
-FROM u_p_own 
-WHERE uid = ? AND pid = ? AND own_sta = 1`
-
-	var count int
-	err := database.QueryRowContext(ctx, query, q.userID, playerID).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count owned players: %w", err)
-	}
-	return count, nil
+	count, err := q.repo.CountOwned(ctx, q.userID, playerID)
+	return int(count), err
 }
 
-// GetUserOwnedPlayers 获取用户拥有的所有球员记录（包括已出售）
-func (q *UserPlayerOwnQuery) GetUserOwnedPlayers(ctx context.Context, database *DB) ([]*model.UserPlayerOwn, error) {
-	const query = `
-SELECT id, uid, pid, own_sta, price_in, price_out, num_in, dt_in, dt_out
-FROM u_p_own
-WHERE uid = ?
-ORDER BY dt_in DESC`
-
-	rows, err := database.QueryContext(ctx, query, q.userID)
+// GetUserOwnedPlayers 获取用户拥有的所有球员记录
+func (q *UserPlayerOwnQuery) GetUserOwnedPlayers(ctx context.Context, database *DB) ([]model.UserPlayerOwn, error) {
+	owns, err := q.repo.GetByUserID(ctx, q.userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query user owned players: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	result := make([]*model.UserPlayerOwn, 0)
-	for rows.Next() {
-		var r model.UserPlayerOwn
-		var dtOut sql.NullTime
-		if err := scanUserPlayerOwnRow(rows, &r, &dtOut); err != nil {
-			return nil, fmt.Errorf("failed to scan user player own row: %w", err)
-		}
-		if dtOut.Valid {
-			r.DtOut = &dtOut.Time
-		}
-		result = append(result, &r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating user player own rows: %w", err)
+	result := make([]model.UserPlayerOwn, len(owns))
+	for i, o := range owns {
+		result[i] = q.mapToModel(&o)
 	}
 	return result, nil
 }
 
-// GetOwnedInfoByPlayerIDs 根据球员 ID 列表获取用户的拥有信息（仅状态为 1 或 2 的）
-func (q *UserPlayerOwnQuery) GetOwnedInfoByPlayerIDs(ctx context.Context, database *DB, playerIDs []uint) (map[uint][]*model.OwnInfo, error) {
-	if len(playerIDs) == 0 {
-		return make(map[uint][]*model.OwnInfo), nil
-	}
-
-	// 构建 IN 查询
-	placeholders, args := buildINClause(convertUintToAny(playerIDs))
-	args = append([]any{q.userID}, args...)
-
-	query := fmt.Sprintf(`
-SELECT pid, own_sta, price_in, price_out, num_in, dt_in, dt_out
-FROM u_p_own
-WHERE uid = ? AND pid IN (%s) AND own_sta IN (1, 2)
-ORDER BY dt_in DESC`, placeholders)
-
-	rows, err := database.QueryContext(ctx, query, args...)
+// GetOwnedInfoByPlayerIDs 根据球员 ID 列表获取用户的拥有信息
+func (q *UserPlayerOwnQuery) GetOwnedInfoByPlayerIDs(ctx context.Context, database *DB, playerIDs []uint) (map[uint][]model.OwnInfo, error) {
+	owns, err := q.repo.GetByPlayerIDs(ctx, q.userID, playerIDs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query owned info by player IDs: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	result := make(map[uint][]*model.OwnInfo)
-	for rows.Next() {
-		var r model.UserPlayerOwn
-		var dtOut sql.NullTime
-		if err := rows.Scan(
-			&r.PlayerID,
-			&r.OwnSta,
-			&r.PriceIn,
-			&r.PriceOut,
-			&r.NumIn,
-			&r.DtIn,
-			&dtOut,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan owned info row: %w", err)
-		}
-		if dtOut.Valid {
-			r.DtOut = &dtOut.Time
-		}
-		info := r.ToOwnInfo()
-		result[r.PlayerID] = append(result[r.PlayerID], &info)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating owned info rows: %w", err)
+	result := make(map[uint][]model.OwnInfo)
+	for _, o := range owns {
+		m := q.mapToModel(&o)
+		info := m.ToOwnInfo()
+		result[o.PlayerID] = append(result[o.PlayerID], info)
 	}
 	return result, nil
 }
 
-// 根据记录 id 查询持仓数据
+// GetPlayerOwnByRecordID 根据记录 id 查询持仓数据
 func (q *UserPlayerOwnQuery) GetPlayerOwnByRecordID(ctx context.Context, database *DB, recordId, uId uint) (*model.UserPlayerOwn, error) {
-	const query = `
-SELECT id, uid, pid, own_sta, price_in, price_out, num_in, dt_in, dt_out
-FROM u_p_own
-WHERE id = ? AND uid = ?
-LIMIT 1`
-	var r model.UserPlayerOwn
-	err := database.QueryRowContext(ctx, query, recordId, uId).Scan(
-		&r.ID,
-		&r.UserID,
-		&r.PlayerID,
-		&r.OwnSta,
-		&r.PriceIn,
-		&r.PriceOut,
-		&r.NumIn,
-		&r.DtIn,
-		&r.DtOut,
-	)
+	own, err := q.repo.GetByRecordID(ctx, recordId, uId)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to get player own by record id: %w", err)
+		return nil, err
 	}
-	return &r, nil
+	m := q.mapToModel(own)
+	return &m, nil
 }
 
-// scanUserPlayerOwnRow 扫描用户球员拥有行数据
-func scanUserPlayerOwnRow(rows interface {
-	Scan(dest ...any) error
-}, r *model.UserPlayerOwn, dtOut *sql.NullTime) error {
-	return rows.Scan(
-		&r.ID,
-		&r.UserID,
-		&r.PlayerID,
-		&r.OwnSta,
-		&r.PriceIn,
-		&r.PriceOut,
-		&r.NumIn,
-		&r.DtIn,
-		dtOut,
-	)
+func (q *UserPlayerOwnQuery) mapToModel(o *models.UserPlayerOwn) model.UserPlayerOwn {
+	return model.UserPlayerOwn{
+		ID:       o.ID,
+		UserID:   o.UserID,
+		PlayerID: o.PlayerID,
+		OwnSta:   uint8(o.Sta),
+		PriceIn:  o.BuyPrice,
+		PriceOut: o.SellPrice,
+		NumIn:    o.BuyCount,
+		DtIn:     o.BuyTime,
+		DtOut:    o.SellTime,
+	}
 }
 
-// ============================================================================
-// UserPlayerOwnCommand 用户球员拥有操作（插入、更新）
-// ============================================================================
-
-// UserPlayerOwnCommand 用户球员拥有相关操作
+// UserPlayerOwnCommand 用户球员拥有操作
 type UserPlayerOwnCommand struct {
-	DbBase
+	repo *repositories.OwnRepository
 }
 
 // NewUserPlayerOwnCommand 创建一个 UserPlayerOwnCommand
-func NewUserPlayerOwnCommand() *UserPlayerOwnCommand {
+func NewUserPlayerOwnCommand(database *DB) *UserPlayerOwnCommand {
 	return &UserPlayerOwnCommand{
-		DbBase: DbBase{},
+		repo: repositories.NewOwnRepository(database.DB),
 	}
 }
 
 // InsertPlayerOwn 插入一条购买记录
 func (c *UserPlayerOwnCommand) InsertPlayerOwn(ctx context.Context, database *DB, userID, playerID, num, cost uint, dt time.Time) error {
-	const query = `
-INSERT INTO u_p_own 
-	(uid, pid, own_sta, price_in, num_in, dt_in)
-VALUES (?, ?, 1, ?, ?, ?)`
-
-	_, err := database.ExecContext(ctx, query, userID, playerID, cost, num, dt)
-	if err != nil {
-		return fmt.Errorf("failed to insert player own: %w", err)
-	}
-	return nil
+	return c.repo.Create(ctx, userID, playerID, num, cost, dt)
 }
 
 // UpdatePlayerOwnToSold 将已购买的球员标记为已出售
 func (c *UserPlayerOwnCommand) UpdatePlayerOwnToSold(ctx context.Context, database *DB, userID, playerID, cost uint, dt time.Time) error {
-	const query = `
-UPDATE u_p_own 
-SET own_sta = 2, price_out = ?, dt_out = ?
-WHERE uid = ? AND pid = ? AND own_sta = 1
-LIMIT 1`
-
-	result, err := database.ExecContext(ctx, query, cost, dt, userID, playerID)
+	err := c.repo.MarkAsSold(ctx, userID, playerID, cost, dt)
 	if err != nil {
-		return fmt.Errorf("failed to update player own to sold: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return ErrNoRows
+		return err
 	}
 	return nil
 }
 
 // UpdatePlayerOwn 更新持仓记录
 func (c *UserPlayerOwnCommand) UpdatePlayerOwn(ctx context.Context, database *DB, userID, recordId, priceIn, priceOut, num uint, dtIn, dtOut *time.Time) error {
-	args := []any{priceIn, priceOut, num, dtIn}
-	setClause := ""
+	updates := map[string]interface{}{
+		"price_in":  priceIn,
+		"price_out": priceOut,
+		"num_in":    num,
+		"dt_in":     dtIn,
+	}
 	if dtOut != nil {
-		setClause = ", dt_out = ?"
-		args = append(args, dtOut)
+		updates["dt_out"] = dtOut
 	}
-	args = append(args, userID, recordId)
-
-	query := fmt.Sprintf(`
-UPDATE u_p_own 
-SET price_in = ?, price_out = ?, num_in = ?, dt_in = ? %s
-WHERE uid = ? AND id = ?
-LIMIT 1`, setClause)
-
-	result, err := database.ExecContext(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update player own: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return ErrNoRows
-	}
-	return nil
+	return c.repo.Update(ctx, userID, recordId, updates)
 }
 
 // DeletePlayerOwn 删除持仓记录
 func (c *UserPlayerOwnCommand) DeletePlayerOwn(ctx context.Context, database *DB, userID, recordId uint) error {
-	const query = `
-DELETE FROM u_p_own 
-WHERE uid = ? AND id = ?
-LIMIT 1`
-
-	result, err := database.ExecContext(ctx, query, userID, recordId)
-	if err != nil {
-		return fmt.Errorf("failed to delete player own: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return ErrNoRows
-	}
-	return nil
+	return c.repo.Delete(ctx, userID, recordId)
 }

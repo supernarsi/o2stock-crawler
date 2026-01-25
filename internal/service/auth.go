@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"o2stock-crawler/internal/db"
-	"o2stock-crawler/internal/model"
+	"o2stock-crawler/internal/db/models"
 
 	"github.com/golang-jwt/jwt/v5"
 	jsoniter "github.com/json-iterator/go"
@@ -25,8 +25,8 @@ func NewAuthService(database *db.DB, dbConfig *db.Config) *AuthService {
 	return &AuthService{
 		db:        database,
 		dbConfig:  dbConfig,
-		userQuery: db.NewUserQuery(),
-		userCmd:   db.NewUserCommand(),
+		userQuery: db.NewUserQuery(database),
+		userCmd:   db.NewUserCommand(database),
 	}
 }
 
@@ -56,7 +56,7 @@ type UserClaims struct {
 // 1. 调用微信接口获取 OpenID
 // 2. 查询用户是否存在，不存在则注册
 // 3. 生成 Token
-func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserInfo) (*model.User, string, error) {
+func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserInfo) (*models.User, string, error) {
 	// 1. 获取微信 OpenID
 	wxResp, err := s.code2Session(ctx, info.Code)
 	if err != nil {
@@ -71,7 +71,7 @@ func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserI
 
 	if user == nil {
 		// 注册新用户
-		user = &model.User{
+		user = &models.User{
 			WxOpenID:     wxResp.OpenID,
 			WxUnionID:    wxResp.UnionID,
 			WxSessionKey: wxResp.SessionKey,

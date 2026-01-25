@@ -37,8 +37,8 @@ func TestUserFavLimit(t *testing.T) {
 	userID := uint(99998) // Another Test User ID
 
 	// Clean up
-	database.ExecContext(ctx, "DELETE FROM u_p_fav WHERE uid = ?", userID)
-	defer database.ExecContext(ctx, "DELETE FROM u_p_fav WHERE uid = ?", userID)
+	database.DB.Exec("DELETE FROM u_p_fav WHERE uid = ?", userID)
+	defer database.DB.Exec("DELETE FROM u_p_fav WHERE uid = ?", userID)
 
 	// 1. Insert 50 favs
 	for i := 0; i < 50; i++ {
