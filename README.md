@@ -10,6 +10,17 @@
   - 更新/插入当前球员价格到 `players` 表。
   - 将每次抓取的价格快照写入 `p_p_history` 历史表。
 
+### 项目架构
+
+本项目采用清晰的分层架构（Clean Architecture / DDD 模式）：
+
+- **`internal/entity/`**: 领域实体模型，对应 MySQL 表结构（GORM）。
+- **`internal/dto/`**: 数据传输对象，用于 API 响应和请求的 JSON 序列化。
+- **`internal/db/repositories/`**: 数据访问层（Repository），负责纯粹的 CURD 操作。
+- **`internal/service/`**: 业务逻辑层（Service），处理复杂的业务流程及 Entity 与 DTO 的转换。
+- **`internal/controller/`**: 接口层，负责处理 HTTP 请求、鉴权及响应分发。
+- **`api/`**: 接口定义与公共契约。
+
 ### 数据库表结构
 
 请在 MySQL 中创建以下表（来自设计文档，可自行调整索引/约束）：

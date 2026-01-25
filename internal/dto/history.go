@@ -1,10 +1,8 @@
-package model
+package dto
 
-import (
-	"time"
-)
+import "time"
 
-// PriceHistoryRow 表示 p_p_history 表的一行。
+// PriceHistoryRow 价格历史行DTO
 type PriceHistoryRow struct {
 	PlayerId         uint      `json:"player_id"`
 	AtDate           time.Time `json:"at_date"`

@@ -1,6 +1,6 @@
 package api
 
-import "o2stock-crawler/internal/model"
+import "o2stock-crawler/internal/dto"
 
 // PlayerInReq 标记购买请求
 type PlayerInReq struct {
@@ -35,15 +35,15 @@ type PlayerOwnDeleteReq struct {
 
 // OwnedPlayer 用户拥有的球员（包含球员信息）
 type OwnedPlayer struct {
-	Id       uint          `json:"id" dc:"持仓记录 id"`
-	PlayerID uint          `json:"player_id"`
-	PriceIn  uint          `json:"price_in"`
-	PriceOut uint          `json:"price_out"`
-	OwnSta   uint8         `json:"own_sta"`
-	OwnNum   uint          `json:"own_num"`
-	DtIn     string        `json:"dt_in"`
-	DtOut    string        `json:"dt_out"`
-	PP       model.Players `json:"p_p"`
+	Id       uint        `json:"id" dc:"持仓记录 id"`
+	PlayerID uint        `json:"player_id"`
+	PriceIn  uint        `json:"price_in"`
+	PriceOut uint        `json:"price_out"`
+	OwnSta   uint8       `json:"own_sta"`
+	OwnNum   uint        `json:"own_num"`
+	DtIn     string      `json:"dt_in"`
+	DtOut    string      `json:"dt_out"`
+	PP       dto.Players `json:"p_p"`
 }
 
 // UserPlayersRes 用户拥有球员列表响应
@@ -58,9 +58,9 @@ type PlayersWithOwnedRes struct {
 
 // PlayerWithOwned 球员信息（包含拥有信息）
 type PlayerWithOwned struct {
-	model.PlayerWithPriceChange
-	Owned []*model.OwnInfo `json:"owned"`
-	IsFav bool             `json:"is_fav"`
+	dto.PlayerWithPriceChange
+	Owned []*dto.OwnInfo `json:"owned"`
+	IsFav bool           `json:"is_fav"`
 }
 
 // UserFavPlayerReq 用户收藏球员请求

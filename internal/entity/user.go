@@ -1,10 +1,10 @@
-package models
+package entity
 
 import (
 	"time"
 )
 
-// User 用户模型
+// User 用户实体模型
 type User struct {
 	ID           uint      `gorm:"primaryKey;column:id"`
 	Nick         string    `gorm:"column:nick"`

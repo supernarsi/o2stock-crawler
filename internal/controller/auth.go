@@ -47,7 +47,7 @@ func (c *AuthController) Login() http.HandlerFunc {
 		}
 
 		return map[string]any{
-			"user":  user,
+			"user":  service.ToUserDTO(user),
 			"token": token,
 		}, nil
 	})

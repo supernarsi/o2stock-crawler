@@ -3,17 +3,19 @@ package repositories
 import (
 	"context"
 	"fmt"
-	"o2stock-crawler/internal/db/models"
+	"o2stock-crawler/internal/entity"
 
 	"gorm.io/gorm"
 )
 
 type PlayerRepository struct {
-	db *gorm.DB
+	baseRepository[entity.Player]
 }
 
 func NewPlayerRepository(db *gorm.DB) *PlayerRepository {
-	return &PlayerRepository{db: db}
+	return &PlayerRepository{
+		baseRepository: baseRepository[entity.Player]{db: db},
+	}
 }
 
 type PlayerFilter struct {
@@ -30,9 +32,9 @@ type PlayerFilter struct {
 	ExFree     bool
 }
 
-func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]models.Player, error) {
-	var players []models.Player
-	query := r.db.WithContext(ctx).Model(&models.Player{})
+func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]entity.Player, error) {
+	var players []entity.Player
+	query := r.model(ctx)
 
 	// Apply filters
 	if filter.SoldOut {
@@ -79,23 +81,23 @@ func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]mod
 	return players, err
 }
 
-func (r *PlayerRepository) GetByID(ctx context.Context, playerID uint) (*models.Player, error) {
-	var player models.Player
-	err := r.db.WithContext(ctx).Where("player_id = ?", playerID).First(&player).Error
+func (r *PlayerRepository) GetByID(ctx context.Context, playerID uint) (*entity.Player, error) {
+	var player entity.Player
+	err := r.ctx(ctx).Where("player_id = ?", playerID).First(&player).Error
 	if err != nil {
 		return nil, err
 	}
 	return &player, nil
 }
 
-func (r *PlayerRepository) BatchGetByIDs(ctx context.Context, playerIDs []uint) ([]models.Player, error) {
-	var players []models.Player
-	err := r.db.WithContext(ctx).Where("player_id IN ?", playerIDs).Find(&players).Error
+func (r *PlayerRepository) BatchGetByIDs(ctx context.Context, playerIDs []uint) ([]entity.Player, error) {
+	var players []entity.Player
+	err := r.ctx(ctx).Where("player_id IN ?", playerIDs).Find(&players).Error
 	return players, err
 }
 
 func (r *PlayerRepository) UpdatePower(ctx context.Context, playerID uint, power5, power10 float64) error {
-	return r.db.WithContext(ctx).Model(&models.Player{}).
+	return r.model(ctx).
 		Where("player_id = ?", playerID).
 		Updates(map[string]interface{}{
 			"power_per5":  power5,
@@ -104,7 +106,7 @@ func (r *PlayerRepository) UpdatePower(ctx context.Context, playerID uint, power
 }
 
 func (r *PlayerRepository) UpdatePriceChanges(ctx context.Context, playerID uint, pc1d, pc7d float64) error {
-	return r.db.WithContext(ctx).Model(&models.Player{}).
+	return r.model(ctx).
 		Where("player_id = ?", playerID).
 		Updates(map[string]interface{}{
 			"price_change_1d": pc1d,
@@ -112,9 +114,9 @@ func (r *PlayerRepository) UpdatePriceChanges(ctx context.Context, playerID uint
 		}).Error
 }
 
-func (r *PlayerRepository) GetAllTargetPlayers(ctx context.Context) ([]models.Player, error) {
-	var players []models.Player
-	err := r.db.WithContext(ctx).Where("nba_player_id > 0 AND team_abbr != ?", "自由球员").Find(&players).Error
+func (r *PlayerRepository) GetAllTargetPlayers(ctx context.Context) ([]entity.Player, error) {
+	var players []entity.Player
+	err := r.ctx(ctx).Where("nba_player_id > 0 AND team_abbr != ?", "自由球员").Find(&players).Error
 	return players, err
 }
 

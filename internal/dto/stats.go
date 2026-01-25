@@ -1,8 +1,8 @@
-package model
+package dto
 
 import "time"
 
-// PlayerSeasonStats 球员赛季平均数据
+// PlayerSeasonStats 球员赛季平均数据DTO
 type PlayerSeasonStats struct {
 	ID                   uint      `json:"id"`
 	PlayerID             uint      `json:"player_id"`
@@ -27,7 +27,7 @@ type PlayerSeasonStats struct {
 	CreatedAt            time.Time `json:"created_at"`
 }
 
-// PlayerGameStats 球员单场比赛数据
+// PlayerGameStats 球员单场比赛数据DTO
 type PlayerGameStats struct {
 	ID                     uint      `json:"id"`
 	PlayerID               uint      `json:"player_id"`

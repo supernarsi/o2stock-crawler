@@ -1,32 +1,44 @@
-package model
+package dto
 
 import "time"
 
-// UserPlayerOwn 表示 u_p_own 表的一行
+// User 用户API响应DTO
+type User struct {
+	ID           uint      `json:"id"`
+	Nick         string    `json:"nick"`
+	Avatar       string    `json:"avatar"`
+	WxOpenID     string    `json:"wx_openid"`
+	WxUnionID    string    `json:"wx_unionid"`
+	WxSessionKey string    `json:"wx_session_key"`
+	Sta          uint8     `json:"sta"`
+	CTime        time.Time `json:"c_time"`
+}
+
+// UserPlayerOwn 用户球员持仓DTO
 type UserPlayerOwn struct {
 	ID       uint       `json:"id"`
 	UserID   uint       `json:"uid"`
 	PlayerID uint       `json:"pid"`
-	OwnSta   uint8      `json:"own_sta"` // 0.未拥有；1.已购买；2.已出售
+	OwnSta   uint8      `json:"own_sta"`
 	PriceIn  uint       `json:"price_in"`
 	PriceOut uint       `json:"price_out"`
-	NumIn    uint       `json:"own_num"` // 购买的卡数
+	NumIn    uint       `json:"own_num"`
 	DtIn     time.Time  `json:"dt_in"`
 	DtOut    *time.Time `json:"dt_out"`
 }
 
-// OwnInfo 用于 API 响应，简化版本（不包含 id）
+// OwnInfo 简化版持仓信息DTO
 type OwnInfo struct {
 	PlayerID uint   `json:"player_id"`
 	PriceIn  uint   `json:"price_in"`
 	PriceOut uint   `json:"price_out"`
 	OwnSta   uint8  `json:"own_sta"`
 	OwnNum   uint   `json:"own_num"`
-	DtIn     string `json:"dt_in"` // 格式: 2006-01-02 15:04:05
+	DtIn     string `json:"dt_in"`
 	DtOut    string `json:"dt_out"`
 }
 
-// ToOwnInfo 将 UserPlayerOwn 转换为 OwnInfo
+// ToOwnInfo 转换为OwnInfo
 func (u *UserPlayerOwn) ToOwnInfo() OwnInfo {
 	info := OwnInfo{
 		PlayerID: u.PlayerID,
@@ -40,4 +52,12 @@ func (u *UserPlayerOwn) ToOwnInfo() OwnInfo {
 		info.DtOut = u.DtOut.Format("2006-01-02 15:04:05")
 	}
 	return info
+}
+
+// UserPlayerFav 用户收藏DTO
+type UserPlayerFav struct {
+	ID       uint      `json:"id"`
+	UserID   uint      `json:"uid"`
+	PlayerID uint      `json:"pid"`
+	CTime    time.Time `json:"c_time"`
 }

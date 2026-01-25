@@ -5,8 +5,8 @@ import (
 	"strconv"
 
 	"o2stock-crawler/api"
+	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/middleware"
-	"o2stock-crawler/internal/model"
 	"o2stock-crawler/internal/service"
 )
 
@@ -81,7 +81,7 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			mode = "realtime" // 默认模式为分时数据
 		}
 
-		var rows []*model.PriceHistoryRow
+		var rows []*dto.PriceHistoryRow
 		switch mode {
 		case "realtime":
 			rows, err = a.playersService.GetPlayerHistoryRealtime(ctx, uint32(playerID))
@@ -102,9 +102,9 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		}
 
 		// 初始化默认值，确保不会返回 null
-		standard := &api.GameDataStandard{} // 默认全 0
+		standard := &api.GameDataStandard{}   // 默认全 0
 		nbaToday := []*api.GameDataNbaToday{} // 默认空数组
-		
+
 		if playerInfo.Players.NBAPlayerID > 0 {
 			standardResult, nbaTodayResult, err := a.playersService.GetPlayerGameData(ctx, playerInfo.Players.NBAPlayerID)
 			if err != nil {

@@ -2,22 +2,24 @@ package repositories
 
 import (
 	"context"
-	"o2stock-crawler/internal/db/models"
+	"o2stock-crawler/internal/entity"
 
 	"gorm.io/gorm"
 )
 
 type StatsRepository struct {
-	db *gorm.DB
+	baseRepository[entity.PlayerSeasonStats]
 }
 
 func NewStatsRepository(db *gorm.DB) *StatsRepository {
-	return &StatsRepository{db: db}
+	return &StatsRepository{
+		baseRepository: baseRepository[entity.PlayerSeasonStats]{db: db},
+	}
 }
 
-func (r *StatsRepository) GetSeasonStats(ctx context.Context, nbaPlayerID uint) (*models.PlayerSeasonStats, error) {
-	var stats models.PlayerSeasonStats
-	err := r.db.WithContext(ctx).
+func (r *StatsRepository) GetSeasonStats(ctx context.Context, nbaPlayerID uint) (*entity.PlayerSeasonStats, error) {
+	var stats entity.PlayerSeasonStats
+	err := r.ctx(ctx).
 		Where("player_id = ?", nbaPlayerID).
 		Order("season DESC, season_type DESC").
 		First(&stats).Error
@@ -27,9 +29,9 @@ func (r *StatsRepository) GetSeasonStats(ctx context.Context, nbaPlayerID uint) 
 	return &stats, nil
 }
 
-func (r *StatsRepository) GetRecentGameStats(ctx context.Context, nbaPlayerID uint, limit int) ([]models.PlayerGameStats, error) {
-	var stats []models.PlayerGameStats
-	err := r.db.WithContext(ctx).
+func (r *StatsRepository) GetRecentGameStats(ctx context.Context, nbaPlayerID uint, limit int) ([]entity.PlayerGameStats, error) {
+	var stats []entity.PlayerGameStats
+	err := r.ctx(ctx).Model(&entity.PlayerGameStats{}).
 		Where("player_id = ?", nbaPlayerID).
 		Order("game_date DESC").
 		Limit(limit).

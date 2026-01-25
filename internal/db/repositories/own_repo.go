@@ -2,49 +2,51 @@ package repositories
 
 import (
 	"context"
-	"o2stock-crawler/internal/db/models"
+	"o2stock-crawler/internal/entity"
 	"time"
 
 	"gorm.io/gorm"
 )
 
 type OwnRepository struct {
-	db *gorm.DB
+	baseRepository[entity.UserPlayerOwn]
 }
 
 func NewOwnRepository(db *gorm.DB) *OwnRepository {
-	return &OwnRepository{db: db}
+	return &OwnRepository{
+		baseRepository: baseRepository[entity.UserPlayerOwn]{db: db},
+	}
 }
 
 func (r *OwnRepository) CountOwned(ctx context.Context, userID, playerID uint) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&models.UserPlayerOwn{}).
+	err := r.model(ctx).
 		Where("uid = ? AND pid = ? AND own_sta = 1", userID, playerID).
 		Count(&count).Error
 	return count, err
 }
 
-func (r *OwnRepository) GetByUserID(ctx context.Context, userID uint) ([]models.UserPlayerOwn, error) {
-	var results []models.UserPlayerOwn
-	err := r.db.WithContext(ctx).
+func (r *OwnRepository) GetByUserID(ctx context.Context, userID uint) ([]entity.UserPlayerOwn, error) {
+	var results []entity.UserPlayerOwn
+	err := r.ctx(ctx).
 		Where("uid = ?", userID).
 		Order("dt_in DESC").
 		Find(&results).Error
 	return results, err
 }
 
-func (r *OwnRepository) GetByPlayerIDs(ctx context.Context, userID uint, playerIDs []uint) ([]models.UserPlayerOwn, error) {
-	var results []models.UserPlayerOwn
-	err := r.db.WithContext(ctx).
+func (r *OwnRepository) GetByPlayerIDs(ctx context.Context, userID uint, playerIDs []uint) ([]entity.UserPlayerOwn, error) {
+	var results []entity.UserPlayerOwn
+	err := r.ctx(ctx).
 		Where("uid = ? AND pid IN ? AND own_sta IN (1, 2)", userID, playerIDs).
 		Order("dt_in DESC").
 		Find(&results).Error
 	return results, err
 }
 
-func (r *OwnRepository) GetByRecordID(ctx context.Context, recordID, userID uint) (*models.UserPlayerOwn, error) {
-	var result models.UserPlayerOwn
-	err := r.db.WithContext(ctx).
+func (r *OwnRepository) GetByRecordID(ctx context.Context, recordID, userID uint) (*entity.UserPlayerOwn, error) {
+	var result entity.UserPlayerOwn
+	err := r.ctx(ctx).
 		Where("id = ? AND uid = ?", recordID, userID).
 		First(&result).Error
 	if err != nil {
@@ -54,7 +56,7 @@ func (r *OwnRepository) GetByRecordID(ctx context.Context, recordID, userID uint
 }
 
 func (r *OwnRepository) Create(ctx context.Context, userID, playerID, num, cost uint, dt time.Time) error {
-	own := models.UserPlayerOwn{
+	own := entity.UserPlayerOwn{
 		UserID:   userID,
 		PlayerID: playerID,
 		BuyCount: num,
@@ -62,11 +64,11 @@ func (r *OwnRepository) Create(ctx context.Context, userID, playerID, num, cost 
 		BuyTime:  dt,
 		Sta:      1,
 	}
-	return r.db.WithContext(ctx).Create(&own).Error
+	return r.ctx(ctx).Create(&own).Error
 }
 
 func (r *OwnRepository) MarkAsSold(ctx context.Context, userID, playerID, cost uint, dt time.Time) error {
-	return r.db.WithContext(ctx).Model(&models.UserPlayerOwn{}).
+	return r.model(ctx).
 		Where("uid = ? AND pid = ? AND own_sta = 1", userID, playerID).
 		Limit(1).
 		Updates(map[string]interface{}{
@@ -77,13 +79,13 @@ func (r *OwnRepository) MarkAsSold(ctx context.Context, userID, playerID, cost u
 }
 
 func (r *OwnRepository) Update(ctx context.Context, userID, recordID uint, updates map[string]interface{}) error {
-	return r.db.WithContext(ctx).Model(&models.UserPlayerOwn{}).
+	return r.model(ctx).
 		Where("uid = ? AND id = ?", userID, recordID).
 		Updates(updates).Error
 }
 
 func (r *OwnRepository) Delete(ctx context.Context, userID, recordID uint) error {
-	return r.db.WithContext(ctx).
+	return r.ctx(ctx).
 		Where("uid = ? AND id = ?", userID, recordID).
-		Delete(&models.UserPlayerOwn{}).Error
+		Delete(&entity.UserPlayerOwn{}).Error
 }

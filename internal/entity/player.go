@@ -1,6 +1,8 @@
-package models
+// Package entity contains GORM entity models representing database tables.
+// These are the domain entities used for data persistence.
+package entity
 
-// Player 球员模型
+// Player 球员实体模型
 type Player struct {
 	ID                 uint    `gorm:"primaryKey;column:id"`
 	PlayerID           uint    `gorm:"column:player_id;uniqueIndex"`

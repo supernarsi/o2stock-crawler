@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"o2stock-crawler/api"
 	"o2stock-crawler/internal/db"
-	"o2stock-crawler/internal/db/models"
 	"o2stock-crawler/internal/db/repositories"
-	"o2stock-crawler/internal/model"
+	"o2stock-crawler/internal/dto"
+	"o2stock-crawler/internal/entity"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // UserPlayerService 用户球员服务
@@ -23,9 +25,10 @@ func NewUserPlayerService(database *db.DB) *UserPlayerService {
 
 // PlayerIn 标记购买球员
 func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num, cost uint, dt time.Time) error {
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+
 	// 检查是否已拥有超过 2 条
-	query := db.NewUserPlayerOwnQuery(s.db, userID)
-	count, err := query.CountOwnedPlayers(ctx, s.db, playerID)
+	count, err := ownRepo.CountOwned(ctx, userID, playerID)
 	if err != nil {
 		return fmt.Errorf("failed to count owned players: %w", err)
 	}
@@ -34,8 +37,7 @@ func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num,
 	}
 
 	// 插入购买记录
-	cmd := db.NewUserPlayerOwnCommand(s.db)
-	if err := cmd.InsertPlayerOwn(ctx, s.db, userID, playerID, num, cost, dt); err != nil {
+	if err := ownRepo.Create(ctx, userID, playerID, num, cost, dt); err != nil {
 		return fmt.Errorf("failed to insert player own: %w", err)
 	}
 
@@ -44,20 +46,26 @@ func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num,
 
 // PlayerOut 标记出售球员
 func (s *UserPlayerService) PlayerOut(ctx context.Context, userID, playerID, cost uint, dt time.Time) error {
-	// 更新为已出售状态
-	cmd := db.NewUserPlayerOwnCommand(s.db)
-	if err := cmd.UpdatePlayerOwnToSold(ctx, s.db, userID, playerID, cost, dt); err != nil {
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+	if err := ownRepo.MarkAsSold(ctx, userID, playerID, cost, dt); err != nil {
 		return fmt.Errorf("failed to update player own to sold: %w", err)
 	}
-
 	return nil
 }
 
 // EditPlayerOwn 修改持仓记录
 func (s *UserPlayerService) EditPlayerOwn(ctx context.Context, userID, recordId, priceIn, priceOut, num uint, dtIn, dtOut *time.Time) error {
-	// 更新持仓记录
-	cmd := db.NewUserPlayerOwnCommand(s.db)
-	if err := cmd.UpdatePlayerOwn(ctx, s.db, userID, recordId, priceIn, priceOut, num, dtIn, dtOut); err != nil {
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+	updates := map[string]interface{}{
+		"price_in":  priceIn,
+		"price_out": priceOut,
+		"num_in":    num,
+		"dt_in":     dtIn,
+	}
+	if dtOut != nil {
+		updates["dt_out"] = dtOut
+	}
+	if err := ownRepo.Update(ctx, userID, recordId, updates); err != nil {
 		return fmt.Errorf("failed to update player own: %w", err)
 	}
 	return nil
@@ -65,30 +73,32 @@ func (s *UserPlayerService) EditPlayerOwn(ctx context.Context, userID, recordId,
 
 // DeletePlayerOwn 删除持仓记录
 func (s *UserPlayerService) DeletePlayerOwn(ctx context.Context, userID, recordId uint) error {
-	// 删除持仓记录
-	cmd := db.NewUserPlayerOwnCommand(s.db)
-	if err := cmd.DeletePlayerOwn(ctx, s.db, userID, recordId); err != nil {
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+	if err := ownRepo.Delete(ctx, userID, recordId); err != nil {
 		return fmt.Errorf("failed to delete player own: %w", err)
 	}
 	return nil
 }
 
 // GetPlayerOwn 获取持仓记录
-func (s *UserPlayerService) GetPlayerOwn(ctx context.Context, userID, recordId uint) (*model.UserPlayerOwn, error) {
-	// 获取持仓记录
-	query := db.NewUserPlayerOwnQuery(s.db, userID)
-	record, err := query.GetPlayerOwnByRecordID(ctx, s.db, recordId, userID)
+func (s *UserPlayerService) GetPlayerOwn(ctx context.Context, userID, recordId uint) (*dto.UserPlayerOwn, error) {
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+	record, err := ownRepo.GetByRecordID(ctx, recordId, userID)
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to get player own: %w", err)
 	}
-	return record, nil
+	return s.entityToOwnDTO(record), nil
 }
 
 // GetUserPlayers 获取用户拥有球员列表
 func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]api.OwnedPlayer, error) {
-	// 获取用户拥有的球员记录
-	query := db.NewUserPlayerOwnQuery(s.db, userID)
-	ownedList, err := query.GetUserOwnedPlayers(ctx, s.db)
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+
+	ownedList, err := ownRepo.GetByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user owned players: %w", err)
 	}
@@ -104,14 +114,13 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 	}
 
 	// 查询球员详细信息
-	playersQuery := db.NewPlayersQuery(s.db, repositories.PlayerFilter{})
-	players, err := playersQuery.GetPlayersByIDs(ctx, playerIDs)
+	players, err := playerRepo.BatchGetByIDs(ctx, playerIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
 	}
 
 	// 构建响应
-	playerMap := make(map[uint]models.Player)
+	playerMap := make(map[uint]entity.Player)
 	for _, p := range players {
 		playerMap[p.PlayerID] = p
 	}
@@ -120,18 +129,18 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 	for _, o := range ownedList {
 		pp, ok := playerMap[o.PlayerID]
 		if !ok {
-			continue // 跳过找不到球员信息的记录
+			continue
 		}
 		rosters = append(rosters, api.OwnedPlayer{
 			Id:       o.ID,
 			PlayerID: o.PlayerID,
-			PriceIn:  o.PriceIn,
-			PriceOut: o.PriceOut,
-			OwnSta:   o.OwnSta,
-			OwnNum:   o.NumIn,
-			DtIn:     o.DtIn.Format("2006-01-02 15:04:05"),
-			DtOut:    formatTimeOrEmpty(o.DtOut),
-			PP: model.Players{
+			PriceIn:  o.BuyPrice,
+			PriceOut: o.SellPrice,
+			OwnSta:   uint8(o.Sta),
+			OwnNum:   o.BuyCount,
+			DtIn:     o.BuyTime.Format("2006-01-02 15:04:05"),
+			DtOut:    formatTimeOrEmpty(o.SellTime),
+			PP: dto.Players{
 				PlayerID:          pp.PlayerID,
 				NBAPlayerID:       pp.NBAPlayerID,
 				ShowName:          pp.ShowName,
@@ -158,9 +167,12 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 
 // GetUserFavPlayers 获取用户收藏球员列表
 func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) ([]api.PlayerWithOwned, error) {
+	favRepo := repositories.NewFavRepository(s.db.DB)
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+
 	// 1. 获取用户收藏的球员ID列表
-	favQuery := db.NewFavQuery(s.db)
-	favIDs, err := favQuery.GetFavPlayerIDs(ctx, userID)
+	favIDs, err := favRepo.GetPlayerIDs(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fav player ids: %w", err)
 	}
@@ -170,26 +182,25 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 	}
 
 	// 2. 获取球员详细信息
-	playersQuery := db.NewPlayersQuery(s.db, repositories.PlayerFilter{PlayerIDs: favIDs})
-	players, err := playersQuery.ListPlayers(ctx)
+	players, err := playerRepo.List(ctx, repositories.PlayerFilter{PlayerIDs: favIDs})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players: %w", err)
 	}
 
 	// 3. 获取拥有信息
-	ownedQuery := db.NewUserPlayerOwnQuery(s.db, userID)
-	ownedMap, err := ownedQuery.GetOwnedInfoByPlayerIDs(ctx, s.db, favIDs)
+	ownRecords, err := ownRepo.GetByPlayerIDs(ctx, userID, favIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get owned info: %w", err)
 	}
+	ownedMap := s.mapOwnRecordsToInfoMap(ownRecords)
 
 	// 4. 构建响应
 	result := make([]api.PlayerWithOwned, len(players))
 	for i, p := range players {
 		result[i] = api.PlayerWithOwned{
-			PlayerWithPriceChange: p,
-			Owned:                 []*model.OwnInfo{},
-			IsFav:                 true, // 既然是收藏列表，肯定都是已收藏
+			PlayerWithPriceChange: s.entityToPlayerDTO(p),
+			Owned:                 []*dto.OwnInfo{},
+			IsFav:                 true,
 		}
 		if ownedMap != nil {
 			if owned, ok := ownedMap[p.PlayerID]; ok {
@@ -205,9 +216,10 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 
 // FavPlayer 用户收藏球员
 func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint) error {
+	favRepo := repositories.NewFavRepository(s.db.DB)
+
 	// 检查是否已收藏
-	favQuery := db.NewFavQuery(s.db)
-	count, err := favQuery.CountFavPlayer(ctx, userID, playerID)
+	count, err := favRepo.Count(ctx, userID, playerID)
 	if err != nil {
 		return fmt.Errorf("failed to count fav player: %w", err)
 	}
@@ -216,7 +228,7 @@ func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint
 	}
 
 	// 检查收藏数量是否已达上限 (50)
-	totalFavs, err := favQuery.CountUserFavs(ctx, userID)
+	totalFavs, err := favRepo.CountUserTotal(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("failed to count user favs: %w", err)
 	}
@@ -225,8 +237,7 @@ func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint
 	}
 
 	// 插入收藏记录
-	favCmd := db.NewFavCommand(s.db)
-	if err := favCmd.InsertFavPlayer(ctx, userID, playerID); err != nil {
+	if err := favRepo.Add(ctx, userID, playerID); err != nil {
 		return fmt.Errorf("failed to insert fav player: %w", err)
 	}
 
@@ -235,16 +246,74 @@ func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint
 
 // UnFavPlayer 用户取消收藏球员
 func (s *UserPlayerService) UnFavPlayer(ctx context.Context, userID, playerID uint) error {
-	// 删除收藏记录
-	favCmd := db.NewFavCommand(s.db)
-	if err := favCmd.DeleteFavPlayer(ctx, userID, playerID); err != nil {
+	favRepo := repositories.NewFavRepository(s.db.DB)
+	if err := favRepo.Remove(ctx, userID, playerID); err != nil {
 		return fmt.Errorf("failed to delete fav player: %w", err)
 	}
-
 	return nil
 }
 
-// formatTimeOrEmpty 格式化时间为字符串，如果为 nil 则返回空字符串
+// Helper methods
+func (s *UserPlayerService) entityToOwnDTO(o *entity.UserPlayerOwn) *dto.UserPlayerOwn {
+	return &dto.UserPlayerOwn{
+		ID:       o.ID,
+		UserID:   o.UserID,
+		PlayerID: o.PlayerID,
+		OwnSta:   uint8(o.Sta),
+		PriceIn:  o.BuyPrice,
+		PriceOut: o.SellPrice,
+		NumIn:    o.BuyCount,
+		DtIn:     o.BuyTime,
+		DtOut:    o.SellTime,
+	}
+}
+
+func (s *UserPlayerService) entityToPlayerDTO(p entity.Player) dto.PlayerWithPriceChange {
+	return dto.PlayerWithPriceChange{
+		Players: dto.Players{
+			PlayerID:          p.PlayerID,
+			NBAPlayerID:       p.NBAPlayerID,
+			ShowName:          p.ShowName,
+			EnName:            p.EnName,
+			TeamAbbr:          p.TeamAbbr,
+			Version:           p.Version,
+			CardType:          p.CardType,
+			PlayerImg:         p.PlayerImg,
+			PriceStandard:     p.PriceStandard,
+			PriceCurrentLower: p.PriceCurrentLowest,
+			PriceSaleLower:    p.PriceSaleLower,
+			PriceSaleUpper:    p.PriceSaleUpper,
+			OverAll:           p.OverAll,
+			PowerPer5:         p.PowerPer5,
+			PowerPer10:        p.PowerPer10,
+			PriceChange1d:     p.PriceChange1d,
+			PriceChange7d:     p.PriceChange7d,
+		},
+		PriceChange: p.PriceChange1d,
+	}
+}
+
+func (s *UserPlayerService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) map[uint][]dto.OwnInfo {
+	result := make(map[uint][]dto.OwnInfo)
+	for _, o := range records {
+		dtOut := ""
+		if o.SellTime != nil {
+			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
+		}
+		info := dto.OwnInfo{
+			PlayerID: o.PlayerID,
+			PriceIn:  o.BuyPrice,
+			PriceOut: o.SellPrice,
+			OwnSta:   uint8(o.Sta),
+			OwnNum:   o.BuyCount,
+			DtIn:     o.BuyTime.Format("2006-01-02 15:04:05"),
+			DtOut:    dtOut,
+		}
+		result[o.PlayerID] = append(result[o.PlayerID], info)
+	}
+	return result
+}
+
 func formatTimeOrEmpty(t *time.Time) string {
 	if t == nil {
 		return ""

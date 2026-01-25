@@ -8,25 +8,25 @@ import (
 	"time"
 
 	"o2stock-crawler/internal/db"
-	"o2stock-crawler/internal/db/models"
+	"o2stock-crawler/internal/db/repositories"
+	"o2stock-crawler/internal/entity"
 
 	"github.com/golang-jwt/jwt/v5"
 	jsoniter "github.com/json-iterator/go"
+	"gorm.io/gorm"
 )
 
 type AuthService struct {
-	db        *db.DB
-	dbConfig  *db.Config
-	userQuery *db.UserQuery
-	userCmd   *db.UserCommand
+	db       *db.DB
+	dbConfig *db.Config
+	userRepo *repositories.UserRepository
 }
 
 func NewAuthService(database *db.DB, dbConfig *db.Config) *AuthService {
 	return &AuthService{
-		db:        database,
-		dbConfig:  dbConfig,
-		userQuery: db.NewUserQuery(database),
-		userCmd:   db.NewUserCommand(database),
+		db:       database,
+		dbConfig: dbConfig,
+		userRepo: repositories.NewUserRepository(database.DB),
 	}
 }
 
@@ -53,10 +53,7 @@ type UserClaims struct {
 }
 
 // LoginWithWechat 使用微信 Code 登录
-// 1. 调用微信接口获取 OpenID
-// 2. 查询用户是否存在，不存在则注册
-// 3. 生成 Token
-func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserInfo) (*models.User, string, error) {
+func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserInfo) (*entity.User, string, error) {
 	// 1. 获取微信 OpenID
 	wxResp, err := s.code2Session(ctx, info.Code)
 	if err != nil {
@@ -64,21 +61,23 @@ func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserI
 	}
 
 	// 2. 查询或注册用户
-	user, err := s.userQuery.GetUserByOpenID(ctx, s.db, wxResp.OpenID)
-	if err != nil {
+	user, err := s.userRepo.GetByOpenID(ctx, wxResp.OpenID)
+	if err != nil && err != gorm.ErrRecordNotFound {
 		return nil, "", err
 	}
 
 	if user == nil {
 		// 注册新用户
-		user = &models.User{
+		user = &entity.User{
 			WxOpenID:     wxResp.OpenID,
 			WxUnionID:    wxResp.UnionID,
 			WxSessionKey: wxResp.SessionKey,
 			Nick:         info.Nick,
 			Avatar:       info.Avatar,
+			Sta:          1,
+			CTime:        time.Now(),
 		}
-		if err := s.userCmd.CreateUser(ctx, s.db, user); err != nil {
+		if err := s.userRepo.Create(ctx, user); err != nil {
 			return nil, "", fmt.Errorf("create user failed: %w", err)
 		}
 	} else if user.Sta == 2 {
@@ -99,7 +98,7 @@ func (s *AuthService) GenerateToken(userID uint) (string, error) {
 	claims := UserClaims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)), // 7天过期
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
 			Issuer:    "o2stock-api",
@@ -113,7 +112,6 @@ func (s *AuthService) GenerateToken(userID uint) (string, error) {
 // VerifyToken 验证 JWT Token 并返回 UserID
 func (s *AuthService) VerifyToken(tokenString string) (uint, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (any, error) {
-		// 验证签名算法
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}

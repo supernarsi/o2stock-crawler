@@ -3,6 +3,8 @@ package db
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"gorm.io/driver/mysql"
@@ -22,8 +24,13 @@ type DB struct {
 
 // Open opens a new DB connection pool.
 func Open(cfg *Config) (*DB, error) {
+	logLevel := logger.Silent
+	if cfg.Debug || isDev() {
+		logLevel = logger.Info
+	}
+
 	db, err := gorm.Open(mysql.Open(cfg.DSN()), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: logger.Default.LogMode(logLevel),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -49,4 +56,15 @@ func (db *DB) Close() error {
 		return err
 	}
 	return sqlDB.Close()
+}
+
+// isDev 启发式判断是否是 go run 执行 (通常在临时目录)
+func isDev() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	// go run 的二进制文件通常在临时目录中
+	tempDir := os.TempDir()
+	return strings.HasPrefix(exe, tempDir)
 }

@@ -22,6 +22,9 @@ type Config struct {
 	// Signature config
 	SignatureSecret string
 	EnableSignature bool
+
+	// Debug mode for SQL logging
+	Debug bool
 }
 
 // LoadConfigFromEnv loads MySQL configuration from env vars.
@@ -37,6 +40,7 @@ type Config struct {
 //   - JWT_SECRET: default_secret
 //   - SIGNATURE_SECRET: default_sig_secret
 //   - ENABLE_SIGNATURE: false
+//   - DEBUG: false
 func LoadConfigFromEnv() (*Config, error) {
 	host := getenvDefault("DB_HOST", "127.0.0.1")
 	port := getenvDefault("DB_PORT", "3306")
@@ -50,6 +54,7 @@ func LoadConfigFromEnv() (*Config, error) {
 
 	signatureSecret := getenvDefault("SIGNATURE_SECRET", "default_sig_secret")
 	enableSignature := getenvDefault("ENABLE_SIGNATURE", "false") == "true"
+	debug := getenvDefault("DEBUG", "false") == "true"
 
 	if host == "" || port == "" || user == "" || dbname == "" {
 		return nil, errors.New("invalid db config")
@@ -66,6 +71,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		JWTSecret:       jwtSecret,
 		SignatureSecret: signatureSecret,
 		EnableSignature: enableSignature,
+		Debug:           debug,
 	}, nil
 }
 

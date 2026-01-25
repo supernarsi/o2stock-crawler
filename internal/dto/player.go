@@ -1,8 +1,9 @@
-package model
+// Package dto contains Data Transfer Objects for API responses.
+// These are used for JSON serialization in HTTP responses.
+package dto
 
-// Players 表示 players 表的一行，用于前端展示。
+// Players 球员API响应DTO
 type Players struct {
-	// Id                uint   `json:"id"`
 	PlayerID          uint    `json:"player_id"`
 	NBAPlayerID       uint    `json:"nba_player_id"`
 	ShowName          string  `json:"p_name_show"`
@@ -22,11 +23,13 @@ type Players struct {
 	PriceChange7d     float64 `json:"price_change_7d"`
 }
 
+// PlayerWithPriceChange 带涨跌幅的球员DTO
 type PlayerWithPriceChange struct {
 	Players
 	PriceChange float64 `json:"price_change"`
 }
 
+// PlayerPriceChange 球员涨跌变化DTO
 type PlayerPriceChange struct {
 	PlayerID    uint    `json:"player_id"`
 	PriceOld    uint    `json:"price_old"`

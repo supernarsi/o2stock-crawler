@@ -1,12 +1,14 @@
 package api
 
-import "o2stock-crawler/internal/model"
+import (
+	"o2stock-crawler/internal/dto"
+)
 
 // PlayerHistoryRes 球员历史价格响应
 type PlayerHistoryRes struct {
-	PlayerInfo    *PlayerWithOwned         `json:"player_info"`
-	PlayerHistory []*model.PriceHistoryRow `json:"history"`
-	GameData      *GameData                `json:"game_data"`
+	PlayerInfo    *PlayerWithOwned       `json:"player_info"`
+	PlayerHistory []*dto.PriceHistoryRow `json:"history"`
+	GameData      *GameData              `json:"game_data"`
 }
 
 // MultiPlayersHistoryRes 批量球员历史价格响应
@@ -16,13 +18,13 @@ type MultiPlayersHistoryRes struct {
 
 // PlayerHistoryItem 单个球员的历史价格项
 type PlayerHistoryItem struct {
-	PlayerID uint32                   `json:"player_id"`
-	History  []*model.PriceHistoryRow `json:"history"`
+	PlayerID uint32                 `json:"player_id"`
+	History  []*dto.PriceHistoryRow `json:"history"`
 }
 
 type PlayerGameData struct {
-	PlayerID uint32                   `json:"player_id"`
-	GameData []*model.PriceHistoryRow `json:"game_data"`
+	PlayerID uint32                 `json:"player_id"`
+	GameData []*dto.PriceHistoryRow `json:"game_data"`
 }
 
 type GameData struct {

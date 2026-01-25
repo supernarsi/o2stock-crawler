@@ -1,10 +1,10 @@
-package models
+package entity
 
 import (
 	"time"
 )
 
-// PlayerPriceHistory 球员价格历史模型
+// PlayerPriceHistory 球员价格历史实体模型
 type PlayerPriceHistory struct {
 	ID               uint      `gorm:"primaryKey;column:id"`
 	PlayerID         uint      `gorm:"column:player_id;index:idx_pid"`
