@@ -158,6 +158,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 				PowerPer10:        pp.PowerPer10,
 				PriceChange1d:     pp.PriceChange1d,
 				PriceChange7d:     pp.PriceChange7d,
+				UpdatedAt:         pp.UpdatedAt.Format("2006-01-02 15:04:05"),
 			},
 		})
 	}

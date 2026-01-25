@@ -21,6 +21,7 @@ type Players struct {
 	PowerPer10        float64 `json:"power_per10"`
 	PriceChange1d     float64 `json:"price_change_1d"`
 	PriceChange7d     float64 `json:"price_change_7d"`
+	UpdatedAt         string  `json:"update_at"`
 }
 
 // PlayerWithPriceChange 带涨跌幅的球员DTO

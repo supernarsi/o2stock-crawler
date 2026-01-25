@@ -55,7 +55,7 @@ func (s *SnapshotService) SaveSnapshot(ctx context.Context, rosterList []crawler
 		// 3. 循环处理
 		for pid, item := range unique {
 			existing, exists := existingMap[pid]
-			if err := s.upsertPlayer(ctx, tx, item, exists, &existing); err != nil {
+			if err := s.upsertPlayer(ctx, tx, item, now, exists, &existing); err != nil {
 				return err
 			}
 			if err := s.insertHistory(ctx, tx, item, now); err != nil {
@@ -67,7 +67,7 @@ func (s *SnapshotService) SaveSnapshot(ctx context.Context, rosterList []crawler
 }
 
 // upsertPlayer 优化后的更新逻辑，显式处理 Update 与 Insert
-func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *crawler.RosterItemModel, exists bool, existing *entity.Player) error {
+func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *crawler.RosterItemModel, now time.Time, exists bool, existing *entity.Player) error {
 	cardType, _ := strconv.Atoi(item.CardTypeStr)
 	version, _ := strconv.Atoi(item.VersionStr)
 	factor := s.gradeFactor(item.Grade)
@@ -101,6 +101,7 @@ func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *c
 			"price_sale_lower":     uint(priceSaleLower),
 			"price_sale_upper":     uint(priceSaleUpper),
 			"over_all":             uint(item.OverAll),
+			"update_at":            now,
 		}).Error
 	}
 
@@ -118,6 +119,7 @@ func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *c
 		PriceSaleLower:     uint(priceSaleLower),
 		PriceSaleUpper:     uint(priceSaleUpper),
 		OverAll:            uint(item.OverAll),
+		UpdatedAt:          now,
 	}
 	return tx.WithContext(ctx).Create(&player).Error
 }

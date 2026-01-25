@@ -42,6 +42,7 @@ func ToPlayerDTO(p entity.Player) dto.Players {
 		PowerPer10:        p.PowerPer10,
 		PriceChange1d:     p.PriceChange1d,
 		PriceChange7d:     p.PriceChange7d,
+		UpdatedAt:         p.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}
 }
 
