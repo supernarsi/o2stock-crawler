@@ -140,26 +140,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 			OwnNum:   o.BuyCount,
 			DtIn:     o.BuyTime.Format("2006-01-02 15:04:05"),
 			DtOut:    formatTimeOrEmpty(o.SellTime),
-			PP: dto.Players{
-				PlayerID:          pp.PlayerID,
-				NBAPlayerID:       pp.NBAPlayerID,
-				ShowName:          pp.ShowName,
-				EnName:            pp.EnName,
-				TeamAbbr:          pp.TeamAbbr,
-				Version:           pp.Version,
-				CardType:          pp.CardType,
-				PlayerImg:         pp.PlayerImg,
-				PriceStandard:     pp.PriceStandard,
-				PriceCurrentLower: pp.PriceCurrentLowest,
-				PriceSaleLower:    pp.PriceSaleLower,
-				PriceSaleUpper:    pp.PriceSaleUpper,
-				OverAll:           pp.OverAll,
-				PowerPer5:         pp.PowerPer5,
-				PowerPer10:        pp.PowerPer10,
-				PriceChange1d:     pp.PriceChange1d,
-				PriceChange7d:     pp.PriceChange7d,
-				UpdatedAt:         pp.UpdatedAt.Format("2006-01-02 15:04:05"),
-			},
+			PP:       ToPlayerDTO(pp),
 		})
 	}
 
@@ -199,7 +180,7 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 	result := make([]api.PlayerWithOwned, len(players))
 	for i, p := range players {
 		result[i] = api.PlayerWithOwned{
-			PlayerWithPriceChange: s.entityToPlayerDTO(p),
+			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p),
 			Owned:                 []*dto.OwnInfo{},
 			IsFav:                 true,
 		}
@@ -266,31 +247,6 @@ func (s *UserPlayerService) entityToOwnDTO(o *entity.UserPlayerOwn) *dto.UserPla
 		NumIn:    o.BuyCount,
 		DtIn:     o.BuyTime,
 		DtOut:    o.SellTime,
-	}
-}
-
-func (s *UserPlayerService) entityToPlayerDTO(p entity.Player) dto.PlayerWithPriceChange {
-	return dto.PlayerWithPriceChange{
-		Players: dto.Players{
-			PlayerID:          p.PlayerID,
-			NBAPlayerID:       p.NBAPlayerID,
-			ShowName:          p.ShowName,
-			EnName:            p.EnName,
-			TeamAbbr:          p.TeamAbbr,
-			Version:           p.Version,
-			CardType:          p.CardType,
-			PlayerImg:         p.PlayerImg,
-			PriceStandard:     p.PriceStandard,
-			PriceCurrentLower: p.PriceCurrentLowest,
-			PriceSaleLower:    p.PriceSaleLower,
-			PriceSaleUpper:    p.PriceSaleUpper,
-			OverAll:           p.OverAll,
-			PowerPer5:         p.PowerPer5,
-			PowerPer10:        p.PowerPer10,
-			PriceChange1d:     p.PriceChange1d,
-			PriceChange7d:     p.PriceChange7d,
-		},
-		PriceChange: p.PriceChange1d,
 	}
 }
 

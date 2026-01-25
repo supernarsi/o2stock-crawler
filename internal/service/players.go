@@ -101,7 +101,7 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 	result := make([]api.PlayerWithOwned, len(players))
 	for i, p := range players {
 		result[i] = api.PlayerWithOwned{
-			PlayerWithPriceChange: s.entityToDTO(p),
+			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p),
 			Owned:                 []*dto.OwnInfo{},
 			IsFav:                 false,
 		}
@@ -280,7 +280,7 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 	}
 
 	return &api.PlayerWithOwned{
-		PlayerWithPriceChange: s.entityToDTO(*pp),
+		PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(*pp),
 		Owned:                 owned,
 		IsFav:                 isFav,
 	}, nil
@@ -476,30 +476,6 @@ func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
 }
 
 // Helper methods
-func (s *PlayersService) entityToDTO(p entity.Player) dto.PlayerWithPriceChange {
-	return dto.PlayerWithPriceChange{
-		Players: dto.Players{
-			PlayerID:          p.PlayerID,
-			NBAPlayerID:       p.NBAPlayerID,
-			ShowName:          p.ShowName,
-			EnName:            p.EnName,
-			TeamAbbr:          p.TeamAbbr,
-			Version:           p.Version,
-			CardType:          p.CardType,
-			PlayerImg:         p.PlayerImg,
-			PriceStandard:     p.PriceStandard,
-			PriceCurrentLower: p.PriceCurrentLowest,
-			PriceSaleLower:    p.PriceSaleLower,
-			PriceSaleUpper:    p.PriceSaleUpper,
-			OverAll:           p.OverAll,
-			PowerPer5:         p.PowerPer5,
-			PowerPer10:        p.PowerPer10,
-			PriceChange1d:     p.PriceChange1d,
-			PriceChange7d:     p.PriceChange7d,
-		},
-		PriceChange: p.PriceChange1d,
-	}
-}
 
 func (s *PlayersService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) map[uint][]dto.OwnInfo {
 	result := make(map[uint][]dto.OwnInfo)

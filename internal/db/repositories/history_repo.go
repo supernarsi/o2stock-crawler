@@ -65,13 +65,12 @@ func (r *HistoryRepository) GetRawHistory(ctx context.Context, playerID uint, st
 
 func (r *HistoryRepository) GetRealtime(ctx context.Context, playerID uint) ([]entity.PlayerPriceHistory, error) {
 	now := time.Now()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	todayEnd := todayStart.AddDate(0, 0, 1)
+	startTime := now.Add(-24 * time.Hour)
 
 	var history []entity.PlayerPriceHistory
 	err := r.ctx(ctx).
-		Where("player_id = ? AND at_date_hour >= ? AND at_date_hour < ?",
-			playerID, todayStart.Format("200601021504"), todayEnd.Format("200601021504")).
+		Where("player_id = ? AND at_date_hour >= ?",
+			playerID, startTime.Format("200601021504")).
 		Order("at_date_hour ASC").
 		Find(&history).Error
 	return history, err
