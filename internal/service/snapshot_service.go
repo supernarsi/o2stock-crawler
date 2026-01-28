@@ -91,7 +91,6 @@ func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *c
 		// 执行更新，通过主键 ID 锁定记录，不会触发 auto_increment 自增
 		return tx.WithContext(ctx).Model(existing).Updates(map[string]any{
 			"p_name_show":          item.ShowName,
-			"p_name_en":            item.PlayerEn,
 			"team_abbr":            item.TeamAbbr,
 			"version":              uint(version),
 			"card_type":            uint(cardType),
