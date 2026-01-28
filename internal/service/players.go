@@ -460,8 +460,8 @@ func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
 			pc7d = float64(int(p.PriceStandard)-int(h7d.PriceStandard)) / float64(h7d.PriceStandard)
 		}
 
-		pc1d = round(pc1d, 2)
-		pc7d = round(pc7d, 2)
+		pc1d = round(pc1d*100, 2)
+		pc7d = round(pc7d*100, 2)
 
 		if err := playerRepo.UpdatePriceChanges(ctx, p.PlayerID, pc1d, pc7d); err != nil {
 			log.Printf("[PlayerID: %d] 更新涨跌幅失败: %v", p.PlayerID, err)
