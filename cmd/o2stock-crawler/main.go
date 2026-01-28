@@ -52,7 +52,7 @@ func main() {
 	}
 
 	// Simple loop scheduler: o2stock-crawler loop <minutes>
-	if os.Args[1] == "loop" {
+	if len(os.Args) >= 2 && os.Args[1] == "loop" {
 		interval := time.Minute * 60
 		if len(os.Args) >= 3 {
 			if d, err := time.ParseDuration(os.Args[2]); err == nil {
@@ -79,6 +79,19 @@ func main() {
 			}
 			time.Sleep(interval)
 		}
+	}
+
+	// Manual trigger for Tencent NBA stats
+	if len(os.Args) >= 2 && os.Args[1] == "tx-nba" {
+		date := time.Now().Format("2006-01-02")
+		if len(os.Args) >= 3 {
+			date = os.Args[2]
+		}
+		txService := service.NewTxNBAService(database)
+		if err := txService.CrawlDailyStats(ctx, date); err != nil {
+			log.Fatalf("抓取腾讯 NBA 数据失败: %v", err)
+		}
+		return
 	}
 }
 
@@ -152,6 +165,14 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 		}
 	}
 
+	// 腾讯 NBA 数据抓取逻辑：仅在 15:00 ~ 16:00 之间执行
+	if isTxNBACrawlWindow(time.Now()) {
+		txService := service.NewTxNBAService(database)
+		if err := txService.CrawlDailyStats(ctx, time.Now().Format("2006-01-02")); err != nil {
+			log.Printf("抓取腾讯 NBA 数据失败: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -164,7 +185,13 @@ func shouldSkipCrawl(t time.Time) bool {
 // isPowerCalculationWindow 检查当前时间是否在战力计算的时间窗口（15:00 ~ 16:00）
 func isPowerCalculationWindow(t time.Time) bool {
 	hour := t.Hour()
-	return hour == 14
+	return hour == 15
+}
+
+// isTxNBACrawlWindow 检查当前时间是否在腾讯 NBA 抓取的时间窗口（15:00 ~ 16:00）
+func isTxNBACrawlWindow(t time.Time) bool {
+	hour := t.Hour()
+	return hour == 15
 }
 
 // getNextRunTime 计算下次应该执行的时间

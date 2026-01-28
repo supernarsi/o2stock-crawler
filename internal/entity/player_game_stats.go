@@ -10,6 +10,8 @@ type PlayerGameStats struct {
 	PlayerID               uint      `gorm:"column:player_id"`
 	GameID                 string    `gorm:"column:game_id"`
 	GameDate               time.Time `gorm:"column:game_date"`
+	TxPlayerID             uint      `gorm:"column:tx_player_id"`
+	TxGameID               string    `gorm:"column:tx_game_id"`
 	PlayerTeamName         string    `gorm:"column:player_team_name"`
 	VsTeamName             string    `gorm:"column:vs_team_name"`
 	IsHome                 bool      `gorm:"column:is_home"`
@@ -26,6 +28,7 @@ type PlayerGameStats struct {
 	ThreePointersAttempted int       `gorm:"column:three_pointers_attempted"`
 	FreeThrowsMade         int       `gorm:"column:free_throws_made"`
 	FreeThrowsAttempted    int       `gorm:"column:free_throws_attempted"`
+	DataFrom               int       `gorm:"column:data_from"`
 	CreatedAt              time.Time `gorm:"column:created_at;autoCreateTime"`
 }
 
