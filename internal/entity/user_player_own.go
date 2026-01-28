@@ -12,11 +12,9 @@ type UserPlayerOwn struct {
 	BuyPrice  uint       `gorm:"column:price_in"`
 	BuyCount  uint       `gorm:"column:num_in"`
 	SellPrice uint       `gorm:"column:price_out"`
-	SellCount uint       `gorm:"column:num_out;default:0"`
 	Sta       int        `gorm:"column:own_sta"` // 1:持有 2:已售出
 	BuyTime   time.Time  `gorm:"column:dt_in"`
 	SellTime  *time.Time `gorm:"column:dt_out"`
-	CTime     time.Time  `gorm:"column:c_time;autoCreateTime"`
 }
 
 // TableName returns the table name for GORM.
