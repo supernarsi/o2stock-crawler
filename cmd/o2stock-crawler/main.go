@@ -123,11 +123,17 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 			break
 		}
 
+		sleepDuration := 0 * time.Second
 		if i < limit-1 {
-			sleepDuration := time.Duration(rand.Intn(2)+2) * time.Second
-			log.Printf("等待 %s 后开始抓取第 %d 页球员数据", sleepDuration, page+1)
-			time.Sleep(sleepDuration)
+			// 请求 20 页前等待 3~5s
+			sleepDuration = time.Duration(rand.Intn(2)+3) * time.Second
 		}
+		if limit == 20 {
+			// 请求 20 页后等待 30s 避免被封 IP
+			sleepDuration = 30 * time.Second
+		}
+		log.Printf("等待 %s 后开始抓取第 %d 页球员数据", sleepDuration, page+1)
+		time.Sleep(sleepDuration)
 		log.Println("================================")
 	}
 	log.Printf(">>> 抓取球员数据完成 <<<")
