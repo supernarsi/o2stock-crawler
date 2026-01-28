@@ -125,12 +125,12 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 
 		sleepDuration := 0 * time.Second
 		if i < limit-1 {
-			// 请求 15 页前等待 3~5s
+			// 请求 15 页前等待 2~5s
 			sleepDuration = time.Duration(rand.Intn(2)+3) * time.Second
 		}
 		if i == 15 {
-			// 请求 15 页后等待 30s 避免被封 IP
-			sleepDuration = 30 * time.Second
+			// 请求 15 页后等待 60s 避免被封 IP
+			sleepDuration = 120 * time.Second
 		}
 		log.Printf("等待 %s 后开始抓取第 %d 页球员数据", sleepDuration, page+1)
 		time.Sleep(sleepDuration)
