@@ -28,6 +28,7 @@
 | 球员基本信息 | `players` | OVR、价格、球队等 |
 | 当前游戏能力值 | `players.over_all` | 同 OVR 段比价、能力值倒挂 |
 | 当前游戏价格 | `players.price_standard` | 洼地分、税后安全边际 |
+| 球员最近价格变化 | `players.price_change_1d`, `players.price_change_7d` | 价格趋势 |
 | 近 5/10 场战力值 | `players.power_per5`, `power_per10` | 表现盈余、能力值倒挂 |
 | 历史价格 | `p_p_history` | 价格饱和度、分位数 |
 | 本赛季场均数据 | `player_season_stats` | 赛季战力、上场时间趋势 |

@@ -57,7 +57,7 @@ func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]ent
 	}
 
 	// Default filter for list
-	query = query.Where("price_standard >= ?", 5000)
+	query = query.Where("price_standard >= ?", 4000)
 
 	// Sort
 	if filter.OrderBy != "" {

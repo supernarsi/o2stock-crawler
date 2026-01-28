@@ -96,7 +96,7 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 	snapshotService := service.NewSnapshotService(database)
 
 	// 从 resp.Data.HasMore 判断是否需要继续抓取，最多抓取 20 页数据，每次抓取间隔随机 2~4 秒
-	limit := 20
+	limit := 25
 	for i := range limit {
 		page := i + 1
 		log.Printf("--> 开始抓取第 %d 页球员数据 <--", page)
