@@ -105,8 +105,8 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		standard := &api.GameDataStandard{}   // 默认全 0
 		nbaToday := []*api.GameDataNbaToday{} // 默认空数组
 
-		if playerInfo.Players.NBAPlayerID > 0 {
-			standardResult, nbaTodayResult, err := a.playersService.GetPlayerGameData(ctx, playerInfo.Players.NBAPlayerID)
+		if playerInfo.Players.TxPlayerID > 0 {
+			standardResult, nbaTodayResult, err := a.playersService.GetPlayerGameData(ctx, playerInfo.Players.TxPlayerID)
 			if err != nil {
 				// 记录错误但不阻塞返回，使用默认值
 				// log.Printf("failed to get player game data for player %d: %v", playerID, err)

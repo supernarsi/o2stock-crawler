@@ -287,11 +287,11 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 }
 
 // GetPlayerGameData 获取球员比赛数据和赛季平均数据
-func (s *PlayersService) GetPlayerGameData(ctx context.Context, nbaPlayerID uint) (*api.GameDataStandard, []*api.GameDataNbaToday, error) {
+func (s *PlayersService) GetPlayerGameData(ctx context.Context, txPlayerID uint) (*api.GameDataStandard, []*api.GameDataNbaToday, error) {
 	statsRepo := repositories.NewStatsRepository(s.db.DB)
 
 	// 1. 查询赛季平均数据
-	seasonStats, err := statsRepo.GetSeasonStats(ctx, nbaPlayerID)
+	seasonStats, err := statsRepo.GetSeasonStats(ctx, txPlayerID)
 	if err != nil {
 		fmt.Printf("GetPlayerSeasonStats error: %v\n", err)
 	}
@@ -320,7 +320,7 @@ func (s *PlayersService) GetPlayerGameData(ctx context.Context, nbaPlayerID uint
 	}
 
 	// 2. 查询最近 5 场比赛
-	gameStats, err := statsRepo.GetRecentGameStats(ctx, nbaPlayerID, 5)
+	gameStats, err := statsRepo.GetRecentGameStats(ctx, txPlayerID, 5)
 	if err != nil {
 		fmt.Printf("GetRecentPlayerGameStats error: %v\n", err)
 	}

@@ -7,8 +7,6 @@ import (
 // PlayerGameStats 球员比赛统计实体模型
 type PlayerGameStats struct {
 	ID                     uint      `gorm:"primaryKey;column:id"`
-	PlayerID               uint      `gorm:"column:player_id"`
-	GameID                 string    `gorm:"column:game_id"`
 	GameDate               time.Time `gorm:"column:game_date"`
 	TxPlayerID             uint      `gorm:"column:tx_player_id"`
 	TxGameID               string    `gorm:"column:tx_game_id"`

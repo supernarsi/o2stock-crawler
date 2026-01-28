@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"math"
 	"o2stock-crawler/internal/entity"
 	"time"
 
@@ -185,7 +186,7 @@ func (r *HistoryRepository) AggregateDailyKLine(rows []entity.PlayerPriceHistory
 		closeRow = &dayRows[len(dayRows)-1]
 
 		highPrice = -1
-		lowPrice = 2147483647
+		lowPrice = math.MaxInt
 
 		for i := range dayRows {
 			row := &dayRows[i]

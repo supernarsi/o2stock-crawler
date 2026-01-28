@@ -11,6 +11,7 @@ type Player struct {
 	NBAPlayerID        uint      `gorm:"column:nba_player_id"`
 	ShowName           string    `gorm:"column:p_name_show"`
 	EnName             string    `gorm:"column:p_name_en"`
+	TxPlayerID         uint      `gorm:"column:tx_player_id"`
 	TeamAbbr           string    `gorm:"column:team_abbr"`
 	Version            uint      `gorm:"column:version"`
 	CardType           uint      `gorm:"column:card_type"`

@@ -17,10 +17,10 @@ func NewStatsRepository(db *gorm.DB) *StatsRepository {
 	}
 }
 
-func (r *StatsRepository) GetSeasonStats(ctx context.Context, nbaPlayerID uint) (*entity.PlayerSeasonStats, error) {
+func (r *StatsRepository) GetSeasonStats(ctx context.Context, txPlayerID uint) (*entity.PlayerSeasonStats, error) {
 	var stats entity.PlayerSeasonStats
 	err := r.ctx(ctx).
-		Where("player_id = ?", nbaPlayerID).
+		Where("tx_player_id = ?", txPlayerID).
 		Order("season DESC, season_type DESC").
 		First(&stats).Error
 	if err != nil {
@@ -29,10 +29,10 @@ func (r *StatsRepository) GetSeasonStats(ctx context.Context, nbaPlayerID uint) 
 	return &stats, nil
 }
 
-func (r *StatsRepository) GetRecentGameStats(ctx context.Context, nbaPlayerID uint, limit int) ([]entity.PlayerGameStats, error) {
+func (r *StatsRepository) GetRecentGameStats(ctx context.Context, txPlayerID uint, limit int) ([]entity.PlayerGameStats, error) {
 	var stats []entity.PlayerGameStats
 	err := r.ctx(ctx).Model(&entity.PlayerGameStats{}).
-		Where("player_id = ?", nbaPlayerID).
+		Where("tx_player_id = ?", txPlayerID).
 		Order("game_date DESC").
 		Limit(limit).
 		Find(&stats).Error

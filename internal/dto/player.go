@@ -5,7 +5,7 @@ package dto
 // Players 球员API响应DTO
 type Players struct {
 	PlayerID          uint    `json:"player_id"`
-	NBAPlayerID       uint    `json:"nba_player_id"`
+	TxPlayerID        uint    `json:"tx_player_id"`
 	ShowName          string  `json:"p_name_show"`
 	EnName            string  `json:"p_name_en"`
 	TeamAbbr          string  `json:"team_abbr"`

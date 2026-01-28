@@ -56,6 +56,39 @@ var teamNames = map[string]string{
 	"奇才":   "WAS",
 }
 
+var teamIdToName = map[string]string{
+	"1":  "老鹰",
+	"2":  "凯尔特人",
+	"3":  "鹈鹕",
+	"4":  "公牛",
+	"5":  "骑士",
+	"6":  "独行侠",
+	"7":  "掘金",
+	"8":  "活塞",
+	"9":  "勇士",
+	"10": "火箭",
+	"11": "步行者",
+	"12": "快船",
+	"13": "湖人",
+	"14": "热火",
+	"15": "雄鹿",
+	"16": "森林狼",
+	"17": "篮网",
+	"18": "尼克斯",
+	"19": "魔术",
+	"20": "76人",
+	"21": "太阳",
+	"22": "开拓者",
+	"23": "国王",
+	"24": "马刺",
+	"25": "雷霆",
+	"26": "爵士",
+	"27": "奇才",
+	"28": "猛龙",
+	"29": "灰熊",
+	"30": "黄蜂",
+}
+
 func convertTeamName(name string) string {
 	if abbr, ok := teamNames[name]; ok {
 		return abbr
@@ -76,16 +109,20 @@ func NewTxNBAService(database *db.DB) *TxNBAService {
 }
 
 // CrawlDailyStats 抓取指定日期的所有 NBA 比赛统计（腾讯 API 会返回前后几天的列表）
-func (s *TxNBAService) CrawlDailyStats(ctx context.Context, date string) error {
-	log.Printf(">>> 开始从腾讯体育抓取比赛列表 (参考日期: %s) <<<", date)
+func (s *TxNBAService) CrawlDailyStats(ctx context.Context, targetDate string, flag int) error {
+	log.Printf(">>> 开始从腾讯体育抓取比赛列表 (日期: %s, flag: %d) <<<", targetDate, flag)
 
-	resp, err := s.client.GetMatchList(ctx, date)
+	resp, err := s.client.GetMatchList(ctx, targetDate, flag)
 	if err != nil {
 		return fmt.Errorf("获取比赛列表失败: %w", err)
 	}
 
 	totalMatches := 0
 	for matchDate, dayMatches := range resp.Data.Matches {
+		if matchDate != targetDate && flag == 2 {
+			// flag == 2 时，只处理目标日期的数据
+			continue
+		}
 		log.Printf("正在处理日期: %s, 比赛场数: %d", matchDate, len(dayMatches.List))
 		for _, m := range dayMatches.List {
 			if m.MatchInfo.MatchType != MatchTypeNBA {
@@ -171,7 +208,7 @@ func (s *TxNBAService) parseTeamStats(_ context.Context, teamData crawler.TxPlay
 		// playerName := p.Row[1]
 
 		// 尝试映射到内部 player_id
-		var internalPlayerID uint = 0
+		// var internalPlayerID uint = 0
 
 		fgMade, fgAtt := s.parseShot(p.Row[11])
 		tpMade, tpAtt := s.parseShot(p.Row[12])
@@ -185,10 +222,8 @@ func (s *TxNBAService) parseTeamStats(_ context.Context, teamData crawler.TxPlay
 		to, _ := strconv.Atoi(p.Row[8])
 
 		stat := entity.PlayerGameStats{
-			PlayerID:               internalPlayerID,
 			TxPlayerID:             uint(txPlayerID),
 			TxGameID:               mid,
-			GameID:                 "", // 暂时用一样的
 			GameDate:               date,
 			PlayerTeamName:         convertTeamName(teamName),
 			VsTeamName:             convertTeamName(oppName),
@@ -244,4 +279,71 @@ func (s *TxNBAService) parseShot(shot string) (made, attempted int) {
 		attempted, _ = strconv.Atoi(parts[1])
 	}
 	return
+}
+
+// SyncPlayers 同步腾讯球员 ID 和英文名
+func (s *TxNBAService) SyncPlayers(ctx context.Context, teamID string) error {
+	if teamID != "" {
+		return s.syncTeamPlayers(ctx, teamID)
+	}
+
+	// 同步所有球队 (1-30)
+	for id := 1; id <= 30; id++ {
+		tid := strconv.Itoa(id)
+		if err := s.syncTeamPlayers(ctx, tid); err != nil {
+			log.Printf("同步球队 %s 球员信息失败: %v", tid, err)
+		}
+		// 避免请求过快
+		time.Sleep(1 * time.Second)
+	}
+	return nil
+}
+
+func (s *TxNBAService) syncTeamPlayers(ctx context.Context, teamID string) error {
+	teamName, ok := teamIdToName[teamID]
+	if !ok {
+		return fmt.Errorf("未知球队 ID: %s", teamID)
+	}
+
+	log.Printf(">>> 开始同步球队阵容: %s (%s) <<<", teamID, teamName)
+
+	resp, err := s.client.GetTeamLineup(ctx, teamID)
+	if err != nil {
+		return err
+	}
+
+	updatedCount := 0
+	for _, p := range resp.Data.LineUp.Players {
+		// 解析出 players.cnName，将 - 替换为 .
+		cnNameReplace := strings.ReplaceAll(p.CnName, "-", ".")
+
+		txPlayerID, _ := strconv.Atoi(p.ID)
+		if txPlayerID == 0 {
+			continue
+		}
+
+		// 查询 players 表中 p_name_show = $cnNameReplace and team_abbr = $teamName 的数据
+		var player entity.Player
+		err := s.db.WithContext(ctx).Where("p_name_show = ? AND team_abbr = ?", cnNameReplace, teamName).First(&player).Error
+		if err != nil {
+			if err == gorm.ErrRecordNotFound {
+				// 没有对应数据的不处理
+				continue
+			}
+			return err
+		}
+
+		// 找到对应数据并修改数据： players.tx_player_id = players.id，players.p_name_en = players.enName
+		player.TxPlayerID = uint(txPlayerID)
+		player.EnName = p.EnName
+
+		if err := s.db.WithContext(ctx).Save(&player).Error; err != nil {
+			log.Printf("更新球员 %s (%d) 失败: %v", player.ShowName, player.ID, err)
+			continue
+		}
+		updatedCount++
+	}
+
+	log.Printf("球队 %s 同步完成，更新完成数: %d", teamName, updatedCount)
+	return nil
 }

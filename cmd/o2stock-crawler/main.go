@@ -84,12 +84,29 @@ func main() {
 	// Manual trigger for Tencent NBA stats
 	if len(os.Args) >= 2 && os.Args[1] == "tx-nba" {
 		date := time.Now().Format("2006-01-02")
+		// 默认抓取当前日期的数据
+		flag := 2
 		if len(os.Args) >= 3 {
+			// 如果有第三个参数，则抓取指定日期前 5 天的数据（不含指定日期）
 			date = os.Args[2]
+			flag = 1
 		}
 		txService := service.NewTxNBAService(database)
-		if err := txService.CrawlDailyStats(ctx, date); err != nil {
+		if err := txService.CrawlDailyStats(ctx, date, flag); err != nil {
 			log.Fatalf("抓取腾讯 NBA 数据失败: %v", err)
+		}
+		return
+	}
+
+	// Manual trigger for syncing players with Tencent NBA IDs
+	if len(os.Args) >= 2 && os.Args[1] == "tx-sync-players" {
+		teamID := ""
+		if len(os.Args) >= 3 {
+			teamID = os.Args[2]
+		}
+		txService := service.NewTxNBAService(database)
+		if err := txService.SyncPlayers(ctx, teamID); err != nil {
+			log.Fatalf("同步腾讯 NBA 球员数据失败: %v", err)
 		}
 		return
 	}
@@ -168,7 +185,7 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 	// 腾讯 NBA 数据抓取逻辑：仅在 15:00 ~ 16:00 之间执行
 	if isTxNBACrawlWindow(time.Now()) {
 		txService := service.NewTxNBAService(database)
-		if err := txService.CrawlDailyStats(ctx, time.Now().Format("2006-01-02")); err != nil {
+		if err := txService.CrawlDailyStats(ctx, time.Now().Format("2006-01-02"), 2); err != nil {
 			log.Printf("抓取腾讯 NBA 数据失败: %v", err)
 		}
 	}

@@ -99,7 +99,7 @@ func (r *PlayerRepository) BatchGetByIDs(ctx context.Context, playerIDs []uint) 
 func (r *PlayerRepository) UpdatePower(ctx context.Context, playerID uint, power5, power10 float64) error {
 	return r.model(ctx).
 		Where("player_id = ?", playerID).
-		Updates(map[string]interface{}{
+		Updates(map[string]any{
 			"power_per5":  power5,
 			"power_per10": power10,
 		}).Error
@@ -108,7 +108,7 @@ func (r *PlayerRepository) UpdatePower(ctx context.Context, playerID uint, power
 func (r *PlayerRepository) UpdatePriceChanges(ctx context.Context, playerID uint, pc1d, pc7d float64) error {
 	return r.model(ctx).
 		Where("player_id = ?", playerID).
-		Updates(map[string]interface{}{
+		Updates(map[string]any{
 			"price_change_1d": pc1d,
 			"price_change_7d": pc7d,
 		}).Error

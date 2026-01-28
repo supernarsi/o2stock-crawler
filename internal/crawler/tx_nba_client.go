@@ -86,9 +86,26 @@ type TxPlayerStatsTeam struct {
 	} `json:"oncrt"`
 }
 
+// TxTeamLineupResponse 腾讯体育球队阵容响应
+type TxTeamLineupResponse struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data struct {
+		LineUp struct {
+			Players []struct {
+				ID       string `json:"id"`
+				CnName   string `json:"cnName"`
+				EnName   string `json:"enName"`
+				Logo     string `json:"logo"`
+				Position string `json:"position"`
+			} `json:"players"`
+		} `json:"lineUp"`
+	} `json:"data"`
+}
+
 // GetMatchList 获取指定日期的比赛列表
-func (c *TxNBAClient) GetMatchList(ctx context.Context, date string) (*TxMatchListResponse, error) {
-	url := fmt.Sprintf("https://app.sports.qq.com/match/list?columnId=100000&unitType=&appvid=&flag=1&date=%s", date)
+func (c *TxNBAClient) GetMatchList(ctx context.Context, date string, flag int) (*TxMatchListResponse, error) {
+	url := fmt.Sprintf("https://app.sports.qq.com/match/list?columnId=100000&unitType=&appvid=&flag=%d&date=%s", flag, date)
 
 	log.Printf("获取比赛列表: %s", url)
 
@@ -139,6 +156,35 @@ func (c *TxNBAClient) GetMatchStat(ctx context.Context, mid string) (*TxMatchSta
 	}
 
 	var out TxMatchStatResponse
+	if err := jsoniter.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
+// GetTeamLineup 获取球队球员阵容
+func (c *TxNBAClient) GetTeamLineup(ctx context.Context, teamID string) (*TxTeamLineupResponse, error) {
+	url := fmt.Sprintf("https://matchweb.sports.qq.com/match/api/v2/team/lineup?competitionId=100000&teamId=%s", teamID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Tencent API returned status: %d", resp.StatusCode)
+	}
+
+	var out TxTeamLineupResponse
 	if err := jsoniter.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}

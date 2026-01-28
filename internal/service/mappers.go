@@ -26,7 +26,7 @@ func ToUserDTO(u *entity.User) *dto.User {
 func ToPlayerDTO(p entity.Player) dto.Players {
 	return dto.Players{
 		PlayerID:          p.PlayerID,
-		NBAPlayerID:       p.NBAPlayerID,
+		TxPlayerID:        p.TxPlayerID,
 		ShowName:          p.ShowName,
 		EnName:            p.EnName,
 		TeamAbbr:          p.TeamAbbr,
