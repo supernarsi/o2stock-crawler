@@ -9,6 +9,7 @@ import (
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/service"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -43,72 +44,88 @@ func main() {
 
 	client := crawler.NewClient(cfg)
 
-	// Simple one-shot run by default
-	if len(os.Args) == 1 || os.Args[1] == "run-once" {
+	if len(os.Args) < 2 {
 		if err := runOnce(ctx, client, database); err != nil {
-			log.Fatalf("一次性抓取球员数据失败: %v", err)
+			log.Fatalf("一次性抓取失败: %v", err)
 		}
 		return
 	}
 
-	// Simple loop scheduler: o2stock-crawler loop <minutes>
-	if len(os.Args) >= 2 && os.Args[1] == "loop" {
-		interval := time.Minute * 60
+	command := os.Args[1]
+	switch command {
+	case "run-once":
+		if err := runOnce(ctx, client, database); err != nil {
+			log.Fatalf("一次性抓取失败: %v", err)
+		}
+
+	case "loop":
+		interval := time.Hour
 		if len(os.Args) >= 3 {
 			if d, err := time.ParseDuration(os.Args[2]); err == nil {
 				interval = d
 			}
 		}
+		runLoop(ctx, client, database, interval)
 
-		log.Printf("开始循环抓取球员数据，间隔: %s", interval)
-		for {
-			now := time.Now()
-
-			// 检查是否在禁止抓取的时间段（03:00~08:00）
-			if shouldSkipCrawl(now) {
-				nextRun := getNextRunTime(now)
-				waitDuration := nextRun.Sub(now)
-				log.Printf("当前时间 %s 在禁止抓取的时间段（03:00~08:00），下次抓取时间: %s (等待 %s)",
-					now.Format("15:04:05"), nextRun.Format("15:04:05"), waitDuration)
-				time.Sleep(waitDuration)
-				continue
-			}
-
-			if err := runOnce(ctx, client, database); err != nil {
-				log.Printf("循环抓取球员数据失败: %v", err)
-			}
-			time.Sleep(interval)
-		}
-	}
-
-	// Manual trigger for Tencent NBA stats
-	if len(os.Args) >= 2 && os.Args[1] == "tx-nba" {
+	case "tx-nba":
 		date := time.Now().Format("2006-01-02")
-		// 默认抓取当前日期的数据
 		flag := 2
-		if len(os.Args) >= 3 {
-			// 如果有第三个参数，则抓取指定日期前 5 天的数据（不含指定日期）
-			date = os.Args[2]
-			flag = 1
+		noSeason := false
+
+		// 简单的参数解析
+		for i := 2; i < len(os.Args); i++ {
+			arg := os.Args[i]
+			if arg == "--no-season" {
+				noSeason = true
+			} else if !strings.HasPrefix(arg, "-") && date == time.Now().Format("2006-01-02") {
+				date = arg
+				flag = 1
+			}
 		}
+
 		txService := service.NewTxNBAService(database)
-		if err := txService.CrawlDailyStats(ctx, date, flag); err != nil {
+		pids, err := txService.CrawlDailyStats(ctx, date, flag)
+		if err != nil {
 			log.Fatalf("抓取腾讯 NBA 数据失败: %v", err)
 		}
-		return
-	}
 
-	// Manual trigger for syncing players with Tencent NBA IDs
-	if len(os.Args) >= 2 && os.Args[1] == "tx-sync-players" {
+		if !noSeason && len(pids) > 0 {
+			if err := txService.SyncPlayerSeasonStats(ctx, pids); err != nil {
+				log.Printf("同步球员赛季统计失败: %v", err)
+			}
+		}
+
+	case "tx-sync-players":
 		teamID := ""
 		if len(os.Args) >= 3 {
 			teamID = os.Args[2]
 		}
 		txService := service.NewTxNBAService(database)
 		if err := txService.SyncPlayers(ctx, teamID); err != nil {
-			log.Fatalf("同步腾讯 NBA 球员数据失败: %v", err)
+			log.Fatalf("同步腾讯球员数据失败: %v", err)
 		}
-		return
+
+	default:
+		log.Printf("未知命令: %s", command)
+		os.Exit(1)
+	}
+}
+
+func runLoop(ctx context.Context, client *crawler.Client, database *db.DB, interval time.Duration) {
+	log.Printf("开始循环抓取，间隔: %s", interval)
+	for {
+		now := time.Now()
+		if shouldSkipCrawl(now) {
+			nextRun := getNextRunTime(now)
+			log.Printf("当前在禁止抓取时段，下次抓取时间: %s", nextRun.Format("15:04:05"))
+			time.Sleep(time.Until(nextRun))
+			continue
+		}
+
+		if err := runOnce(ctx, client, database); err != nil {
+			log.Printf("循环抓取失败: %v", err)
+		}
+		time.Sleep(interval)
 	}
 }
 
@@ -185,8 +202,13 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 	// 腾讯 NBA 数据抓取逻辑：仅在 15:00 ~ 16:00 之间执行
 	if isTxNBACrawlWindow(time.Now()) {
 		txService := service.NewTxNBAService(database)
-		if err := txService.CrawlDailyStats(ctx, time.Now().Format("2006-01-02"), 2); err != nil {
+		pids, err := txService.CrawlDailyStats(ctx, time.Now().Format("2006-01-02"), 2)
+		if err != nil {
 			log.Printf("抓取腾讯 NBA 数据失败: %v", err)
+		} else if len(pids) > 0 {
+			if err := txService.SyncPlayerSeasonStats(ctx, pids); err != nil {
+				log.Printf("同步球员赛季统计失败: %v", err)
+			}
 		}
 	}
 

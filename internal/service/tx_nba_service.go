@@ -109,15 +109,17 @@ func NewTxNBAService(database *db.DB) *TxNBAService {
 }
 
 // CrawlDailyStats 抓取指定日期的所有 NBA 比赛统计（腾讯 API 会返回前后几天的列表）
-func (s *TxNBAService) CrawlDailyStats(ctx context.Context, targetDate string, flag int) error {
+func (s *TxNBAService) CrawlDailyStats(ctx context.Context, targetDate string, flag int) ([]uint, error) {
 	log.Printf(">>> 开始从腾讯体育抓取比赛列表 (日期: %s, flag: %d) <<<", targetDate, flag)
 
 	resp, err := s.client.GetMatchList(ctx, targetDate, flag)
 	if err != nil {
-		return fmt.Errorf("获取比赛列表失败: %w", err)
+		return nil, fmt.Errorf("获取比赛列表失败: %w", err)
 	}
 
 	totalMatches := 0
+	txPlayerIDs := make(map[uint]struct{})
+
 	for matchDate, dayMatches := range resp.Data.Matches {
 		if matchDate != targetDate && flag == 2 {
 			// flag == 2 时，只处理目标日期的数据
@@ -134,27 +136,169 @@ func (s *TxNBAService) CrawlDailyStats(ctx context.Context, targetDate string, f
 			// 避免抓取过快
 			time.Sleep(time.Duration(rand.Intn(2)+1) * time.Second)
 
-			if err := s.crawlMatchStat(ctx, m.MatchInfo.Mid, matchDate); err != nil {
+			pids, err := s.crawlMatchStat(ctx, m.MatchInfo.Mid, matchDate)
+			if err != nil {
 				log.Printf("抓取比赛 %s 详情失败: %v", m.MatchInfo.Mid, err)
 				continue
+			}
+			for _, pid := range pids {
+				txPlayerIDs[pid] = struct{}{}
 			}
 			totalMatches++
 		}
 	}
 
-	log.Printf(">>> 比赛数据抓取完成，共处理比赛: %d <<<", totalMatches)
+	resultPIDs := make([]uint, 0, len(txPlayerIDs))
+	for pid := range txPlayerIDs {
+		resultPIDs = append(resultPIDs, pid)
+	}
+
+	log.Printf(">>> 比赛数据抓取完成，共处理比赛: %d, 更新球员数: %d <<<", totalMatches, len(resultPIDs))
+	return resultPIDs, nil
+}
+
+// SyncPlayerSeasonStats 同步球员赛季场均数据
+func (s *TxNBAService) SyncPlayerSeasonStats(ctx context.Context, txPlayerIDs []uint) error {
+	log.Printf(">>> 开始更新涉及球员的赛季场均数据 (球员 ids: %v) <<<", txPlayerIDs)
+
+	for _, pid := range txPlayerIDs {
+		playerName := ""
+		// 获取球员姓名 (从数据库查一下)
+		var player entity.Player
+		if err := s.db.WithContext(ctx).Where("tx_player_id = ?", pid).First(&player).Error; err != nil {
+			log.Printf("球员 ID %d 在数据库中未找到，跳过场均更新", pid)
+			continue
+		}
+		playerName = player.EnName
+
+		// 避免请求过快
+		time.Sleep(time.Duration(rand.Intn(3)+2) * time.Second)
+
+		pidStr := strconv.Itoa(int(pid))
+		resp, err := s.client.GetPlayerStats(ctx, pidStr)
+		if err != nil {
+			log.Printf("获取球员 %s 赛季统计失败: %v", pidStr, err)
+			continue
+		}
+
+		// 找到基础数据 - 场均 tab
+		var stats []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+			Rank  int    `json:"rank"`
+		}
+		found := false
+
+		for _, mod := range resp.Data.Modules {
+			if mod.ID == "statList" {
+				for _, tab := range mod.StatList.Tabs {
+					if tab.Name == "场均" {
+						stats = make([]struct {
+							Key   string `json:"key"`
+							Value string `json:"value"`
+							Rank  int    `json:"rank"`
+						}, len(tab.Stats))
+						for i, st := range tab.Stats {
+							stats[i] = struct {
+								Key   string `json:"key"`
+								Value string `json:"value"`
+								Rank  int    `json:"rank"`
+							}{Key: st.Key, Value: st.Value, Rank: st.Rank}
+						}
+						found = true
+						break
+					}
+				}
+			}
+		}
+
+		if !found {
+			log.Printf("球员 %s 未找到场均统计数据", pidStr)
+			continue
+		}
+
+		// 组装实体
+		seasonStats := entity.PlayerSeasonStats{
+			TxPlayerID: pid,
+			PlayerID:   player.PlayerID,
+			PlayerName: playerName,
+			Season:     "2025-26", // 固定为当前赛季
+			SeasonType: 1,         // 常规赛
+			// API 目前没有直接给场次，这里先保留原有或默认值。如果需要可以从总计 Tab 算
+			GamesPlayed:          1, // 文档要求固定 1，可能后续有逻辑需要
+			Minutes:              s.findStatValue(stats, "minutesPG"),
+			RankMin:              s.findStatRank(stats, "minutesPG"),
+			Points:               s.findStatValue(stats, "pointsPG"),
+			RankPts:              s.findStatRank(stats, "pointsPG"),
+			Rebounds:             s.findStatValue(stats, "reboundsPG"),
+			RankRb:               s.findStatRank(stats, "reboundsPG"),
+			ReboundsOffensive:    s.findStatValue(stats, "offensiveReboundsPG"),
+			RankRbo:              s.findStatRank(stats, "offensiveReboundsPG"),
+			ReboundsDefensive:    s.findStatValue(stats, "defensiveReboundsPG"),
+			RankRbd:              s.findStatRank(stats, "defensiveReboundsPG"),
+			Assists:              s.findStatValue(stats, "assistsPG"),
+			RankAst:              s.findStatRank(stats, "assistsPG"),
+			Turnovers:            s.findStatValue(stats, "turnoversPG"),
+			RankTov:              s.findStatRank(stats, "turnoversPG"),
+			Steals:               s.findStatValue(stats, "stealsPG"),
+			RankStl:              s.findStatRank(stats, "stealsPG"),
+			Blocks:               s.findStatValue(stats, "blocksPG"),
+			RankBlk:              s.findStatRank(stats, "blocksPG"),
+			Fouls:                s.findStatValue(stats, "foulsPG"),
+			RankPf:               s.findStatRank(stats, "foulsPG"),
+			FieldGoalPercentage:  s.findStatValue(stats, "fgPCT"),
+			RankPct2:             s.findStatRank(stats, "fgPCT"),
+			ThreePointPercentage: s.findStatValue(stats, "threesPCT"),
+			RankPct3:             s.findStatRank(stats, "threesPCT"),
+			FreeThrowPercentage:  s.findStatValue(stats, "ftPCT"),
+			RankPctFt:            s.findStatRank(stats, "ftPCT"),
+		}
+
+		// Upsert
+		err = s.db.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "tx_player_id"}, {Name: "season"}, {Name: "season_type"}},
+			UpdateAll: true,
+		}).Create(&seasonStats).Error
+
+		if err != nil {
+			log.Printf("保存球员 %s 赛季统计失败: %v", playerName, err)
+		} else {
+			log.Printf("更新球员 %s 赛季统计成功", playerName)
+		}
+	}
+
+	log.Printf(">>> 赛季场均数据更新完成 <<<")
 	return nil
 }
 
-func (s *TxNBAService) crawlMatchStat(ctx context.Context, mid string, dateStr string) error {
+// SyncPlayers 同步腾讯球员 ID 和英文名
+func (s *TxNBAService) SyncPlayers(ctx context.Context, teamID string) error {
+	if teamID != "" {
+		return s.syncTeamPlayers(ctx, teamID)
+	}
+
+	// 同步所有球队 (1-30)
+	for id := 1; id <= 30; id++ {
+		tid := strconv.Itoa(id)
+		if err := s.syncTeamPlayers(ctx, tid); err != nil {
+			log.Printf("同步球队 %s 球员信息失败: %v", tid, err)
+		}
+		// 避免请求过快
+		time.Sleep(1 * time.Second)
+	}
+	return nil
+}
+
+func (s *TxNBAService) crawlMatchStat(ctx context.Context, mid string, dateStr string) ([]uint, error) {
 	resp, err := s.client.GetMatchStat(ctx, mid)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	gameDate, _ := time.Parse("2006-01-02", dateStr)
 
 	stats := []entity.PlayerGameStats{}
+	txPlayerIDs := []uint{}
 
 	// 查找统计数据块 (type=19)
 	var playerStatsData struct {
@@ -165,7 +309,7 @@ func (s *TxNBAService) crawlMatchStat(ctx context.Context, mid string, dateStr s
 	for _, st := range resp.Data.Stats {
 		if st.Type == PlayerStatsType {
 			if err := jsoniter.Unmarshal(st.PlayerStats, &playerStatsData); err != nil {
-				return fmt.Errorf("解析球员统计数据详情失败: %w", err)
+				return nil, fmt.Errorf("解析球员统计数据详情失败: %w", err)
 			}
 			found = true
 			break
@@ -173,29 +317,36 @@ func (s *TxNBAService) crawlMatchStat(ctx context.Context, mid string, dateStr s
 	}
 
 	if !found {
-		return fmt.Errorf("未找到球员统计数据块 (type=19)")
+		return nil, fmt.Errorf("未找到球员统计数据块 (type=19)")
 	}
 
 	// 处理客队 (Left)
-	stats = append(stats, s.parseTeamStats(ctx, playerStatsData.Left, mid, gameDate, resp.Data.TeamInfo.LeftName, resp.Data.TeamInfo.RightName, false)...)
+	leftStats, leftPIDs := s.parseTeamStats(ctx, playerStatsData.Left, mid, gameDate, resp.Data.TeamInfo.LeftName, resp.Data.TeamInfo.RightName, false)
+	stats = append(stats, leftStats...)
+	txPlayerIDs = append(txPlayerIDs, leftPIDs...)
+
 	// 处理主队 (Right)
-	stats = append(stats, s.parseTeamStats(ctx, playerStatsData.Right, mid, gameDate, resp.Data.TeamInfo.RightName, resp.Data.TeamInfo.LeftName, true)...)
+	rightStats, rightPIDs := s.parseTeamStats(ctx, playerStatsData.Right, mid, gameDate, resp.Data.TeamInfo.RightName, resp.Data.TeamInfo.LeftName, true)
+	stats = append(stats, rightStats...)
+	txPlayerIDs = append(txPlayerIDs, rightPIDs...)
 
 	if len(stats) == 0 {
-		return nil
+		return txPlayerIDs, nil
 	}
 
 	// 批量入库
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	err = s.db.Transaction(func(tx *gorm.DB) error {
 		return tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "tx_player_id"}, {Name: "tx_game_id"}},
 			UpdateAll: true,
 		}).Create(&stats).Error
 	})
+	return txPlayerIDs, err
 }
 
-func (s *TxNBAService) parseTeamStats(_ context.Context, teamData crawler.TxPlayerStatsTeam, mid string, date time.Time, teamName, oppName string, isHome bool) []entity.PlayerGameStats {
+func (s *TxNBAService) parseTeamStats(_ context.Context, teamData crawler.TxPlayerStatsTeam, mid string, date time.Time, teamName, oppName string, isHome bool) ([]entity.PlayerGameStats, []uint) {
 	result := []entity.PlayerGameStats{}
+	txPlayerIDs := []uint{}
 	for _, p := range teamData.Oncrt {
 		if len(p.Row) < 14 {
 			continue
@@ -205,10 +356,6 @@ func (s *TxNBAService) parseTeamStats(_ context.Context, teamData crawler.TxPlay
 		if txPlayerID == 0 {
 			continue
 		}
-		// playerName := p.Row[1]
-
-		// 尝试映射到内部 player_id
-		// var internalPlayerID uint = 0
 
 		fgMade, fgAtt := s.parseShot(p.Row[11])
 		tpMade, tpAtt := s.parseShot(p.Row[12])
@@ -244,23 +391,9 @@ func (s *TxNBAService) parseTeamStats(_ context.Context, teamData crawler.TxPlay
 			DataFrom:               DataFromTxNBA,
 		}
 		result = append(result, stat)
+		txPlayerIDs = append(txPlayerIDs, uint(txPlayerID))
 	}
-	return result
-}
-
-// findInternalPlayerID 尝试通过腾讯 ID 或姓名匹配内部球员 ID
-func (s *TxNBAService) findInternalPlayerID(ctx context.Context, txPlayerID uint, playerName string) uint {
-	// 1. 尝试按姓名匹配 (模糊匹配或包含关系)
-	var player entity.Player
-	// 腾讯的名字通常是简写，比如 "米勒"
-	// 我们的名字是 "布兰登-米勒"
-	// 尝试用 LIKE %name%
-	err := s.db.WithContext(ctx).Where("p_name_show LIKE ?", "%"+playerName+"%").First(&player).Error
-	if err == nil {
-		return player.NBAPlayerID // 返回 NBA Player ID 作为内部 PlayerID
-	}
-
-	return 0 // 未找到则返回 0
+	return result, txPlayerIDs
 }
 
 func (s *TxNBAService) parseMinutes(m string) int {
@@ -279,24 +412,6 @@ func (s *TxNBAService) parseShot(shot string) (made, attempted int) {
 		attempted, _ = strconv.Atoi(parts[1])
 	}
 	return
-}
-
-// SyncPlayers 同步腾讯球员 ID 和英文名
-func (s *TxNBAService) SyncPlayers(ctx context.Context, teamID string) error {
-	if teamID != "" {
-		return s.syncTeamPlayers(ctx, teamID)
-	}
-
-	// 同步所有球队 (1-30)
-	for id := 1; id <= 30; id++ {
-		tid := strconv.Itoa(id)
-		if err := s.syncTeamPlayers(ctx, tid); err != nil {
-			log.Printf("同步球队 %s 球员信息失败: %v", tid, err)
-		}
-		// 避免请求过快
-		time.Sleep(1 * time.Second)
-	}
-	return nil
 }
 
 func (s *TxNBAService) syncTeamPlayers(ctx context.Context, teamID string) error {
@@ -346,4 +461,39 @@ func (s *TxNBAService) syncTeamPlayers(ctx context.Context, teamID string) error
 
 	log.Printf("球队 %s 同步完成，更新完成数: %d", teamName, updatedCount)
 	return nil
+}
+
+func (s *TxNBAService) findStatValue(stats []struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	Rank  int    `json:"rank"`
+}, key string) float64 {
+	for _, st := range stats {
+		if st.Key == key {
+			val := strings.TrimSuffix(st.Value, "%")
+			val = strings.ReplaceAll(val, ",", "")
+			f, _ := strconv.ParseFloat(val, 64)
+			if strings.HasSuffix(st.Value, "%") {
+				return f / 100.0
+			}
+			return f
+		}
+	}
+	return 0
+}
+
+func (s *TxNBAService) findStatRank(stats []struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	Rank  int    `json:"rank"`
+}, key string) uint {
+	for _, st := range stats {
+		if st.Key == key {
+			if st.Rank < 0 {
+				return 0
+			}
+			return uint(st.Rank)
+		}
+	}
+	return 0
 }

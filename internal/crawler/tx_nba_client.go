@@ -103,6 +103,41 @@ type TxTeamLineupResponse struct {
 	} `json:"data"`
 }
 
+// TxPlayerStatsResponse 腾讯体育球员统计数据响应
+type TxPlayerStatsResponse struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data struct {
+		Modules []struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			StatList struct {
+				Tabs []struct {
+					Name  string `json:"name"`
+					Stats []struct {
+						Key   string `json:"key"`
+						Name  string `json:"name"`
+						Value string `json:"value"`
+						Rank  int    `json:"rank"`
+					} `json:"stats"`
+				} `json:"tabs"`
+			} `json:"statList"`
+		} `json:"modules"`
+		Options []struct {
+			Key        string `json:"key"`
+			Value      string `json:"value"`
+			Name       string `json:"name"`
+			SubOptions []struct {
+				Key     string `json:"key"`
+				Value   string `json:"value"`
+				Name    string `json:"name"`
+				Default bool   `json:"default"`
+			} `json:"subOptions"`
+			Default bool `json:"default"`
+		} `json:"options"`
+	} `json:"data"`
+}
+
 // GetMatchList 获取指定日期的比赛列表
 func (c *TxNBAClient) GetMatchList(ctx context.Context, date string, flag int) (*TxMatchListResponse, error) {
 	url := fmt.Sprintf("https://app.sports.qq.com/match/list?columnId=100000&unitType=&appvid=&flag=%d&date=%s", flag, date)
@@ -185,6 +220,35 @@ func (c *TxNBAClient) GetTeamLineup(ctx context.Context, teamID string) (*TxTeam
 	}
 
 	var out TxTeamLineupResponse
+	if err := jsoniter.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
+// GetPlayerStats 获取球员统计数据 (含赛季场均)
+func (c *TxNBAClient) GetPlayerStats(ctx context.Context, txPlayerID string) (*TxPlayerStatsResponse, error) {
+	url := fmt.Sprintf("https://app.sports.qq.com/match/api/v2/player/stats?playerId=%s&competitionId=100000&moduleIds=statList&appvid=", txPlayerID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Tencent API returned status: %d", resp.StatusCode)
+	}
+
+	var out TxPlayerStatsResponse
 	if err := jsoniter.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
