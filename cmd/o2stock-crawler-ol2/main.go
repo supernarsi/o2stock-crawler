@@ -117,10 +117,10 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 			return err
 		}
 
-		// 完成当前球队后暂停 5 秒再抓取下一支球队
+		// 完成当前球队后暂停 10 秒再抓取下一支球队
 		if i < len(consts.AllCrawlTeamIDs)-1 {
-			log.Printf("等待 5 秒后抓取下一支球队...")
-			time.Sleep(5 * time.Second)
+			log.Printf("等待 10 秒后抓取下一支球队...")
+			time.Sleep(10 * time.Second)
 		}
 	}
 
