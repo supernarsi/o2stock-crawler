@@ -122,6 +122,69 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 	return result, nil
 }
 
+// GetPlayersWithOwnedByIDs 按给定 playerIDs 顺序返回 PlayerWithOwned 列表，用于 IPI 排行等需与球员信息合并的接口
+func (s *PlayersService) GetPlayersWithOwnedByIDs(ctx context.Context, playerIDs []uint, userID *uint) ([]api.PlayerWithOwned, error) {
+	if len(playerIDs) == 0 {
+		return []api.PlayerWithOwned{}, nil
+	}
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+	players, err := playerRepo.BatchGetByIDs(ctx, playerIDs)
+	if err != nil {
+		return nil, err
+	}
+	playerMap := make(map[uint]entity.Player)
+	for _, p := range players {
+		playerMap[p.PlayerID] = p
+	}
+
+	var ownedMap map[uint][]dto.OwnInfo
+	if userID != nil {
+		ownRepo := repositories.NewOwnRepository(s.db.DB)
+		ownRecords, err := ownRepo.GetByPlayerIDs(ctx, *userID, playerIDs)
+		if err != nil {
+			return nil, err
+		}
+		ownedMap = s.mapOwnRecordsToInfoMap(ownRecords)
+	}
+	var favMap map[uint]bool
+	if userID != nil {
+		favRepo := repositories.NewFavRepository(s.db.DB)
+		favMap, err = favRepo.GetFavMap(ctx, *userID, playerIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	result := make([]api.PlayerWithOwned, len(playerIDs))
+	for i, pid := range playerIDs {
+		p, ok := playerMap[pid]
+		if !ok {
+			result[i] = api.PlayerWithOwned{
+				PlayerWithPriceChange: dto.PlayerWithPriceChange{Players: dto.Players{PlayerID: pid}},
+				Owned:                 []*dto.OwnInfo{},
+				IsFav:                 false,
+			}
+			continue
+		}
+		result[i] = api.PlayerWithOwned{
+			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p),
+			Owned:                 []*dto.OwnInfo{},
+			IsFav:                 false,
+		}
+		if ownedMap != nil {
+			if owned, ok := ownedMap[pid]; ok {
+				for j := range owned {
+					result[i].Owned = append(result[i].Owned, &owned[j])
+				}
+			}
+		}
+		if favMap != nil {
+			result[i].IsFav = favMap[pid]
+		}
+	}
+	return result, nil
+}
+
 // mapOrderBy maps user-facing order by names to database column names
 func (s *PlayersService) mapOrderBy(orderBy string) string {
 	mapping := map[string]string{
@@ -381,14 +444,14 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 
 		num5 := min(len(powers), 5)
 		sum5 := 0.0
-		for i := 0; i < num5; i++ {
+		for i := range num5 {
 			sum5 += powers[i]
 		}
 		avg5 := round(sum5/float64(num5), 1)
 
 		num10 := len(powers)
 		sum10 := 0.0
-		for i := 0; i < num10; i++ {
+		for i := range num10 {
 			sum10 += powers[i]
 		}
 		avg10 := round(sum10/float64(num10), 1)
@@ -496,11 +559,4 @@ func (s *PlayersService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) 
 func round(val float64, precision int) float64 {
 	p := math.Pow10(precision)
 	return math.Round(val*p) / p
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

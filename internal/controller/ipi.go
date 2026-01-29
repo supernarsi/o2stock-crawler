@@ -10,7 +10,7 @@ import (
 	"o2stock-crawler/internal/middleware"
 )
 
-// IPIRank 获取 IPI 排行：最新一批，按 ipi 降序分页，可选仅税后安全边际；每条含 p_name_show
+// IPIRank 获取 IPI 排行：最新一批，按 ipi 降序分页，可选仅税后安全边际；列表项为 PlayerWithIPI（球员信息 + IPI）
 func (a *API) IPIRank() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		ctx := r.Context()
@@ -30,7 +30,7 @@ func (a *API) IPIRank() http.HandlerFunc {
 		}
 		if !ok {
 			return api.IPIRankRes{
-				List:         []api.IPIRankItem{},
+				List:         []api.PlayerWithIPI{},
 				CalculatedAt: calculatedAt,
 				Page:         page,
 				Limit:        limit,
@@ -48,19 +48,25 @@ func (a *API) IPIRank() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
-		items := make([]api.IPIRankItem, len(list))
+		items := make([]api.PlayerWithIPI, len(list))
 		if len(list) > 0 {
 			playerIDs := make([]uint, len(list))
 			for i := range list {
 				playerIDs[i] = list[i].PlayerID
 			}
-			players, _ := a.playerRepo.BatchGetByIDs(ctx, playerIDs)
-			nameMap := make(map[uint]entity.Player)
-			for _, p := range players {
-				nameMap[p.PlayerID] = p
+			var userID *uint
+			if uid, ok := GetUserIDFromContext(ctx); ok {
+				userID = &uid
+			}
+			playersWithOwned, err := a.playersService.GetPlayersWithOwnedByIDs(ctx, playerIDs, userID)
+			if err != nil {
+				return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 			}
 			for i := range list {
-				items[i] = ipiRowToRankItem(list[i], nameMap[list[i].PlayerID].ShowName, nameMap[list[i].PlayerID].PriceStandard)
+				items[i] = api.PlayerWithIPI{
+					IpiInfo:         ipiRowToRankItem(list[i]),
+					PlayerWithOwned: playersWithOwned[i],
+				}
 			}
 		}
 
@@ -116,18 +122,15 @@ func (a *API) IPIPlayer() http.HandlerFunc {
 	})
 }
 
-func ipiRowToRankItem(row entity.PlayerIPI, pNameShow string, priceStandard uint) api.IPIRankItem {
+func ipiRowToRankItem(row entity.PlayerIPI) api.IPIRankItem {
 	return api.IPIRankItem{
-		PlayerID:      row.PlayerID,
-		PNameShow:     pNameShow,
-		IPI:           row.IPI,
-		PriceStandard: priceStandard,
-		// SPerf:              row.SPerf,
-		// VGap:               row.VGap,
-		// MGrowth:            row.MGrowth,
-		// RRisk:              row.RRisk,
-		// MeetsTaxSafeMargin: row.MeetsTaxSafeMargin,
-		// RankInversionIndex: row.RankInversionIndex,
-		// CalculatedAt:       row.CalculatedAt,
+		PlayerID:           row.PlayerID,
+		IPI:                row.IPI,
+		SPerf:              row.SPerf,
+		VGap:               row.VGap,
+		MGrowth:            row.MGrowth,
+		RRisk:              row.RRisk,
+		MeetsTaxSafeMargin: row.MeetsTaxSafeMargin,
+		RankInversionIndex: row.RankInversionIndex,
 	}
 }
