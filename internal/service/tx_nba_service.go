@@ -219,13 +219,11 @@ func (s *TxNBAService) SyncPlayerSeasonStats(ctx context.Context, txPlayerIDs []
 
 		// 组装实体
 		seasonStats := entity.PlayerSeasonStats{
-			TxPlayerID: pid,
-			PlayerID:   player.PlayerID,
-			PlayerName: playerName,
-			Season:     "2025-26", // 固定为当前赛季
-			SeasonType: 1,         // 常规赛
-			// API 目前没有直接给场次，这里先保留原有或默认值。如果需要可以从总计 Tab 算
-			GamesPlayed:          1, // 文档要求固定 1，可能后续有逻辑需要
+			TxPlayerID:           pid,
+			PlayerName:           playerName,
+			Season:               "2025-26", // 固定为当前赛季
+			SeasonType:           1,         // 常规赛
+			GamesPlayed:          1,         // API 目前没有直接给场次，这里先固定 1
 			Minutes:              s.findStatValue(stats, "minutesPG"),
 			RankMin:              s.findStatRank(stats, "minutesPG"),
 			Points:               s.findStatValue(stats, "pointsPG"),
