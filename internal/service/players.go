@@ -352,18 +352,18 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 	statsRepo := repositories.NewStatsRepository(s.db.DB)
 
-	targetPlayers, err := playerRepo.GetAllTargetPlayers(ctx)
+	txPlayers, err := playerRepo.GetAllTxPlayers(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get target players: %w", err)
 	}
 
-	totalPlayers := len(targetPlayers)
+	totalPlayers := len(txPlayers)
 	successCount := 0
 	skippedCount := 0
 	log.Printf("找到符合条件的球员数量: %d", totalPlayers)
 
-	for _, p := range targetPlayers {
-		recentGames, err := statsRepo.GetRecentGameStats(ctx, p.NBAPlayerID, 10)
+	for _, p := range txPlayers {
+		recentGames, err := statsRepo.GetRecentGameStats(ctx, p.TxPlayerID, 10)
 		if err != nil {
 			log.Printf("[PlayerID: %d] 获取比赛记录失败: %v", p.PlayerID, err)
 			continue

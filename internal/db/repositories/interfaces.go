@@ -11,7 +11,7 @@ type PlayerRepositoryInterface interface {
 	List(ctx context.Context, filter PlayerFilter) ([]entity.Player, error)
 	GetByID(ctx context.Context, playerID uint) (*entity.Player, error)
 	BatchGetByIDs(ctx context.Context, playerIDs []uint) ([]entity.Player, error)
-	GetAllTargetPlayers(ctx context.Context) ([]entity.Player, error)
+	GetAllTxPlayers(ctx context.Context) ([]entity.Player, error)
 	UpdatePower(ctx context.Context, playerID uint, power5, power10 float64) error
 	UpdatePriceChanges(ctx context.Context, playerID uint, pc1d, pc7d float64) error
 }
@@ -60,8 +60,8 @@ type OwnRepositoryInterface interface {
 
 // StatsRepositoryInterface defines the contract for player statistics data access
 type StatsRepositoryInterface interface {
-	GetSeasonStats(ctx context.Context, nbaPlayerID uint) (*entity.PlayerSeasonStats, error)
-	GetRecentGameStats(ctx context.Context, nbaPlayerID uint, limit int) ([]entity.PlayerGameStats, error)
+	GetSeasonStats(ctx context.Context, txPlayerID uint) (*entity.PlayerSeasonStats, error)
+	GetRecentGameStats(ctx context.Context, txPlayerID uint, limit int) ([]entity.PlayerGameStats, error)
 }
 
 // Compile-time interface compliance checks

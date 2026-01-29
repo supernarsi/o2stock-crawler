@@ -114,9 +114,9 @@ func (r *PlayerRepository) UpdatePriceChanges(ctx context.Context, playerID uint
 		}).Error
 }
 
-func (r *PlayerRepository) GetAllTargetPlayers(ctx context.Context) ([]entity.Player, error) {
+func (r *PlayerRepository) GetAllTxPlayers(ctx context.Context) ([]entity.Player, error) {
 	var players []entity.Player
-	err := r.ctx(ctx).Where("nba_player_id > 0 AND team_abbr != ?", "自由球员").Find(&players).Error
+	err := r.ctx(ctx).Where("tx_player_id > 0 AND team_abbr != ?", "自由球员").Find(&players).Error
 	return players, err
 }
 
