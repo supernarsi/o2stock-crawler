@@ -3,13 +3,12 @@ package main
 import (
 	"context"
 	"log"
-	"math/rand"
 	"o2stock-crawler/internal/config"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/service"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -67,44 +66,6 @@ func main() {
 		}
 		runLoop(ctx, client, database, interval)
 
-	case "tx-nba":
-		date := time.Now().Format("2006-01-02")
-		flag := 2
-		noSeason := false
-
-		// 简单的参数解析
-		for i := 2; i < len(os.Args); i++ {
-			arg := os.Args[i]
-			if arg == "--no-season" {
-				noSeason = true
-			} else if !strings.HasPrefix(arg, "-") && date == time.Now().Format("2006-01-02") {
-				date = arg
-				flag = 1
-			}
-		}
-
-		txService := service.NewTxNBAService(database)
-		pids, err := txService.CrawlDailyStats(ctx, date, flag)
-		if err != nil {
-			log.Fatalf("抓取腾讯 NBA 数据失败: %v", err)
-		}
-
-		if !noSeason && len(pids) > 0 {
-			if err := txService.SyncPlayerSeasonStats(ctx, pids); err != nil {
-				log.Printf("同步球员赛季统计失败: %v", err)
-			}
-		}
-
-	case "tx-sync-players":
-		teamID := ""
-		if len(os.Args) >= 3 {
-			teamID = os.Args[2]
-		}
-		txService := service.NewTxNBAService(database)
-		if err := txService.SyncPlayers(ctx, teamID); err != nil {
-			log.Fatalf("同步腾讯球员数据失败: %v", err)
-		}
-
 	default:
 		log.Printf("未知命令: %s", command)
 		os.Exit(1)
@@ -136,54 +97,34 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 		return nil
 	}
 
-	hasMore := true
-	rosterList := []crawler.RosterItemModel{}
-	log.Printf(">>> 开始抓取球员数据 <<<")
-
+	log.Printf(">>> 开始按球队抓取球员数据，共 %d 支球队 <<<", len(consts.AllCrawlTeamIDs))
 	snapshotService := service.NewSnapshotService(database)
 
-	// 从 resp.Data.HasMore 判断是否需要继续抓取，最多抓取 20 页数据，每次抓取间隔随机 2~4 秒
-	limit := 25
-	for i := range limit {
-		page := i + 1
-		log.Printf("--> 开始抓取第 %d 页球员数据 <--", page)
+	for i, teamId := range consts.AllCrawlTeamIDs {
+		teamName := consts.TeamIDToName[teamId]
+		if teamName == "" {
+			teamName = "未知"
+		}
 
-		resp, err := client.FetchRoster(ctx, page)
-		if err != nil {
-			log.Printf("抓取球员数据失败: %v", err)
+		// teamId=501（自由球员）仅抓取第一页；其他球队最多抓取 2 页
+		maxPages := 1
+		if teamId != consts.TeamIDFreeAgent {
+			maxPages = 2
+		}
+
+		if err := fetchTeamRoster(ctx, client, snapshotService, teamId, teamName, maxPages); err != nil {
+			log.Printf("抓取球队 %s(teamId=%d) 失败: %v", teamName, teamId, err)
 			return err
 		}
 
-		rosterList = client.ParseRosterItemList(resp.Data.RosterList)
-		hasMore = resp.Data.HasMore
-
-		log.Printf("抓取第 %d 页球员数据成功，球员数量: %+v，是否还有更多: %+v", page, len(rosterList), hasMore)
-
-		now := time.Now()
-		if err := snapshotService.SaveSnapshot(ctx, rosterList, now); err != nil {
-			log.Printf("保存球员数据失败: %v", err)
-			continue
+		// 完成当前球队后暂停 5 秒再抓取下一支球队
+		if i < len(consts.AllCrawlTeamIDs)-1 {
+			log.Printf("等待 5 秒后抓取下一支球队...")
+			time.Sleep(5 * time.Second)
 		}
-		log.Printf("保存球员数据成功，时间: %s，球员数量: %d", now.Format(time.RFC3339), len(rosterList))
-
-		if !hasMore {
-			break
-		}
-
-		sleepDuration := 0 * time.Second
-		if i < limit-1 {
-			// 请求 15 页前等待 2~5s
-			sleepDuration = time.Duration(rand.Intn(2)+3) * time.Second
-		}
-		if i == 15 {
-			// 请求 15 页后等待 60s 避免被封 IP
-			sleepDuration = 120 * time.Second
-		}
-		log.Printf("等待 %s 后开始抓取第 %d 页球员数据", sleepDuration, page+1)
-		time.Sleep(sleepDuration)
-		log.Println("================================")
 	}
-	log.Printf(">>> 抓取球员数据完成 <<<")
+
+	log.Printf(">>> 按球队抓取球员数据完成 <<<")
 
 	playersService := service.NewPlayersService(database)
 
@@ -199,19 +140,36 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 		}
 	}
 
-	// 腾讯 NBA 数据抓取逻辑：仅在 15:00 ~ 16:00 之间执行
-	if isTxNBACrawlWindow(time.Now()) {
-		txService := service.NewTxNBAService(database)
-		pids, err := txService.CrawlDailyStats(ctx, time.Now().Format("2006-01-02"), 2)
-		if err != nil {
-			log.Printf("抓取腾讯 NBA 数据失败: %v", err)
-		} else if len(pids) > 0 {
-			if err := txService.SyncPlayerSeasonStats(ctx, pids); err != nil {
-				log.Printf("同步球员赛季统计失败: %v", err)
-			}
-		}
-	}
+	return nil
+}
 
+// fetchTeamRoster 抓取指定球队的球员数据，最多抓取 maxPages 页；根据 hasMore 决定是否翻页。
+func fetchTeamRoster(ctx context.Context, client *crawler.Client, snapshotService *service.SnapshotService, teamId int, teamName string, maxPages int) error {
+	log.Printf("--> 开始抓取球队: %s (teamId=%d)，最多 %d 页 <--", teamName, teamId, maxPages)
+
+	for page := 1; page <= maxPages; page++ {
+		resp, err := client.FetchRoster(ctx, teamId, page)
+		if err != nil {
+			return err
+		}
+
+		rosterList := client.ParseRosterItemList(resp.Data.RosterList)
+		hasMore := resp.Data.HasMore
+
+		log.Printf("抓取 %s 第 %d 页成功，球员数量: %d，hasMore: %v", teamName, page, len(rosterList), hasMore)
+
+		now := time.Now()
+		if err := snapshotService.SaveSnapshot(ctx, rosterList, now); err != nil {
+			log.Printf("保存 %s 第 %d 页球员数据失败: %v", teamName, page, err)
+			return err
+		}
+		log.Printf("保存 %s 第 %d 页球员数据成功，时间: %s，球员数量: %d", teamName, page, now.Format(time.RFC3339), len(rosterList))
+
+		if !hasMore || page >= maxPages {
+			break
+		}
+		log.Println("------------------------------")
+	}
 	return nil
 }
 
@@ -223,12 +181,6 @@ func shouldSkipCrawl(t time.Time) bool {
 
 // isPowerCalculationWindow 检查当前时间是否在战力计算的时间窗口（15:00 ~ 16:00）
 func isPowerCalculationWindow(t time.Time) bool {
-	hour := t.Hour()
-	return hour == 15
-}
-
-// isTxNBACrawlWindow 检查当前时间是否在腾讯 NBA 抓取的时间窗口（15:00 ~ 16:00）
-func isTxNBACrawlWindow(t time.Time) bool {
 	hour := t.Hour()
 	return hour == 15
 }
