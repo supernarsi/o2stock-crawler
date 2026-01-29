@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"o2stock-crawler/internal/db"
@@ -14,6 +15,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	jsoniter "github.com/json-iterator/go"
 	"gorm.io/gorm"
+)
+
+const (
+	TokenExpiration       = 7 * 24 * time.Hour  // Token 有效期
+	TokenRefreshThreshold = 2 * 24 * time.Hour  // 剩余多少时间触发刷新
+	TokenGracePeriod      = 30 * 24 * time.Hour // 过期后多久内仍允许刷新（宽限期）
 )
 
 type AuthService struct {
@@ -98,7 +105,7 @@ func (s *AuthService) GenerateToken(userID uint) (string, error) {
 	claims := UserClaims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(TokenExpiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
 			Issuer:    "o2stock-api",
@@ -127,6 +134,67 @@ func (s *AuthService) VerifyToken(tokenString string) (uint, error) {
 	}
 
 	return 0, fmt.Errorf("invalid token claims")
+}
+
+// RefreshToken 尝试刷新 Token
+// 即使 Token 已过期，只要在宽限期内且签名正确，就允许刷新
+func (s *AuthService) RefreshToken(tokenString string) (string, uint, error) {
+	// 使用不验证过期时间的 Parser
+	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (any, error) {
+		return []byte(s.dbConfig.JWTSecret), nil
+	}, jwt.WithExpirationRequired())
+
+	// 如果是过期错误，我们继续检查
+	if err != nil && !strings.Contains(err.Error(), "expired") {
+		// 如果不是过期错误，直接返回
+		return "", 0, err
+	}
+
+	// Re-parse without expiration check to get claims
+	token, _, err = new(jwt.Parser).ParseUnverified(tokenString, &UserClaims{})
+	if err != nil {
+		return "", 0, err
+	}
+
+	claims, ok := token.Claims.(*UserClaims)
+	if !ok {
+		return "", 0, fmt.Errorf("invalid claims")
+	}
+
+	// 检查是否在宽限期内 (从过期时间开始算)
+	if time.Now().After(claims.ExpiresAt.Time.Add(TokenGracePeriod)) {
+		return "", 0, fmt.Errorf("token expired and beyond grace period")
+	}
+
+	// 验证签名 (必须确保即便过期了，签名也是对的)
+	_, err = jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (any, error) {
+		return []byte(s.dbConfig.JWTSecret), nil
+	})
+	if err != nil && (err.Error() != "token has invalid claims: token is expired" && !strings.Contains(err.Error(), "expired")) {
+		return "", 0, err
+	}
+
+	// 重新生成 Token
+	newToken, err := s.GenerateToken(claims.UserID)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return newToken, claims.UserID, nil
+}
+
+// IsTokenNearExpiry 检查 Token 是否接近过期
+func (s *AuthService) IsTokenNearExpiry(tokenString string) bool {
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &UserClaims{})
+	if err != nil {
+		return false
+	}
+
+	if claims, ok := token.Claims.(*UserClaims); ok {
+		// 如果剩余时间小于阈值，建议刷新
+		return time.Until(claims.ExpiresAt.Time) < TokenRefreshThreshold
+	}
+	return false
 }
 
 func (s *AuthService) code2Session(ctx context.Context, code string) (*WechatLoginResponse, error) {

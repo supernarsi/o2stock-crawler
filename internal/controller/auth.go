@@ -71,10 +71,30 @@ func (c *AuthController) Middleware(next http.HandlerFunc) http.HandlerFunc {
 		token := parts[1]
 		userID, err := c.authService.VerifyToken(token)
 		if err != nil {
+			// 尝试刷新 Token (处理过期但仍在宽限期内的情况)
+			if strings.Contains(err.Error(), "expired") {
+				newToken, newUserID, refreshErr := c.authService.RefreshToken(token)
+				if refreshErr == nil {
+					// 刷新成功，下发新 Token 并继续请求
+					w.Header().Set("X-New-Token", newToken)
+					w.Header().Set("Access-Control-Expose-Headers", "X-New-Token") // 确保前端可以读取
+					userID = newUserID
+					goto SUCCESS
+				}
+			}
 			middleware.WriteJSON(w, api.Error(http.StatusUnauthorized, "invalid token: "+err.Error()))
 			return
 		}
 
+		// 主动刷新：如果 Token 没过期但快过期了，也下发一个新 Token
+		if c.authService.IsTokenNearExpiry(token) {
+			if newToken, _, refreshErr := c.authService.RefreshToken(token); refreshErr == nil {
+				w.Header().Set("X-New-Token", newToken)
+				w.Header().Set("Access-Control-Expose-Headers", "X-New-Token")
+			}
+		}
+
+	SUCCESS:
 		// 将 UserID 注入 Context
 		ctx := context.WithValue(r.Context(), "user_id", userID)
 		next(w, r.WithContext(ctx))
@@ -91,11 +111,28 @@ func (c *AuthController) OptionalMiddleware(next http.HandlerFunc) http.HandlerF
 			parts := strings.Split(authHeader, " ")
 			if len(parts) == 2 && parts[0] == "Bearer" {
 				token := parts[1]
-				if userID, err := c.authService.VerifyToken(token); err == nil {
+				userID, err := c.authService.VerifyToken(token)
+				if err == nil {
+					// 主动刷新：快过期时下发新 Token
+					if c.authService.IsTokenNearExpiry(token) {
+						if newToken, _, refreshErr := c.authService.RefreshToken(token); refreshErr == nil {
+							w.Header().Set("X-New-Token", newToken)
+							w.Header().Set("Access-Control-Expose-Headers", "X-New-Token")
+						}
+					}
 					// 验证通过，注入 Context
 					ctx := context.WithValue(r.Context(), "user_id", userID)
 					next(w, r.WithContext(ctx))
 					return
+				} else if strings.Contains(err.Error(), "expired") {
+					// 尝试静默刷新
+					if newToken, newUserID, refreshErr := c.authService.RefreshToken(token); refreshErr == nil {
+						w.Header().Set("X-New-Token", newToken)
+						w.Header().Set("Access-Control-Expose-Headers", "X-New-Token")
+						ctx := context.WithValue(r.Context(), "user_id", newUserID)
+						next(w, r.WithContext(ctx))
+						return
+					}
 				}
 			}
 		}
