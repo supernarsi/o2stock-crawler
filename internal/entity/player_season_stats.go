@@ -5,7 +5,6 @@ import "time"
 // PlayerSeasonStats 球员赛季平均数据实体模型
 type PlayerSeasonStats struct {
 	ID                   uint      `gorm:"primaryKey;column:id"`
-	PlayerID             uint      `gorm:"column:player_id"`
 	TxPlayerID           uint      `gorm:"column:tx_player_id"`
 	PlayerName           string    `gorm:"column:player_name"`
 	Season               string    `gorm:"column:season"`
