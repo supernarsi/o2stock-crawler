@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"o2stock-crawler/internal/config"
@@ -10,6 +11,9 @@ import (
 	"o2stock-crawler/internal/entity"
 	"o2stock-crawler/internal/model"
 )
+
+// minOVRSegmentCount 同 OVR 段最少样本数，低于则用全表均价回退
+const minOVRSegmentCount = 3
 
 // IPIService IPI 计算服务
 type IPIService struct {
@@ -29,16 +33,11 @@ func NewIPIServiceWithConfig(database *db.DB, cfg config.IPIConfig) *IPIService 
 
 // SeasonPowerFromStats 根据赛季场均数据计算战力值（与单场战力公式一致）
 // 公式: Power = Points + 1.2×Rebounds + 1.5×Assists + 3×Steals + 3×Blocks - Turnovers
-func SeasonPowerFromStats(stats *entity.PlayerSeasonStats) float64 {
+func (s *IPIService) SeasonPowerFromStats(stats *entity.PlayerSeasonStats) float64 {
 	if stats == nil {
 		return 0
 	}
-	return stats.Points +
-		1.2*stats.Rebounds +
-		1.5*stats.Assists +
-		3.0*stats.Steals +
-		3.0*stats.Blocks -
-		stats.Turnovers
+	return calcPower(stats.Points, stats.Rebounds, stats.Assists, stats.Steals, stats.Blocks, stats.Turnovers)
 }
 
 // AverageMinutesLastNGames 计算球员近 N 场场均上场时间（分钟）
@@ -84,7 +83,7 @@ func pricePercentileFromHistory(history []entity.PlayerPriceHistory) *model.Pric
 	for i := range history {
 		prices[i] = history[i].PriceStandard
 	}
-	sort.Slice(prices, func(i, j int) bool { return prices[i] < prices[j] })
+	slices.Sort(prices)
 	out.P75 = percentileAt(prices, 0.75)
 	out.P90 = percentileAt(prices, 0.90)
 	return out
@@ -118,15 +117,10 @@ type ipiRankData struct {
 	n            int          // 参与排名球员总数
 }
 
-// BuildRankData 获取全量参与 IPI 计算的球员（排除自由球员与 tx_player_id=0），按 power_per5、over_all 降序排名
-func (s *IPIService) BuildRankData(ctx context.Context) (*ipiRankData, error) {
-	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-	players, err := playerRepo.GetAllTxPlayers(ctx) // 与 AvgPriceByOVRSegment / AvgPriceGlobal 使用同一人群
-	if err != nil {
-		return nil, err
-	}
+// buildRankDataFromPlayers 基于已有球员列表按 power_per5、over_all 降序排名，不访问 DB
+func (s *IPIService) buildRankDataFromPlayers(players []entity.Player) *ipiRankData {
 	if len(players) == 0 {
-		return &ipiRankData{realPerfRank: make(map[uint]int), gameOVRRank: make(map[uint]int), n: 0}, nil
+		return &ipiRankData{realPerfRank: make(map[uint]int), gameOVRRank: make(map[uint]int), n: 0}
 	}
 	// 按 power_per5 降序（同分按 player_id 稳定排序）
 	sort.Slice(players, func(i, j int) bool {
@@ -150,39 +144,24 @@ func (s *IPIService) BuildRankData(ctx context.Context) (*ipiRankData, error) {
 	for r, p := range players {
 		gameOVRRank[p.PlayerID] = r + 1
 	}
-	return &ipiRankData{realPerfRank: realPerfRank, gameOVRRank: gameOVRRank, n: len(players)}, nil
+	return &ipiRankData{realPerfRank: realPerfRank, gameOVRRank: gameOVRRank, n: len(players)}
 }
 
-// RankInversionIndex 能力值倒挂指数：diff = GameOVRRank - RealPerfRank；diff<=0 则为 0，否则 min(1, diff/N)
-func RankInversionIndex(playerID uint, rankData *ipiRankData) float64 {
-	if rankData == nil || rankData.n == 0 {
-		return 0
+// BuildRankData 获取全量参与 IPI 计算的球员（排除自由球员与 tx_player_id=0），按 power_per5、over_all 降序排名
+func (s *IPIService) BuildRankData(ctx context.Context) (*ipiRankData, error) {
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+	players, err := playerRepo.GetAllTxPlayers(ctx)
+	if err != nil {
+		return nil, err
 	}
-	gameRank, ok1 := rankData.gameOVRRank[playerID]
-	realRank, ok2 := rankData.realPerfRank[playerID]
-	if !ok1 || !ok2 {
-		return 0
-	}
-	diff := gameRank - realRank
-	if diff <= 0 {
-		return 0
-	}
-	n := rankData.n
-	if n <= 0 {
-		return 0
-	}
-	v := float64(diff) / float64(n)
-	if v > 1 {
-		return 1
-	}
-	return v
+	return s.buildRankDataFromPlayers(players), nil
 }
 
 // CalcSPerf 表现盈余分：S_perf = α×(PowerPer5/PowerSeasonAvg) + β×RankInversionIndex
 // 若无赛季数据则用 power_per10 作为 PowerSeasonAvg；PowerSeasonAvg<=0 时该项比值为 0
 func (s *IPIService) CalcSPerf(ctx context.Context, player *entity.Player, seasonStats *entity.PlayerSeasonStats, rankInversionIndex float64) float64 {
 	cfg := s.config.SPerf
-	powerSeasonAvg := SeasonPowerFromStats(seasonStats)
+	powerSeasonAvg := s.SeasonPowerFromStats(seasonStats)
 	if powerSeasonAvg <= 0 {
 		powerSeasonAvg = player.PowerPer10
 	}
@@ -193,9 +172,6 @@ func (s *IPIService) CalcSPerf(ctx context.Context, player *entity.Player, seaso
 	return cfg.Alpha*ratio + cfg.Beta*rankInversionIndex
 }
 
-// minOVRSegmentCount 同 OVR 段最少样本数，低于则用全表均价回退
-const minOVRSegmentCount = 3
-
 // CalcVGap 价值洼地分：V_gap = PriceOVRAvg / PriceStandard；同 OVR 段样本过少时用全表均价
 // 返回 vGap 与 priceOVRAvg（供 MeetsTaxSafeMargin 使用）。PriceStandard<=0 时返回 0
 func (s *IPIService) CalcVGap(ctx context.Context, player *entity.Player) (vGap float64, priceOVRAvg float64, err error) {
@@ -203,10 +179,7 @@ func (s *IPIService) CalcVGap(ctx context.Context, player *entity.Player) (vGap 
 		return 0, 0, nil
 	}
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-	radius := s.config.VGap.OVRRadius
-	if radius < 0 {
-		radius = 0
-	}
+	radius := max(s.config.VGap.OVRRadius, 0)
 	avg, count, err := playerRepo.AvgPriceByOVRSegment(ctx, player.OverAll, radius)
 	if err != nil {
 		return 0, 0, err
@@ -309,48 +282,46 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 	statsRepo := repositories.NewStatsRepository(s.db.DB)
 
+	var players []entity.Player
+	var orderIDs []uint
 	if len(playerIDs) == 0 {
-		all, err := playerRepo.GetAllTxPlayers(ctx)
+		var err error
+		players, err = playerRepo.GetAllTxPlayers(ctx)
 		if err != nil {
 			return nil, err
 		}
-		playerIDs = make([]uint, len(all))
-		for i := range all {
-			playerIDs[i] = all[i].PlayerID
+		orderIDs = make([]uint, len(players))
+		for i := range players {
+			orderIDs[i] = players[i].PlayerID
 		}
-	}
-
-	players, err := playerRepo.BatchGetByIDs(ctx, playerIDs)
-	if err != nil {
-		return nil, err
+	} else {
+		var err error
+		players, err = playerRepo.BatchGetByIDs(ctx, playerIDs)
+		if err != nil {
+			return nil, err
+		}
+		orderIDs = playerIDs
 	}
 	playerMap := make(map[uint]*entity.Player)
 	for i := range players {
 		playerMap[players[i].PlayerID] = &players[i]
 	}
 
-	rankData, err := s.BuildRankData(ctx)
-	if err != nil {
-		return nil, err
-	}
+	rankData := s.buildRankDataFromPlayers(players)
 
-	// 批量拉取赛季数据（按 tx_player_id）
 	txIDs := make([]uint, 0, len(players))
 	for _, p := range players {
 		if p.TxPlayerID > 0 {
 			txIDs = append(txIDs, p.TxPlayerID)
 		}
 	}
-	seasonStatsMap := make(map[uint]*entity.PlayerSeasonStats)
-	for _, txID := range txIDs {
-		stats, _ := statsRepo.GetSeasonStats(ctx, txID)
-		if stats != nil {
-			seasonStatsMap[txID] = stats
-		}
+	seasonStatsMap, err := statsRepo.GetSeasonStatsByTxPlayerIDs(ctx, txIDs, "2025-26", 1)
+	if err != nil {
+		return nil, err
 	}
 
 	var results []model.IPIResult
-	for _, playerID := range playerIDs {
+	for _, playerID := range orderIDs {
 		p, ok := playerMap[playerID]
 		if !ok {
 			continue
@@ -366,7 +337,7 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 
 // calcOneIPI 单球员 IPI 计算，聚合四维度与税后边际、倒挂指数
 func (s *IPIService) calcOneIPI(ctx context.Context, player *entity.Player, seasonStats *entity.PlayerSeasonStats, rankData *ipiRankData) (*model.IPIResult, error) {
-	rankInv := RankInversionIndex(player.PlayerID, rankData)
+	rankInv := s.rankInversionIndex(player.PlayerID, rankData)
 	sPerf := s.CalcSPerf(ctx, player, seasonStats, rankInv)
 	vGap, priceOVRAvg, err := s.CalcVGap(ctx, player)
 	if err != nil {
@@ -392,4 +363,29 @@ func (s *IPIService) calcOneIPI(ctx context.Context, player *entity.Player, seas
 		MeetsTaxSafeMargin: meetsTax,
 		RankInversionIndex: rankInv,
 	}, nil
+}
+
+// rankInverrankInversionIndexsionIndex 能力值倒挂指数：diff = GameOVRRank - RealPerfRank；diff<=0 则为 0，否则 min(1, diff/N)
+func (s *IPIService) rankInversionIndex(playerID uint, rankData *ipiRankData) float64 {
+	if rankData == nil || rankData.n == 0 {
+		return 0
+	}
+	gameRank, ok1 := rankData.gameOVRRank[playerID]
+	realRank, ok2 := rankData.realPerfRank[playerID]
+	if !ok1 || !ok2 {
+		return 0
+	}
+	diff := gameRank - realRank
+	if diff <= 0 {
+		return 0
+	}
+	n := rankData.n
+	if n <= 0 {
+		return 0
+	}
+	v := float64(diff) / float64(n)
+	if v > 1 {
+		return 1
+	}
+	return v
 }

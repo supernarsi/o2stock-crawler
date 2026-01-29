@@ -376,12 +376,7 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 
 		powers := make([]float64, len(recentGames))
 		for i, gs := range recentGames {
-			powers[i] = float64(gs.Points) +
-				1.2*float64(gs.Rebounds) +
-				1.5*float64(gs.Assists) +
-				3.0*float64(gs.Steals) +
-				3.0*float64(gs.Blocks) -
-				float64(gs.Turnovers)
+			powers[i] = calcPower(float64(gs.Points), float64(gs.Rebounds), float64(gs.Assists), float64(gs.Steals), float64(gs.Blocks), float64(gs.Turnovers))
 		}
 
 		num5 := min(len(powers), 5)

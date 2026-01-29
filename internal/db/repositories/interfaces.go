@@ -63,6 +63,7 @@ type OwnRepositoryInterface interface {
 // StatsRepositoryInterface defines the contract for player statistics data access
 type StatsRepositoryInterface interface {
 	GetSeasonStats(ctx context.Context, txPlayerID uint) (*entity.PlayerSeasonStats, error)
+	GetSeasonStatsByTxPlayerIDs(ctx context.Context, txPlayerIDs []uint, season string, seasonType int) (map[uint]*entity.PlayerSeasonStats, error)
 	GetRecentGameStats(ctx context.Context, txPlayerID uint, limit int) ([]entity.PlayerGameStats, error)
 }
 
