@@ -1,7 +1,7 @@
 package consts
 
 const (
-	LowestPrice = 4000 // 设置最低价格（用于业务过滤，接口请求中 lowPrice 固定为 0）
+	LowestPrice = 0 // 设置最低价格（用于业务过滤，接口请求中 lowPrice 固定为 0）
 
 	// TeamIDFreeAgent 自由球员的球队ID，仅抓取第一页
 	TeamIDFreeAgent = 501

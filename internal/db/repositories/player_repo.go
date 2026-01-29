@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"fmt"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/entity"
 
 	"gorm.io/gorm"
@@ -57,7 +58,9 @@ func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]ent
 	}
 
 	// Default filter for list
-	query = query.Where("price_standard >= ?", 4000)
+	if consts.LowestPrice > 0 {
+		query = query.Where("price_standard >= ?", consts.LowestPrice)
+	}
 
 	// Sort
 	if filter.OrderBy != "" {
