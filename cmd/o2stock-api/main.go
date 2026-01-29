@@ -53,6 +53,8 @@ func main() {
 	router.RegisterAPI("/players", apiCtl.Players(), http.MethodGet)
 	router.RegisterAPI("/player-history", apiCtl.PlayerHistory(), http.MethodGet)
 	router.RegisterAPI("/multi-players-history", apiCtl.MultiPlayersHistory(), http.MethodGet)
+	router.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)
+	router.RegisterAPI("/ipi/player", apiCtl.IPIPlayer(), http.MethodGet)
 
 	// --- 需要鉴权的接口 --- //
 	authGroup := middleware.NewRouter(append(globalMiddlewares, authCtl.Middleware)...)

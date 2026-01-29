@@ -14,6 +14,8 @@ type PlayerRepositoryInterface interface {
 	GetAllTxPlayers(ctx context.Context) ([]entity.Player, error)
 	UpdatePower(ctx context.Context, playerID uint, power5, power10 float64) error
 	UpdatePriceChanges(ctx context.Context, playerID uint, pc1d, pc7d float64) error
+	AvgPriceByOVRSegment(ctx context.Context, ovr uint, radius int) (avgPrice float64, count int64, err error)
+	AvgPriceGlobal(ctx context.Context) (float64, error)
 }
 
 // HistoryRepositoryInterface defines the contract for price history data access
