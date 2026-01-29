@@ -4,9 +4,9 @@
 # Usage: ./build.sh [output_name] [target_cmd]
 #
 # Examples:
-#   ./build.sh                           # Build o2stock-crawler
-#   ./build.sh o2stock-api api           # Build o2stock-api
-#   ./build.sh myapp crawler             # Build crawler as myapp
+#   ./build.sh                               # Build o2stock-crawler-ol2
+#   ./build.sh api o2stock-api               # Build o2stock-api
+#   ./build.sh crawler o2stock-crawler-ol2   # Build crawler o2stock-crawler-ol2
 
 
 # --- 加载系统和用户的环境变量 ---
