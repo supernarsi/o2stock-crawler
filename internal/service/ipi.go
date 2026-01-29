@@ -12,8 +12,13 @@ import (
 	"o2stock-crawler/internal/model"
 )
 
-// minOVRSegmentCount 同 OVR 段最少样本数，低于则用全表均价回退
-const minOVRSegmentCount = 3
+const (
+	// minOVRSegmentCount 同 OVR 段最少样本数，低于则用全表均价回退
+	minOVRSegmentCount = 3
+
+	// minHistoryDaysForIPI 参与 IPI 计算至少需要的历史价格天数，少于此天数的球员被排除
+	minHistoryDaysForIPI = 3
+)
 
 // IPIService IPI 计算服务
 type IPIService struct {
@@ -277,10 +282,11 @@ func (s *IPIService) CalcIPI(sPerf, vGap, mGrowth, rRisk float64) float64 {
 }
 
 // BatchCalcIPI 批量计算 IPI：给定球员 ID 列表；若 playerIDs 为空则对「全部参与 IPI 计算的球员」计算
-// 返回按球员 ID 顺序的 IPIResult 列表；单球员计算失败时跳过该球员，不中断整体
+// 排除：本赛季无场均数据、历史价格数据少于 minHistoryDaysForIPI 天的球员
 func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]model.IPIResult, error) {
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 	statsRepo := repositories.NewStatsRepository(s.db.DB)
+	historyRepo := repositories.NewHistoryRepository(s.db.DB)
 
 	var players []entity.Player
 	var orderIDs []uint
@@ -302,12 +308,6 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 		}
 		orderIDs = playerIDs
 	}
-	playerMap := make(map[uint]*entity.Player)
-	for i := range players {
-		playerMap[players[i].PlayerID] = &players[i]
-	}
-
-	rankData := s.buildRankDataFromPlayers(players)
 
 	txIDs := make([]uint, 0, len(players))
 	for _, p := range players {
@@ -320,10 +320,46 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 		return nil, err
 	}
 
+	// 排除本赛季没有场均数据的球员
+	playersWithSeason := make([]entity.Player, 0, len(players))
+	for i := range players {
+		if seasonStatsMap[players[i].TxPlayerID] != nil {
+			playersWithSeason = append(playersWithSeason, players[i])
+		}
+	}
+	players = playersWithSeason
+
+	// 排除历史价格数据少于 minHistoryDaysForIPI 天的球员
+	withinDays := s.config.HistoryDays
+	if withinDays <= 0 {
+		withinDays = 90
+	}
+	enoughHistory, err := historyRepo.GetPlayerIDsWithAtLeastDays(ctx, withinDays, minHistoryDaysForIPI)
+	if err != nil {
+		return nil, err
+	}
+	playersWithHistory := make([]entity.Player, 0, len(players))
+	for i := range players {
+		if enoughHistory[players[i].PlayerID] {
+			playersWithHistory = append(playersWithHistory, players[i])
+		}
+	}
+	players = playersWithHistory
+
+	orderIDs = make([]uint, len(players))
+	for i := range players {
+		orderIDs[i] = players[i].PlayerID
+	}
+	playerMap := make(map[uint]*entity.Player)
+	for i := range players {
+		playerMap[players[i].PlayerID] = &players[i]
+	}
+	rankData := s.buildRankDataFromPlayers(players)
+
 	var results []model.IPIResult
 	for _, playerID := range orderIDs {
-		p, ok := playerMap[playerID]
-		if !ok {
+		p := playerMap[playerID]
+		if p == nil {
 			continue
 		}
 		res, err := s.calcOneIPI(ctx, p, seasonStatsMap[p.TxPlayerID], rankData)

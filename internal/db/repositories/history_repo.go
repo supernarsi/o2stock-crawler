@@ -271,6 +271,30 @@ func (r *HistoryRepository) SelectDailyRecords(rows []entity.PlayerPriceHistory,
 	return result
 }
 
+// GetPlayerIDsWithAtLeastDays 返回在最近 withinDays 天内至少有 minDays 个不同日期的价格数据的 player_id 集合
+// 用于 IPI 计算时排除历史价格数据过少的球员
+func (r *HistoryRepository) GetPlayerIDsWithAtLeastDays(ctx context.Context, withinDays, minDays int) (map[uint]bool, error) {
+	out := make(map[uint]bool)
+	if minDays <= 0 {
+		return out, nil
+	}
+	startDate := time.Now().AddDate(0, 0, -withinDays)
+	var ids []uint
+	err := r.model(ctx).
+		Select("player_id").
+		Where("at_date >= ?", startDate).
+		Group("player_id").
+		Having("COUNT(DISTINCT at_date) >= ?", minDays).
+		Pluck("player_id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
+}
+
 func (r *HistoryRepository) Create(ctx context.Context, history *entity.PlayerPriceHistory) error {
 	return r.ctx(ctx).Create(history).Error
 }

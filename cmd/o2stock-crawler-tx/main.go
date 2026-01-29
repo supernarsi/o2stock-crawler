@@ -7,6 +7,7 @@ import (
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/service"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,7 +38,8 @@ func main() {
 		log.Println("Usage: o2stock-crawler-tx <command> [args]")
 		log.Println("Commands:")
 		log.Println("  tx-nba [date] [--no-season]  Crawl daily stats and sync player season stats")
-		log.Println("  tx-sync-players [teamID]      Sync player/team data from Tencent")
+		log.Println("  tx-nba-players [playerIDs]   Sync players' season stats")
+		log.Println("  tx-sync-players [teamID]     Sync player/team data from Tencent")
 		os.Exit(1)
 	}
 
@@ -69,6 +71,25 @@ func main() {
 			if err := txService.SyncPlayerSeasonStats(ctx, pids); err != nil {
 				log.Printf("同步球员赛季统计失败: %v", err)
 			}
+		}
+
+	case "tx-nba-players":
+		playerIDs := []uint{}
+		if len(os.Args) >= 3 {
+			ids := strings.SplitSeq(os.Args[2], ",")
+			for id := range ids {
+				playerID, _ := strconv.Atoi(id)
+				if playerID > 0 {
+					playerIDs = append(playerIDs, uint(playerID))
+				}
+			}
+		}
+		if len(playerIDs) == 0 {
+			log.Fatalf("未指定球员 ID")
+		}
+		txService := service.NewTxNBAService(database)
+		if err := txService.SyncPlayerSeasonStats(ctx, playerIDs); err != nil {
+			log.Fatalf("同步球员赛季统计失败: %v", err)
 		}
 
 	case "tx-sync-players":

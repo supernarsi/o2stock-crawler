@@ -174,10 +174,11 @@ func (s *TxNBAService) SyncPlayerSeasonStats(ctx context.Context, txPlayerIDs []
 		// 避免请求过快
 		time.Sleep(time.Duration(rand.Intn(3)+2) * time.Second)
 
+		log.Printf("开始获取球员 %s (%d) 赛季统计数据", playerName, pid)
 		pidStr := strconv.Itoa(int(pid))
 		resp, err := s.client.GetPlayerStats(ctx, pidStr)
 		if err != nil {
-			log.Printf("获取球员 %s 赛季统计失败: %v", pidStr, err)
+			log.Printf("获取球员 %s (%d) 赛季统计失败: %v", playerName, pid, err)
 			continue
 		}
 
