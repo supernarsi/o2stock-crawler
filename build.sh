@@ -16,8 +16,8 @@ source ~/.bashrc
 
 set -e
 
-OUTPUT_NAME="${1:-o2stock-crawler}"
-TARGET_CMD="${2:-o2stock-crawler}"
+OUTPUT_NAME="${1:-o2stock-crawler-ol2}"
+TARGET_CMD="${2:-o2stock-crawler-ol2}"
 
 ENV_FILE=".env"
 if [ ! -f "$ENV_FILE" ]; then
