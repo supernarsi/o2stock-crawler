@@ -10,6 +10,7 @@ import (
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/entity"
+	"strconv"
 	"time"
 )
 
@@ -181,9 +182,7 @@ func (s *PlayersService) GetPlayerHistoryRealtime(ctx context.Context, playerID 
 	// 遍历除了最后一个点之外的所有点
 	for i := 0; i < len(rows)-1; i++ {
 		row := rows[i]
-		// AtDateHour format: "2006010215" (based on p_p_history.go definition it's just a string, assuming it's unique per hour)
-		// Or construct a key from year-month-day-hour
-		key := row.AtDateHour
+		key := row.AtDate.Format("2006010215") + row.AtHour
 		if !seenHour[key] {
 			sampled = append(sampled, row)
 			seenHour[key] = true
@@ -305,6 +304,10 @@ func (s *PlayersService) mapToHistoryRows(rows []entity.PlayerPriceHistory) []*d
 			PlayerId:         r.PlayerID,
 			AtDate:           r.AtDate,
 			AtDateHourStr:    r.AtDateHour,
+			AtYear:           parseUint16(r.AtYear),
+			AtMonth:          parseUint8(r.AtMonth),
+			AtDay:            parseUint8(r.AtDay),
+			AtHour:           parseUint8(r.AtHour),
 			PriceStandard:    uint32(r.PriceStandard),
 			PriceCurrentSale: int32(r.PriceCurrentSale),
 			PriceLower:       uint32(r.PriceLower),
@@ -576,4 +579,14 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func parseUint8(s string) uint8 {
+	v, _ := strconv.ParseUint(s, 10, 8)
+	return uint8(v)
+}
+
+func parseUint16(s string) uint16 {
+	v, _ := strconv.ParseUint(s, 10, 16)
+	return uint16(v)
 }
