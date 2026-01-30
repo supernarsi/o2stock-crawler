@@ -117,12 +117,53 @@ func (r *PlayerRepository) UpdatePriceChanges(ctx context.Context, playerID uint
 		}).Error
 }
 
+// GetAllTxPlayers 返回参与 IPI 计算的球员：tx_player_id > 0 且非自由球员（用于排名、批量 IPI 等）
 func (r *PlayerRepository) GetAllTxPlayers(ctx context.Context) ([]entity.Player, error) {
 	var players []entity.Player
-	err := r.ctx(ctx).Where("tx_player_id > 0 AND team_abbr != ?", "自由球员").Find(&players).Error
+	err := r.ctx(ctx).Where(ipiEligibleCondition, "自由球员").Find(&players).Error
 	return players, err
 }
 
 func (r *PlayerRepository) Transaction(fn func(tx *gorm.DB) error) error {
 	return r.db.Transaction(fn)
+}
+
+// ipiEligibleCondition 参与 IPI 计算的球员条件：排除自由球员与 tx_player_id=0
+const ipiEligibleCondition = "tx_player_id > 0 AND team_abbr != ?"
+
+// AvgPriceByOVRSegment 计算同 OVR 段（over_all 在 [ovr-radius, ovr+radius]）球员的 price_standard 均值
+// 仅统计参与 IPI 计算的球员（排除自由球员、tx_player_id=0）。用于 IPI 价值洼地分 V_gap。
+func (r *PlayerRepository) AvgPriceByOVRSegment(ctx context.Context, ovr uint, radius int) (avgPrice float64, count int64, err error) {
+	if radius < 0 {
+		radius = 0
+	}
+	low := int(ovr) - radius
+	high := int(ovr) + radius
+	if low < 0 {
+		low = 0
+	}
+	var res struct {
+		Avg   float64
+		Count int64
+	}
+	err = r.ctx(ctx).Model(&entity.Player{}).
+		Select("AVG(price_standard) AS avg, COUNT(*) AS count").
+		Where("over_all >= ? AND over_all <= ? AND price_standard > 0", low, high).
+		Where(ipiEligibleCondition, "自由球员").
+		Scan(&res).Error
+	if err != nil {
+		return 0, 0, err
+	}
+	return res.Avg, res.Count, nil
+}
+
+// AvgPriceGlobal 全表 price_standard 均值，仅统计参与 IPI 计算的球员（排除自由球员、tx_player_id=0），用于 V_gap 回退
+func (r *PlayerRepository) AvgPriceGlobal(ctx context.Context) (float64, error) {
+	var avg float64
+	err := r.ctx(ctx).Model(&entity.Player{}).
+		Select("AVG(price_standard)").
+		Where("price_standard > 0").
+		Where(ipiEligibleCondition, "自由球员").
+		Scan(&avg).Error
+	return avg, err
 }

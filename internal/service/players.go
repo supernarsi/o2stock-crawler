@@ -10,6 +10,7 @@ import (
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/entity"
+	"strconv"
 	"time"
 )
 
@@ -122,6 +123,69 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 	return result, nil
 }
 
+// GetPlayersWithOwnedByIDs 按给定 playerIDs 顺序返回 PlayerWithOwned 列表，用于 IPI 排行等需与球员信息合并的接口
+func (s *PlayersService) GetPlayersWithOwnedByIDs(ctx context.Context, playerIDs []uint, userID *uint) ([]api.PlayerWithOwned, error) {
+	if len(playerIDs) == 0 {
+		return []api.PlayerWithOwned{}, nil
+	}
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+	players, err := playerRepo.BatchGetByIDs(ctx, playerIDs)
+	if err != nil {
+		return nil, err
+	}
+	playerMap := make(map[uint]entity.Player)
+	for _, p := range players {
+		playerMap[p.PlayerID] = p
+	}
+
+	var ownedMap map[uint][]dto.OwnInfo
+	if userID != nil {
+		ownRepo := repositories.NewOwnRepository(s.db.DB)
+		ownRecords, err := ownRepo.GetByPlayerIDs(ctx, *userID, playerIDs)
+		if err != nil {
+			return nil, err
+		}
+		ownedMap = s.mapOwnRecordsToInfoMap(ownRecords)
+	}
+	var favMap map[uint]bool
+	if userID != nil {
+		favRepo := repositories.NewFavRepository(s.db.DB)
+		favMap, err = favRepo.GetFavMap(ctx, *userID, playerIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	result := make([]api.PlayerWithOwned, len(playerIDs))
+	for i, pid := range playerIDs {
+		p, ok := playerMap[pid]
+		if !ok {
+			result[i] = api.PlayerWithOwned{
+				PlayerWithPriceChange: dto.PlayerWithPriceChange{Players: dto.Players{PlayerID: pid}},
+				Owned:                 []*dto.OwnInfo{},
+				IsFav:                 false,
+			}
+			continue
+		}
+		result[i] = api.PlayerWithOwned{
+			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p),
+			Owned:                 []*dto.OwnInfo{},
+			IsFav:                 false,
+		}
+		if ownedMap != nil {
+			if owned, ok := ownedMap[pid]; ok {
+				for j := range owned {
+					result[i].Owned = append(result[i].Owned, &owned[j])
+				}
+			}
+		}
+		if favMap != nil {
+			result[i].IsFav = favMap[pid]
+		}
+	}
+	return result, nil
+}
+
 // mapOrderBy maps user-facing order by names to database column names
 func (s *PlayersService) mapOrderBy(orderBy string) string {
 	mapping := map[string]string{
@@ -169,7 +233,29 @@ func (s *PlayersService) GetPlayerHistoryRealtime(ctx context.Context, playerID 
 	if err != nil {
 		return nil, err
 	}
-	return s.mapToHistoryRows(rows), nil
+
+	// 采样逻辑：每小时只保留那个小时最早的一个点，再加上最近一个点
+	if len(rows) == 0 {
+		return s.mapToHistoryRows(rows), nil
+	}
+
+	var sampled []entity.PlayerPriceHistory
+	seenHour := make(map[string]bool)
+
+	// 遍历除了最后一个点之外的所有点
+	for i := 0; i < len(rows)-1; i++ {
+		row := rows[i]
+		key := row.AtDate.Format("2006010215") + row.AtHour
+		if !seenHour[key] {
+			sampled = append(sampled, row)
+			seenHour[key] = true
+		}
+	}
+
+	// 总是添加最后一个点
+	sampled = append(sampled, rows[len(rows)-1])
+
+	return s.mapToHistoryRows(sampled), nil
 }
 
 // GetPlayerHistory5Days 获取五日数据
@@ -179,7 +265,51 @@ func (s *PlayersService) GetPlayerHistory5Days(ctx context.Context, playerID uin
 	if err != nil {
 		return nil, err
 	}
-	return s.mapToHistoryRows(rows), nil
+
+	// 采样逻辑：每天最多返回 4 个数据点，再加上最近一个数据点
+	if len(rows) == 0 {
+		return s.mapToHistoryRows(rows), nil
+	}
+
+	// 按天通过 map 分组
+	dayMap := make(map[string][]entity.PlayerPriceHistory)
+	var days []string // 保持顺序
+
+	for i := 0; i < len(rows)-1; i++ {
+		row := rows[i]
+		dayKey := row.AtDate.Format("2006-01-02")
+		if _, exists := dayMap[dayKey]; !exists {
+			days = append(days, dayKey)
+		}
+		dayMap[dayKey] = append(dayMap[dayKey], row)
+	}
+
+	var sampled []entity.PlayerPriceHistory
+
+	for _, day := range days {
+		dayRows := dayMap[day]
+		count := len(dayRows)
+		if count <= 4 {
+			sampled = append(sampled, dayRows...)
+		} else {
+			// 取 0, 1/3, 2/3, last 索引位置
+			// 比如 count=10: 0, 3, 6, 9
+			// count=5: 0, 1, 3, 4
+			step := float64(count-1) / 3.0
+			for k := 0; k < 4; k++ {
+				idx := int(math.Round(float64(k) * step))
+				if idx >= count {
+					idx = count - 1
+				}
+				sampled = append(sampled, dayRows[idx])
+			}
+		}
+	}
+
+	// 总是添加最后一个点
+	sampled = append(sampled, rows[len(rows)-1])
+
+	return s.mapToHistoryRows(sampled), nil
 }
 
 // GetPlayerHistoryDailyK 获取日K线数据
@@ -237,6 +367,10 @@ func (s *PlayersService) mapToHistoryRows(rows []entity.PlayerPriceHistory) []*d
 			PlayerId:         r.PlayerID,
 			AtDate:           r.AtDate,
 			AtDateHourStr:    r.AtDateHour,
+			AtYear:           parseUint16(r.AtYear),
+			AtMonth:          parseUint8(r.AtMonth),
+			AtDay:            parseUint8(r.AtDay),
+			AtHour:           parseUint8(r.AtHour),
 			PriceStandard:    uint32(r.PriceStandard),
 			PriceCurrentSale: int32(r.PriceCurrentSale),
 			PriceLower:       uint32(r.PriceLower),
@@ -376,24 +510,19 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 
 		powers := make([]float64, len(recentGames))
 		for i, gs := range recentGames {
-			powers[i] = float64(gs.Points) +
-				1.2*float64(gs.Rebounds) +
-				1.5*float64(gs.Assists) +
-				3.0*float64(gs.Steals) +
-				3.0*float64(gs.Blocks) -
-				float64(gs.Turnovers)
+			powers[i] = calcPower(float64(gs.Points), float64(gs.Rebounds), float64(gs.Assists), float64(gs.Steals), float64(gs.Blocks), float64(gs.Turnovers))
 		}
 
 		num5 := min(len(powers), 5)
 		sum5 := 0.0
-		for i := 0; i < num5; i++ {
+		for i := range num5 {
 			sum5 += powers[i]
 		}
 		avg5 := round(sum5/float64(num5), 1)
 
 		num10 := len(powers)
 		sum10 := 0.0
-		for i := 0; i < num10; i++ {
+		for i := range num10 {
 			sum10 += powers[i]
 		}
 		avg10 := round(sum10/float64(num10), 1)
@@ -503,9 +632,12 @@ func round(val float64, precision int) float64 {
 	return math.Round(val*p) / p
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+func parseUint8(s string) uint8 {
+	v, _ := strconv.ParseUint(s, 10, 8)
+	return uint8(v)
+}
+
+func parseUint16(s string) uint16 {
+	v, _ := strconv.ParseUint(s, 10, 16)
+	return uint16(v)
 }

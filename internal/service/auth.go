@@ -29,14 +29,6 @@ type AuthService struct {
 	userRepo *repositories.UserRepository
 }
 
-func NewAuthService(database *db.DB, dbConfig *db.Config) *AuthService {
-	return &AuthService{
-		db:       database,
-		dbConfig: dbConfig,
-		userRepo: repositories.NewUserRepository(database.DB),
-	}
-}
-
 // WechatLoginUserInfo 微信登录用户信息
 type WechatLoginUserInfo struct {
 	Code   string `json:"code"`
@@ -59,22 +51,27 @@ type UserClaims struct {
 	jwt.RegisteredClaims
 }
 
+func NewAuthService(database *db.DB, dbConfig *db.Config) *AuthService {
+	return &AuthService{
+		db:       database,
+		dbConfig: dbConfig,
+		userRepo: repositories.NewUserRepository(database.DB),
+	}
+}
+
 // LoginWithWechat 使用微信 Code 登录
 func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserInfo) (*entity.User, string, error) {
-	// 1. 获取微信 OpenID
 	wxResp, err := s.code2Session(ctx, info.Code)
 	if err != nil {
 		return nil, "", fmt.Errorf("wechat login failed: %w", err)
 	}
 
-	// 2. 查询或注册用户
 	user, err := s.userRepo.GetByOpenID(ctx, wxResp.OpenID)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return nil, "", err
 	}
 
 	if user == nil {
-		// 注册新用户
 		user = &entity.User{
 			WxOpenID:     wxResp.OpenID,
 			WxUnionID:    wxResp.UnionID,
@@ -91,12 +88,10 @@ func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserI
 		return nil, "", fmt.Errorf("user is banned")
 	}
 
-	// 3. 生成 Token
 	token, err := s.GenerateToken(user.ID)
 	if err != nil {
 		return nil, "", fmt.Errorf("generate token failed: %w", err)
 	}
-
 	return user, token, nil
 }
 
@@ -111,7 +106,6 @@ func (s *AuthService) GenerateToken(userID uint) (string, error) {
 			Issuer:    "o2stock-api",
 		},
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(s.dbConfig.JWTSecret))
 }
@@ -124,62 +118,45 @@ func (s *AuthService) VerifyToken(tokenString string) (uint, error) {
 		}
 		return []byte(s.dbConfig.JWTSecret), nil
 	})
-
 	if err != nil {
 		return 0, err
 	}
-
 	if claims, ok := token.Claims.(*UserClaims); ok && token.Valid {
 		return claims.UserID, nil
 	}
-
 	return 0, fmt.Errorf("invalid token claims")
 }
 
-// RefreshToken 尝试刷新 Token
-// 即使 Token 已过期，只要在宽限期内且签名正确，就允许刷新
+// RefreshToken 尝试刷新 Token；即使 Token 已过期，只要在宽限期内且签名正确，就允许刷新
 func (s *AuthService) RefreshToken(tokenString string) (string, uint, error) {
-	// 使用不验证过期时间的 Parser
-	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (any, error) {
+	_, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (any, error) {
 		return []byte(s.dbConfig.JWTSecret), nil
 	}, jwt.WithExpirationRequired())
-
-	// 如果是过期错误，我们继续检查
 	if err != nil && !strings.Contains(err.Error(), "expired") {
-		// 如果不是过期错误，直接返回
 		return "", 0, err
 	}
 
-	// Re-parse without expiration check to get claims
-	token, _, err = new(jwt.Parser).ParseUnverified(tokenString, &UserClaims{})
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &UserClaims{})
 	if err != nil {
 		return "", 0, err
 	}
-
 	claims, ok := token.Claims.(*UserClaims)
 	if !ok {
 		return "", 0, fmt.Errorf("invalid claims")
 	}
-
-	// 检查是否在宽限期内 (从过期时间开始算)
 	if time.Now().After(claims.ExpiresAt.Time.Add(TokenGracePeriod)) {
 		return "", 0, fmt.Errorf("token expired and beyond grace period")
 	}
-
-	// 验证签名 (必须确保即便过期了，签名也是对的)
 	_, err = jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (any, error) {
 		return []byte(s.dbConfig.JWTSecret), nil
 	})
-	if err != nil && (err.Error() != "token has invalid claims: token is expired" && !strings.Contains(err.Error(), "expired")) {
+	if err != nil && err.Error() != "token has invalid claims: token is expired" && !strings.Contains(err.Error(), "expired") {
 		return "", 0, err
 	}
-
-	// 重新生成 Token
 	newToken, err := s.GenerateToken(claims.UserID)
 	if err != nil {
 		return "", 0, err
 	}
-
 	return newToken, claims.UserID, nil
 }
 
@@ -189,9 +166,7 @@ func (s *AuthService) IsTokenNearExpiry(tokenString string) bool {
 	if err != nil {
 		return false
 	}
-
 	if claims, ok := token.Claims.(*UserClaims); ok {
-		// 如果剩余时间小于阈值，建议刷新
 		return time.Until(claims.ExpiresAt.Time) < TokenRefreshThreshold
 	}
 	return false
@@ -201,15 +176,12 @@ func (s *AuthService) code2Session(ctx context.Context, code string) (*WechatLog
 	if s.dbConfig.WxAppID == "" || s.dbConfig.WxAppSecret == "" {
 		return nil, fmt.Errorf("missing wechat config")
 	}
-
 	url := fmt.Sprintf("https://api.weixin.qq.com/sns/jscode2session?appid=%s&secret=%s&js_code=%s&grant_type=authorization_code",
 		s.dbConfig.WxAppID, s.dbConfig.WxAppSecret, code)
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -220,12 +192,9 @@ func (s *AuthService) code2Session(ctx context.Context, code string) (*WechatLog
 	if err := jsoniter.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-
 	log.Printf("wechat login resp: %+v", result)
-
 	if result.ErrCode != 0 {
 		return nil, fmt.Errorf("wechat api error: %d %s", result.ErrCode, result.ErrMsg)
 	}
-
 	return &result, nil
 }

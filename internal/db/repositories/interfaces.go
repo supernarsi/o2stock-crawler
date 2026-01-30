@@ -14,6 +14,8 @@ type PlayerRepositoryInterface interface {
 	GetAllTxPlayers(ctx context.Context) ([]entity.Player, error)
 	UpdatePower(ctx context.Context, playerID uint, power5, power10 float64) error
 	UpdatePriceChanges(ctx context.Context, playerID uint, pc1d, pc7d float64) error
+	AvgPriceByOVRSegment(ctx context.Context, ovr uint, radius int) (avgPrice float64, count int64, err error)
+	AvgPriceGlobal(ctx context.Context) (float64, error)
 }
 
 // HistoryRepositoryInterface defines the contract for price history data access
@@ -61,6 +63,7 @@ type OwnRepositoryInterface interface {
 // StatsRepositoryInterface defines the contract for player statistics data access
 type StatsRepositoryInterface interface {
 	GetSeasonStats(ctx context.Context, txPlayerID uint) (*entity.PlayerSeasonStats, error)
+	GetSeasonStatsByTxPlayerIDs(ctx context.Context, txPlayerIDs []uint, season string, seasonType int) (map[uint]*entity.PlayerSeasonStats, error)
 	GetRecentGameStats(ctx context.Context, txPlayerID uint, limit int) ([]entity.PlayerGameStats, error)
 }
 
