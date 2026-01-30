@@ -10,6 +10,7 @@ import (
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/entity"
+	"strconv"
 	"time"
 )
 
@@ -232,7 +233,29 @@ func (s *PlayersService) GetPlayerHistoryRealtime(ctx context.Context, playerID 
 	if err != nil {
 		return nil, err
 	}
-	return s.mapToHistoryRows(rows), nil
+
+	// 采样逻辑：每小时只保留那个小时最早的一个点，再加上最近一个点
+	if len(rows) == 0 {
+		return s.mapToHistoryRows(rows), nil
+	}
+
+	var sampled []entity.PlayerPriceHistory
+	seenHour := make(map[string]bool)
+
+	// 遍历除了最后一个点之外的所有点
+	for i := 0; i < len(rows)-1; i++ {
+		row := rows[i]
+		key := row.AtDate.Format("2006010215") + row.AtHour
+		if !seenHour[key] {
+			sampled = append(sampled, row)
+			seenHour[key] = true
+		}
+	}
+
+	// 总是添加最后一个点
+	sampled = append(sampled, rows[len(rows)-1])
+
+	return s.mapToHistoryRows(sampled), nil
 }
 
 // GetPlayerHistory5Days 获取五日数据
@@ -242,7 +265,51 @@ func (s *PlayersService) GetPlayerHistory5Days(ctx context.Context, playerID uin
 	if err != nil {
 		return nil, err
 	}
-	return s.mapToHistoryRows(rows), nil
+
+	// 采样逻辑：每天最多返回 4 个数据点，再加上最近一个数据点
+	if len(rows) == 0 {
+		return s.mapToHistoryRows(rows), nil
+	}
+
+	// 按天通过 map 分组
+	dayMap := make(map[string][]entity.PlayerPriceHistory)
+	var days []string // 保持顺序
+
+	for i := 0; i < len(rows)-1; i++ {
+		row := rows[i]
+		dayKey := row.AtDate.Format("2006-01-02")
+		if _, exists := dayMap[dayKey]; !exists {
+			days = append(days, dayKey)
+		}
+		dayMap[dayKey] = append(dayMap[dayKey], row)
+	}
+
+	var sampled []entity.PlayerPriceHistory
+
+	for _, day := range days {
+		dayRows := dayMap[day]
+		count := len(dayRows)
+		if count <= 4 {
+			sampled = append(sampled, dayRows...)
+		} else {
+			// 取 0, 1/3, 2/3, last 索引位置
+			// 比如 count=10: 0, 3, 6, 9
+			// count=5: 0, 1, 3, 4
+			step := float64(count-1) / 3.0
+			for k := 0; k < 4; k++ {
+				idx := int(math.Round(float64(k) * step))
+				if idx >= count {
+					idx = count - 1
+				}
+				sampled = append(sampled, dayRows[idx])
+			}
+		}
+	}
+
+	// 总是添加最后一个点
+	sampled = append(sampled, rows[len(rows)-1])
+
+	return s.mapToHistoryRows(sampled), nil
 }
 
 // GetPlayerHistoryDailyK 获取日K线数据
@@ -300,6 +367,10 @@ func (s *PlayersService) mapToHistoryRows(rows []entity.PlayerPriceHistory) []*d
 			PlayerId:         r.PlayerID,
 			AtDate:           r.AtDate,
 			AtDateHourStr:    r.AtDateHour,
+			AtYear:           parseUint16(r.AtYear),
+			AtMonth:          parseUint8(r.AtMonth),
+			AtDay:            parseUint8(r.AtDay),
+			AtHour:           parseUint8(r.AtHour),
 			PriceStandard:    uint32(r.PriceStandard),
 			PriceCurrentSale: int32(r.PriceCurrentSale),
 			PriceLower:       uint32(r.PriceLower),
@@ -559,4 +630,14 @@ func (s *PlayersService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) 
 func round(val float64, precision int) float64 {
 	p := math.Pow10(precision)
 	return math.Round(val*p) / p
+}
+
+func parseUint8(s string) uint8 {
+	v, _ := strconv.ParseUint(s, 10, 8)
+	return uint8(v)
+}
+
+func parseUint16(s string) uint16 {
+	v, _ := strconv.ParseUint(s, 10, 16)
+	return uint16(v)
 }
