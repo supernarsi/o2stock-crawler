@@ -312,19 +312,6 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 		orderIDs = playerIDs
 	}
 
-	// 只计算价格 > minPriceForIPI 的球员
-	playersAboveMinPrice := make([]entity.Player, 0, len(players))
-	for i := range players {
-		if players[i].PriceStandard > minPriceForIPI {
-			playersAboveMinPrice = append(playersAboveMinPrice, players[i])
-		}
-	}
-	players = playersAboveMinPrice
-	orderIDs = make([]uint, len(players))
-	for i := range players {
-		orderIDs[i] = players[i].PlayerID
-	}
-
 	txIDs := make([]uint, 0, len(players))
 	for _, p := range players {
 		if p.TxPlayerID > 0 {
