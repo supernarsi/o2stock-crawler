@@ -189,11 +189,12 @@ func (s *PlayersService) GetPlayersWithOwnedByIDs(ctx context.Context, playerIDs
 // mapOrderBy maps user-facing order by names to database column names
 func (s *PlayersService) mapOrderBy(orderBy string) string {
 	mapping := map[string]string{
-		"price_change":   "price_change_1d",
-		"price_standard": "price_standard",
-		"power_per5":     "power_per5",
-		"power_per10":    "power_per10",
-		"over_all":       "over_all",
+		"price_change":    "price_change_1d",
+		"price_change_7d": "price_change_7d",
+		"price_standard":  "price_standard",
+		"power_per5":      "power_per5",
+		"power_per10":     "power_per10",
+		"over_all":        "over_all",
 	}
 	if mapped, ok := mapping[orderBy]; ok {
 		return mapped
