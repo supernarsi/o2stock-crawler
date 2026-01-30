@@ -18,6 +18,9 @@ const (
 
 	// minHistoryDaysForIPI 参与 IPI 计算至少需要的历史价格天数，少于此天数的球员被排除
 	minHistoryDaysForIPI = 3
+
+	// minPriceForIPI 参与 IPI 计算的球员最低价格（price_standard），只计算价格 > minPriceForIPI 的球员
+	minPriceForIPI = 8000
 )
 
 // IPIService IPI 计算服务
@@ -282,7 +285,7 @@ func (s *IPIService) CalcIPI(sPerf, vGap, mGrowth, rRisk float64) float64 {
 }
 
 // BatchCalcIPI 批量计算 IPI：给定球员 ID 列表；若 playerIDs 为空则对「全部参与 IPI 计算的球员」计算
-// 排除：本赛季无场均数据、历史价格数据少于 minHistoryDaysForIPI 天的球员
+// 排除：价格 ≤ minPriceForIPI、本赛季无场均数据、历史价格数据少于 minHistoryDaysForIPI 天的球员
 func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]model.IPIResult, error) {
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 	statsRepo := repositories.NewStatsRepository(s.db.DB)
@@ -307,6 +310,19 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 			return nil, err
 		}
 		orderIDs = playerIDs
+	}
+
+	// 只计算价格 > minPriceForIPI 的球员
+	playersAboveMinPrice := make([]entity.Player, 0, len(players))
+	for i := range players {
+		if players[i].PriceStandard > minPriceForIPI {
+			playersAboveMinPrice = append(playersAboveMinPrice, players[i])
+		}
+	}
+	players = playersAboveMinPrice
+	orderIDs = make([]uint, len(players))
+	for i := range players {
+		orderIDs[i] = players[i].PlayerID
 	}
 
 	txIDs := make([]uint, 0, len(players))
