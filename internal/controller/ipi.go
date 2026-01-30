@@ -17,6 +17,16 @@ func (a *API) IPIRank() http.HandlerFunc {
 		page := parseIntDefault(r.URL.Query().Get("page"), 1)
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 20)
 		taxSafeOnly := r.URL.Query().Get("tax_safe_only") == "true"
+		minPriceVal := parseIntDefault(r.URL.Query().Get("min_price"), 0)
+		maxPriceVal := parseIntDefault(r.URL.Query().Get("max_price"), 0)
+		if minPriceVal < 0 {
+			minPriceVal = 0
+		}
+		if maxPriceVal < 0 {
+			maxPriceVal = 0
+		}
+		minPrice := uint(minPriceVal)
+		maxPrice := uint(maxPriceVal)
 		if limit <= 0 {
 			limit = 20
 		}
@@ -42,6 +52,8 @@ func (a *API) IPIRank() http.HandlerFunc {
 			Page:         page,
 			Limit:        limit,
 			TaxSafeOnly:  taxSafeOnly,
+			MinPrice:     minPrice,
+			MaxPrice:     maxPrice,
 			CalculatedAt: calculatedAt,
 		})
 		if err != nil {

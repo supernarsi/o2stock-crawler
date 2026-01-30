@@ -58,15 +58,27 @@ type ListLatestFilter struct {
 	Page         int
 	Limit        int
 	TaxSafeOnly  bool
+	MinPrice     uint      // 最低价格（price_sale_lower），0 表示不限制
+	MaxPrice     uint      // 最高价格（price_sale_upper），0 表示不限制
 	CalculatedAt time.Time // 必须为已存在的批次时间
 }
 
-// ListLatest 取指定批次（通常为最新一批）的 IPI 记录，按 ipi 降序分页；可选仅税后安全边际
-// 返回 list、满足条件的 total
+// ListLatest 取指定批次（通常为最新一批）的 IPI 记录，按 ipi 降序分页；可选税后安全边际、价格区间
+// 价格区间通过子查询 players 表按 price_sale_lower、 price_sale_upper筛选，避免 JOIN 导致的列名问题
 func (r *IPIRepository) ListLatest(ctx context.Context, filter ListLatestFilter) (list []entity.PlayerIPI, total int64, err error) {
 	query := r.model(ctx).Where("calculated_at = ?", filter.CalculatedAt)
 	if filter.TaxSafeOnly {
 		query = query.Where("meets_tax_safe_margin = ?", true)
+	}
+	if filter.MinPrice > 0 || filter.MaxPrice > 0 {
+		subQuery := r.ctx(ctx).Table("players").Select("player_id")
+		if filter.MinPrice > 0 {
+			subQuery = subQuery.Where("price_sale_lower >= ?", filter.MinPrice)
+		}
+		if filter.MaxPrice > 0 {
+			subQuery = subQuery.Where("price_sale_upper <= ?", filter.MaxPrice)
+		}
+		query = query.Where("player_id IN (?)", subQuery)
 	}
 	if err = query.Count(&total).Error; err != nil {
 		return nil, 0, err
