@@ -34,6 +34,8 @@ type WechatLoginUserInfo struct {
 	Code   string `json:"code"`
 	Nick   string `json:"nick"`
 	Avatar string `json:"avatar"`
+	RegOS  int    `json:"reg_os"`  // 注册时的系统：1.iOS；2.安卓；3.鸿蒙；0.未知
+	RegIP  []byte `json:"-"`       // 注册时的 IP（由服务端从请求解析，varbinary(16)）
 }
 
 // WechatLoginResponse 微信登录接口响应
@@ -80,6 +82,8 @@ func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserI
 			Avatar:       info.Avatar,
 			Sta:          1,
 			CTime:        time.Now(),
+			RegOS:        info.RegOS,
+			RegIP:        info.RegIP,
 		}
 		if err := s.userRepo.Create(ctx, user); err != nil {
 			return nil, "", fmt.Errorf("create user failed: %w", err)

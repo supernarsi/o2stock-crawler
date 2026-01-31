@@ -219,13 +219,31 @@ func (s *IPIService) MeetsTaxSafeMargin(priceStandard uint, priceOVRAvg float64)
 	return afterTax >= minRevenue
 }
 
+// ageFactorFromAge 根据球员年龄计算成长因子：年轻球员加成，老将略降；age=0 返回 1.0
+func ageFactorFromAge(age uint) float64 {
+	if age == 0 {
+		return 1.0
+	}
+	a := int(age)
+	switch {
+	case a <= 23:
+		return 1.08 // 年轻球员成长空间
+	case a <= 27:
+		return 1.0
+	case a <= 30:
+		return 0.95
+	default:
+		return 0.90 // 31+ 略降
+	}
+}
+
 // CalcMGrowth 成长动能与题材分：AgeFactor×(1 + MinutesTrendBonus + TradeRumorBonus)
-// 年龄暂无数据默认 1.0；TradeRumorBonus 固定 0；上场时间趋势来自近 10 场 vs 赛季场均
-func (s *IPIService) CalcMGrowth(ctx context.Context, seasonStats *entity.PlayerSeasonStats, txPlayerID uint) (float64, error) {
-	ageFactor := 1.0 // 无年龄数据，占位默认 1.0
+// AgeFactor 来自球员年龄（players.age）；上场时间趋势为近 10 场 vs 上赛季场均；TradeRumorBonus 固定 0
+func (s *IPIService) CalcMGrowth(ctx context.Context, player *entity.Player, seasonStats *entity.PlayerSeasonStats) (float64, error) {
+	ageFactor := ageFactorFromAge(player.Age)
 	minutesTrendBonus := 0.0
-	if seasonStats != nil && seasonStats.Minutes > 0 {
-		mtRecent, err := s.AverageMinutesLastNGames(ctx, txPlayerID, 10)
+	if seasonStats != nil && seasonStats.Minutes > 0 && player.TxPlayerID > 0 {
+		mtRecent, err := s.AverageMinutesLastNGames(ctx, player.TxPlayerID, 10)
 		if err == nil && mtRecent > 0 {
 			delta := mtRecent - seasonStats.Minutes
 			if delta > 0 {
@@ -236,7 +254,7 @@ func (s *IPIService) CalcMGrowth(ctx context.Context, seasonStats *entity.Player
 			}
 		}
 	}
-	tradeRumorBonus := 0.0 // 无数据，占位 0
+	tradeRumorBonus := 0.0
 	mGrowth := ageFactor * (1 + minutesTrendBonus + tradeRumorBonus)
 	return mGrowth, nil
 }
@@ -318,12 +336,13 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 			txIDs = append(txIDs, p.TxPlayerID)
 		}
 	}
+	// 上赛季场均数据：season_type=1 常规赛，season='2025-26'
 	seasonStatsMap, err := statsRepo.GetSeasonStatsByTxPlayerIDs(ctx, txIDs, "2025-26", 1)
 	if err != nil {
 		return nil, err
 	}
 
-	// 排除本赛季没有场均数据的球员
+	// 排除上赛季没有场均数据的球员（2025-26 常规赛）
 	playersWithSeason := make([]entity.Player, 0, len(players))
 	for i := range players {
 		if seasonStatsMap[players[i].TxPlayerID] != nil {
@@ -382,7 +401,7 @@ func (s *IPIService) calcOneIPI(ctx context.Context, player *entity.Player, seas
 	if err != nil {
 		return nil, err
 	}
-	mGrowth, err := s.CalcMGrowth(ctx, seasonStats, player.TxPlayerID)
+	mGrowth, err := s.CalcMGrowth(ctx, player, seasonStats)
 	if err != nil {
 		return nil, err
 	}

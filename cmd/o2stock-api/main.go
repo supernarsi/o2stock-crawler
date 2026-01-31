@@ -36,8 +36,9 @@ func main() {
 	apiCtl := controller.NewAPI(database)
 	authCtl := controller.NewAuthController(database, dbCfg)
 
-	// 定义全局中间件
+	// 定义全局中间件（Client 最先执行，便于后续从 ctx 获取）
 	globalMiddlewares := []middleware.Middleware{
+		middleware.ClientMiddleware,
 		middleware.CORS,
 		middleware.Logging,
 		middleware.SignatureMiddleware(dbCfg),

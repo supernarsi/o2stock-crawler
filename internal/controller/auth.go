@@ -21,7 +21,7 @@ func NewAuthController(database *db.DB, cfg *db.Config) *AuthController {
 	}
 }
 
-// Login 登录接口
+// Login 登录接口（新用户注册时记录 reg_os、reg_ip）
 func (c *AuthController) Login() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		var req struct {
@@ -37,10 +37,13 @@ func (c *AuthController) Login() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing code"}
 		}
 
+		client := middleware.MustGetClient(r.Context())
 		user, token, err := c.authService.LoginWithWechat(r.Context(), service.WechatLoginUserInfo{
 			Code:   req.Code,
 			Nick:   req.Nick,
 			Avatar: "",
+			RegOS:  client.OS,
+			RegIP:  client.IP,
 		})
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}

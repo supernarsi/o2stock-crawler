@@ -13,6 +13,7 @@ type Player struct {
 	EnName             string    `gorm:"column:p_name_en"`
 	TxPlayerID         uint      `gorm:"column:tx_player_id"`
 	TeamAbbr           string    `gorm:"column:team_abbr"`
+	Age                uint      `gorm:"column:age"` // 球员年龄，0 表示暂未统计
 	Version            uint      `gorm:"column:version"`
 	CardType           uint      `gorm:"column:card_type"`
 	PlayerImg          string    `gorm:"column:player_img"`
