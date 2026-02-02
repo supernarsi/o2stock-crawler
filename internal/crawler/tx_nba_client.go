@@ -227,6 +227,54 @@ func (c *TxNBAClient) GetTeamLineup(ctx context.Context, teamID string) (*TxTeam
 	return &out, nil
 }
 
+// TxPlayerInfoResponse 腾讯体育球员详情响应（含年龄等基础信息）
+type TxPlayerInfoResponse struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		EnName   string `json:"enName"`
+		BaseInfo []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"baseInfo"`
+		NewBaseInfo []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"newBaseInfo"`
+	} `json:"data"`
+}
+
+// GetPlayerInfo 获取球员详情（含年龄等基础信息）
+func (c *TxNBAClient) GetPlayerInfo(ctx context.Context, txPlayerID string) (*TxPlayerInfoResponse, error) {
+	url := fmt.Sprintf("https://matchweb.sports.qq.com/playerUtil/playerInfo?competitionId=100000&playerId=%s", txPlayerID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Tencent API returned status: %d", resp.StatusCode)
+	}
+
+	var out TxPlayerInfoResponse
+	if err := jsoniter.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
 // GetPlayerStats 获取球员统计数据 (含赛季场均)
 func (c *TxNBAClient) GetPlayerStats(ctx context.Context, txPlayerID string) (*TxPlayerStatsResponse, error) {
 	url := fmt.Sprintf("https://app.sports.qq.com/match/api/v2/player/stats?playerId=%s&competitionId=100000&moduleIds=statList&appvid=", txPlayerID)

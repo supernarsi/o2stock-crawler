@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
+	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/entity"
 	"strconv"
 	"strings"
@@ -267,6 +268,62 @@ func (s *TxNBAService) SyncPlayerSeasonStats(ctx context.Context, txPlayerIDs []
 	}
 
 	log.Printf(">>> 赛季场均数据更新完成 <<<")
+	return nil
+}
+
+// SyncPlayerAge 补充球员年龄：从腾讯球员详情接口拉取并更新 players 表
+func (s *TxNBAService) SyncPlayerAge(ctx context.Context, playerIDs []uint) error {
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+	players, err := playerRepo.GetPlayersForAgeSync(ctx, playerIDs)
+	if err != nil {
+		return fmt.Errorf("查询待补充年龄的球员失败: %w", err)
+	}
+
+	log.Printf(">>> 开始补充球员年龄 (共 %d 人) <<<", len(players))
+
+	updated := 0
+	for _, p := range players {
+		time.Sleep(time.Duration(rand.Intn(2)+1) * time.Second)
+
+		pidStr := strconv.Itoa(int(p.TxPlayerID))
+		log.Printf("获取球员 %s (%s) 年龄信息", p.ShowName, pidStr)
+
+		resp, err := s.client.GetPlayerInfo(ctx, pidStr)
+		if err != nil {
+			log.Printf("获取球员 %s 详情失败: %v", p.ShowName, err)
+			continue
+		}
+
+		if resp.Code != 0 {
+			log.Printf("腾讯 API 返回错误: code=%d msg=%s", resp.Code, resp.Msg)
+			continue
+		}
+
+		var age uint
+		for _, item := range resp.Data.BaseInfo {
+			if item.Name == "年龄" && item.Value != "" {
+				val := strings.TrimSuffix(strings.TrimSpace(item.Value), "岁")
+				a, err := strconv.Atoi(val)
+				if err == nil && a > 0 && a <= 100 {
+					age = uint(a)
+				}
+				break
+			}
+		}
+		if age == 0 {
+			log.Printf("球员 %s 未解析到年龄", p.ShowName)
+			continue
+		}
+
+		if err := playerRepo.UpdateAge(ctx, p.PlayerID, age); err != nil {
+			log.Printf("更新球员 %s 年龄失败: %v", p.ShowName, err)
+			continue
+		}
+		updated++
+		log.Printf(">> 更新球员 %s 年龄为 %d", p.ShowName, age)
+	}
+
+	log.Printf(">>> 球员年龄补充完成，成功更新 %d 人 <<<", updated)
 	return nil
 }
 

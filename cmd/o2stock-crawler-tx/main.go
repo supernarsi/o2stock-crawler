@@ -40,6 +40,7 @@ func main() {
 		log.Println("  tx-nba [date] [--no-season]  Crawl daily stats and sync player season stats")
 		log.Println("  tx-nba-players [playerIDs]   Sync players' season stats")
 		log.Println("  tx-sync-players [teamID]     Sync player/team data from Tencent")
+		log.Println("  tx-player-age [txPlayerIDs]  Sync player age from Tencent (no txPlayerIDs = all tx_player_id>0)")
 		os.Exit(1)
 	}
 
@@ -100,6 +101,22 @@ func main() {
 		txService := service.NewTxNBAService(database)
 		if err := txService.SyncPlayers(ctx, teamID); err != nil {
 			log.Fatalf("同步腾讯球员数据失败: %v", err)
+		}
+
+	case "tx-player-age":
+		playerIDs := []uint{}
+		if len(os.Args) >= 3 {
+			ids := strings.SplitSeq(os.Args[2], ",")
+			for id := range ids {
+				playerID, _ := strconv.Atoi(id)
+				if playerID > 0 {
+					playerIDs = append(playerIDs, uint(playerID))
+				}
+			}
+		}
+		txService := service.NewTxNBAService(database)
+		if err := txService.SyncPlayerAge(ctx, playerIDs); err != nil {
+			log.Fatalf("补充球员年龄失败: %v", err)
 		}
 
 	default:
