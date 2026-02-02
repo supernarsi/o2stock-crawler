@@ -28,7 +28,13 @@ func main() {
 	defer database.Close()
 
 	ctx := context.Background()
-	ipiService := service.NewIPIService(database)
+
+	// 从环境变量加载 IPI 配置（支持外部配置权重、阈值等）
+	ipiCfg := config.LoadIPIConfigFromEnv()
+	log.Printf("IPI 配置: Season=%s, Weights=%.2f/%.2f/%.2f, HistoryDays=%d",
+		ipiCfg.Season, ipiCfg.Weights.SPerf, ipiCfg.Weights.VGap, ipiCfg.Weights.MGrowth, ipiCfg.HistoryDays)
+
+	ipiService := service.NewIPIServiceWithConfig(database, ipiCfg)
 	ipiRepo := repositories.NewIPIRepository(database.DB)
 
 	log.Printf(">>> 开始执行 IPI 批量计算 <<<")

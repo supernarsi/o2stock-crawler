@@ -64,3 +64,30 @@ func (r *StatsRepository) GetSeasonStatsByTxPlayerIDs(ctx context.Context, txPla
 	}
 	return out, nil
 }
+
+// BatchGetRecentGameStats 批量获取多球员近 N 场比赛数据，用于 IPI 批量计算
+func (r *StatsRepository) BatchGetRecentGameStats(ctx context.Context, txPlayerIDs []uint, limit int) (map[uint][]entity.PlayerGameStats, error) {
+	out := make(map[uint][]entity.PlayerGameStats)
+	if len(txPlayerIDs) == 0 || limit <= 0 {
+		return out, nil
+	}
+
+	// 使用 ROW_NUMBER 取每个球员最近 N 场
+	subQuery := r.ctx(ctx).Model(&entity.PlayerGameStats{}).
+		Select("*, ROW_NUMBER() OVER (PARTITION BY tx_player_id ORDER BY game_date DESC) AS rn").
+		Where("tx_player_id IN ?", txPlayerIDs)
+
+	var results []entity.PlayerGameStats
+	err := r.ctx(ctx).
+		Table("(?) as t", subQuery).
+		Where("rn <= ?", limit).
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, g := range results {
+		out[g.TxPlayerID] = append(out[g.TxPlayerID], g)
+	}
+	return out, nil
+}

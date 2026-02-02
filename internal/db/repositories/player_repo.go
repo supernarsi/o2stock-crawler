@@ -185,3 +185,50 @@ func (r *PlayerRepository) AvgPriceGlobal(ctx context.Context) (float64, error) 
 		Scan(&avg).Error
 	return avg, err
 }
+
+// OVRAvgPriceMap 批量获取所有 OVR 段的均价 map，key 为 over_all 值，用于 IPI 批量计算预缓存
+// 仅统计参与 IPI 计算的球员（排除自由球员、tx_player_id=0）
+func (r *PlayerRepository) OVRAvgPriceMap(ctx context.Context) (map[uint]float64, error) {
+	type ovrAvg struct {
+		OverAll uint
+		Avg     float64
+	}
+	var results []ovrAvg
+	err := r.ctx(ctx).Model(&entity.Player{}).
+		Select("over_all, AVG(price_standard) as avg").
+		Where("price_standard > 0").
+		Where(ipiEligibleCondition, "自由球员").
+		Group("over_all").
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uint]float64, len(results))
+	for _, r := range results {
+		out[r.OverAll] = r.Avg
+	}
+	return out, nil
+}
+
+// OVRCountMap 批量获取所有 OVR 段的球员数量 map，key 为 over_all 值
+func (r *PlayerRepository) OVRCountMap(ctx context.Context) (map[uint]int64, error) {
+	type ovrCount struct {
+		OverAll uint
+		Count   int64
+	}
+	var results []ovrCount
+	err := r.ctx(ctx).Model(&entity.Player{}).
+		Select("over_all, COUNT(*) as count").
+		Where("price_standard > 0").
+		Where(ipiEligibleCondition, "自由球员").
+		Group("over_all").
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uint]int64, len(results))
+	for _, r := range results {
+		out[r.OverAll] = r.Count
+	}
+	return out, nil
+}

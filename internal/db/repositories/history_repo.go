@@ -298,3 +298,41 @@ func (r *HistoryRepository) GetPlayerIDsWithAtLeastDays(ctx context.Context, wit
 func (r *HistoryRepository) Create(ctx context.Context, history *entity.PlayerPriceHistory) error {
 	return r.ctx(ctx).Create(history).Error
 }
+
+// BatchGetDays 批量获取多球员近 days 天的价格历史（每日一条），用于 IPI 批量计算
+// 优化：在 DB 层用 ROW_NUMBER 按 (player_id, at_date) 取每日一条（当日 at_date_hour 最大的一条），
+// 避免拉取全量小时级数据（60 万+ 行）导致慢查询，结果行数约为 player 数 × days。
+// 建议索引：CREATE INDEX idx_pid_at_hour ON p_p_history(player_id, at_date_hour);
+func (r *HistoryRepository) BatchGetDays(ctx context.Context, playerIDs []uint, days int) (map[uint][]entity.PlayerPriceHistory, error) {
+	out := make(map[uint][]entity.PlayerPriceHistory)
+	if len(playerIDs) == 0 || days <= 0 {
+		return out, nil
+	}
+
+	now := time.Now()
+	startDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -(days - 1))
+	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, 1)
+	startStr := startDate.Format("200601021504")
+	endStr := endDate.Format("200601021504")
+
+	// 子查询：按 (player_id, at_date) 分区，取当日 at_date_hour 最大的一条（每日一条）
+	subQuery := r.model(ctx).
+		Select("*, ROW_NUMBER() OVER (PARTITION BY player_id, at_date ORDER BY at_date_hour DESC) AS rn").
+		Where("player_id IN ? AND at_date_hour >= ? AND at_date_hour < ?", playerIDs, startStr, endStr)
+
+	var results []entity.PlayerPriceHistory
+	err := r.ctx(ctx).
+		Table("(?) AS t", subQuery).
+		Where("t.rn = 1").
+		Select("t.id, t.player_id, t.at_date, t.at_date_hour, t.at_year, t.at_month, t.at_day, t.at_hour, t.at_minute, t.price_standard, t.price_current_sale, t.price_lower, t.price_upper, t.c_time").
+		Order("t.player_id ASC, t.at_date ASC").
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, h := range results {
+		out[h.PlayerID] = append(out[h.PlayerID], h)
+	}
+	return out, nil
+}

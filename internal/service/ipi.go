@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"slices"
 	"sort"
 
@@ -22,6 +24,15 @@ const (
 	// minPriceForIPI 参与 IPI 计算的球员最低价格（price_standard），只计算价格 > minPriceForIPI 的球员
 	minPriceForIPI = 8000
 )
+
+// ipiPreloadData 批量预加载的数据，避免 N+1 查询
+type ipiPreloadData struct {
+	priceHistory    map[uint][]entity.PlayerPriceHistory // player_id -> 近 N 天价格历史
+	recentGameStats map[uint][]entity.PlayerGameStats    // tx_player_id -> 近 N 场比赛数据
+	ovrAvgPrice     map[uint]float64                     // over_all -> 同 OVR 段均价
+	ovrCount        map[uint]int64                       // over_all -> 同 OVR 段球员数
+	globalAvgPrice  float64                              // 全表均价（用于回退）
+}
 
 // IPIService IPI 计算服务
 type IPIService struct {
@@ -304,22 +315,18 @@ func (s *IPIService) CalcIPI(sPerf, vGap, mGrowth, rRisk float64) float64 {
 
 // BatchCalcIPI 批量计算 IPI：给定球员 ID 列表；若 playerIDs 为空则对「全部参与 IPI 计算的球员」计算
 // 排除：价格 ≤ minPriceForIPI、本赛季无场均数据、历史价格数据少于 minHistoryDaysForIPI 天的球员
+// 优化：批量预加载价格历史、比赛数据、OVR 均价，避免 N+1 查询
 func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]model.IPIResult, error) {
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 	statsRepo := repositories.NewStatsRepository(s.db.DB)
 	historyRepo := repositories.NewHistoryRepository(s.db.DB)
 
 	var players []entity.Player
-	var orderIDs []uint
 	if len(playerIDs) == 0 {
 		var err error
 		players, err = playerRepo.GetAllTxPlayers(ctx)
 		if err != nil {
 			return nil, err
-		}
-		orderIDs = make([]uint, len(players))
-		for i := range players {
-			orderIDs[i] = players[i].PlayerID
 		}
 	} else {
 		var err error
@@ -327,7 +334,6 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 		if err != nil {
 			return nil, err
 		}
-		orderIDs = playerIDs
 	}
 
 	txIDs := make([]uint, 0, len(players))
@@ -336,13 +342,18 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 			txIDs = append(txIDs, p.TxPlayerID)
 		}
 	}
-	// 上赛季场均数据：season_type=1 常规赛，season='2025-26'
-	seasonStatsMap, err := statsRepo.GetSeasonStatsByTxPlayerIDs(ctx, txIDs, "2025-26", 1)
+
+	// 本赛季场均数据
+	season := s.config.Season
+	if season == "" {
+		season = "2025-26"
+	}
+	seasonStatsMap, err := statsRepo.GetSeasonStatsByTxPlayerIDs(ctx, txIDs, season, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	// 排除上赛季没有场均数据的球员（2025-26 常规赛）
+	// 排除本赛季没有场均数据的球员
 	playersWithSeason := make([]entity.Player, 0, len(players))
 	for i := range players {
 		if seasonStatsMap[players[i].TxPlayerID] != nil {
@@ -368,29 +379,326 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 	}
 	players = playersWithHistory
 
-	orderIDs = make([]uint, len(players))
+	// 收集需要预加载的 ID
+	playerIDsToLoad := make([]uint, len(players))
+	txIDsToLoad := make([]uint, 0, len(players))
 	for i := range players {
-		orderIDs[i] = players[i].PlayerID
+		playerIDsToLoad[i] = players[i].PlayerID
+		if players[i].TxPlayerID > 0 {
+			txIDsToLoad = append(txIDsToLoad, players[i].TxPlayerID)
+		}
 	}
+
+	// 批量预加载数据（性能优化核心）
+	preload, err := s.preloadBatchData(ctx, playerIDsToLoad, txIDsToLoad)
+	if err != nil {
+		return nil, err
+	}
+
 	playerMap := make(map[uint]*entity.Player)
 	for i := range players {
 		playerMap[players[i].PlayerID] = &players[i]
 	}
 	rankData := s.buildRankDataFromPlayers(players)
 
-	var results []model.IPIResult
-	for _, playerID := range orderIDs {
-		p := playerMap[playerID]
-		if p == nil {
-			continue
-		}
-		res, err := s.calcOneIPI(ctx, p, seasonStatsMap[p.TxPlayerID], rankData)
+	// 第一轮：计算所有球员的原始分数
+	rawResults := make([]model.IPIResult, 0, len(players))
+	for _, p := range players {
+		res, err := s.calcOneIPIWithPreload(ctx, &p, seasonStatsMap[p.TxPlayerID], rankData, preload)
 		if err != nil {
 			continue
 		}
-		results = append(results, *res)
+		rawResults = append(rawResults, *res)
 	}
+
+	// 第二轮：归一化 + 添加可解释性
+	results := s.normalizeAndExplain(rawResults)
 	return results, nil
+}
+
+// preloadBatchData 批量预加载 IPI 计算所需的数据
+func (s *IPIService) preloadBatchData(ctx context.Context, playerIDs, txPlayerIDs []uint) (*ipiPreloadData, error) {
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+	statsRepo := repositories.NewStatsRepository(s.db.DB)
+	historyRepo := repositories.NewHistoryRepository(s.db.DB)
+
+	preload := &ipiPreloadData{}
+
+	// 1. 批量获取价格历史（用于 R_risk 计算）
+	days := s.config.HistoryDays
+	if days <= 0 {
+		days = 90
+	}
+	priceHistory, err := historyRepo.BatchGetDays(ctx, playerIDs, days)
+	if err != nil {
+		return nil, fmt.Errorf("preload price history: %w", err)
+	}
+	preload.priceHistory = priceHistory
+
+	// 2. 批量获取近 N 场比赛数据（用于 M_growth 上场时间趋势）
+	recentGames := s.config.MGrowth.RecentGames
+	if recentGames <= 0 {
+		recentGames = 10
+	}
+	gameStats, err := statsRepo.BatchGetRecentGameStats(ctx, txPlayerIDs, recentGames)
+	if err != nil {
+		return nil, fmt.Errorf("preload game stats: %w", err)
+	}
+	preload.recentGameStats = gameStats
+
+	// 3. 预加载 OVR 均价 map（用于 V_gap 计算）
+	ovrAvg, err := playerRepo.OVRAvgPriceMap(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("preload OVR avg: %w", err)
+	}
+	preload.ovrAvgPrice = ovrAvg
+
+	// 4. 预加载 OVR 数量 map
+	ovrCount, err := playerRepo.OVRCountMap(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("preload OVR count: %w", err)
+	}
+	preload.ovrCount = ovrCount
+
+	// 5. 全表均价（用于 V_gap 回退）
+	globalAvg, err := playerRepo.AvgPriceGlobal(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("preload global avg: %w", err)
+	}
+	preload.globalAvgPrice = globalAvg
+
+	return preload, nil
+}
+
+// calcOneIPIWithPreload 使用预加载数据计算单球员 IPI（避免单独查询 DB）
+func (s *IPIService) calcOneIPIWithPreload(ctx context.Context, player *entity.Player, seasonStats *entity.PlayerSeasonStats, rankData *ipiRankData, preload *ipiPreloadData) (*model.IPIResult, error) {
+	rankInv := s.rankInversionIndex(player.PlayerID, rankData)
+	sPerf := s.CalcSPerf(ctx, player, seasonStats, rankInv)
+
+	// V_gap：使用预加载的 OVR 均价
+	vGap, priceOVRAvg := s.calcVGapWithPreload(player, preload)
+
+	// M_growth：使用预加载的比赛数据
+	mGrowth := s.calcMGrowthWithPreload(player, seasonStats, preload)
+
+	// R_risk：使用预加载的价格历史
+	rRisk := s.calcRRiskWithPreload(player, preload)
+
+	ipi := s.CalcIPI(sPerf, vGap, mGrowth, rRisk)
+	meetsTax := s.MeetsTaxSafeMargin(player.PriceStandard, priceOVRAvg)
+
+	return &model.IPIResult{
+		PlayerID:           player.PlayerID,
+		IPI:                ipi,
+		SPerf:              sPerf,
+		VGap:               vGap,
+		MGrowth:            mGrowth,
+		RRisk:              rRisk,
+		MeetsTaxSafeMargin: meetsTax,
+		RankInversionIndex: rankInv,
+	}, nil
+}
+
+// calcVGapWithPreload 使用预加载数据计算 V_gap
+func (s *IPIService) calcVGapWithPreload(player *entity.Player, preload *ipiPreloadData) (vGap float64, priceOVRAvg float64) {
+	if player.PriceStandard <= 0 {
+		return 0, 0
+	}
+
+	radius := max(s.config.VGap.OVRRadius, 0)
+	ovr := player.OverAll
+
+	// 计算 [OVR-radius, OVR+radius] 范围内的加权均价
+	var sumPrice float64
+	var sumCount int64
+	for o := int(ovr) - radius; o <= int(ovr)+radius; o++ {
+		if o < 0 {
+			continue
+		}
+		if avg, ok := preload.ovrAvgPrice[uint(o)]; ok {
+			cnt := preload.ovrCount[uint(o)]
+			sumPrice += avg * float64(cnt)
+			sumCount += cnt
+		}
+	}
+
+	if sumCount >= minOVRSegmentCount && sumCount > 0 {
+		priceOVRAvg = sumPrice / float64(sumCount)
+	} else {
+		priceOVRAvg = preload.globalAvgPrice
+	}
+
+	if priceOVRAvg <= 0 {
+		return 0, priceOVRAvg
+	}
+	vGap = priceOVRAvg / float64(player.PriceStandard)
+	return vGap, priceOVRAvg
+}
+
+// calcMGrowthWithPreload 使用预加载数据计算 M_growth
+func (s *IPIService) calcMGrowthWithPreload(player *entity.Player, seasonStats *entity.PlayerSeasonStats, preload *ipiPreloadData) float64 {
+	ageFactor := ageFactorFromAge(player.Age)
+	minutesTrendBonus := 0.0
+
+	if seasonStats != nil && seasonStats.Minutes > 0 && player.TxPlayerID > 0 {
+		games := preload.recentGameStats[player.TxPlayerID]
+		if len(games) > 0 {
+			sum := 0
+			for _, g := range games {
+				sum += g.Minutes
+			}
+			mtRecent := float64(sum) / float64(len(games))
+			if mtRecent > 0 {
+				delta := mtRecent - seasonStats.Minutes
+				if delta > 0 {
+					minutesTrendBonus = delta / seasonStats.Minutes
+					cap := s.config.MGrowth.MinutesTrendMaxCap
+					if cap <= 0 {
+						cap = 0.2
+					}
+					if minutesTrendBonus > cap {
+						minutesTrendBonus = cap
+					}
+				}
+			}
+		}
+	}
+
+	tradeRumorBonus := 0.0
+	return ageFactor * (1 + minutesTrendBonus + tradeRumorBonus)
+}
+
+// calcRRiskWithPreload 使用预加载数据计算 R_risk
+func (s *IPIService) calcRRiskWithPreload(player *entity.Player, preload *ipiPreloadData) float64 {
+	injuryRisk := 0.0
+	priceSaturationRisk := 0.0
+
+	history := preload.priceHistory[player.PlayerID]
+	if len(history) > 0 {
+		perc := pricePercentileFromHistory(history)
+		if perc.HasEnoughData {
+			if player.PriceStandard >= perc.P90 {
+				priceSaturationRisk = s.config.RRisk.Pct90
+			} else if player.PriceStandard >= perc.P75 {
+				priceSaturationRisk = s.config.RRisk.Pct75
+			}
+		}
+	}
+
+	rRisk := injuryRisk + priceSaturationRisk
+	if rRisk < 0 {
+		rRisk = 0
+	}
+	if rRisk > 1 {
+		rRisk = 1
+	}
+	return rRisk
+}
+
+// normalizeAndExplain 对原始分数进行 Min-Max 归一化，并添加可解释性说明
+func (s *IPIService) normalizeAndExplain(rawResults []model.IPIResult) []model.IPIResult {
+	if len(rawResults) == 0 {
+		return rawResults
+	}
+
+	// 计算各维度的 min/max
+	stats := model.IPIBatchStats{
+		SPerfMin:   math.MaxFloat64,
+		SPerfMax:   -math.MaxFloat64,
+		VGapMin:    math.MaxFloat64,
+		VGapMax:    -math.MaxFloat64,
+		MGrowthMin: math.MaxFloat64,
+		MGrowthMax: -math.MaxFloat64,
+	}
+
+	for _, r := range rawResults {
+		if r.SPerf < stats.SPerfMin {
+			stats.SPerfMin = r.SPerf
+		}
+		if r.SPerf > stats.SPerfMax {
+			stats.SPerfMax = r.SPerf
+		}
+		if r.VGap < stats.VGapMin {
+			stats.VGapMin = r.VGap
+		}
+		if r.VGap > stats.VGapMax {
+			stats.VGapMax = r.VGap
+		}
+		if r.MGrowth < stats.MGrowthMin {
+			stats.MGrowthMin = r.MGrowth
+		}
+		if r.MGrowth > stats.MGrowthMax {
+			stats.MGrowthMax = r.MGrowth
+		}
+	}
+
+	// 归一化 + 生成说明
+	results := make([]model.IPIResult, len(rawResults))
+	for i, r := range rawResults {
+		results[i] = r
+		results[i].SPerfNorm = minMaxNorm(r.SPerf, stats.SPerfMin, stats.SPerfMax)
+		results[i].VGapNorm = minMaxNorm(r.VGap, stats.VGapMin, stats.VGapMax)
+		results[i].MGrowthNorm = minMaxNorm(r.MGrowth, stats.MGrowthMin, stats.MGrowthMax)
+		results[i].MainFactors = s.generateExplanation(&results[i])
+	}
+
+	return results
+}
+
+// minMaxNorm Min-Max 归一化到 [0, 1]
+func minMaxNorm(val, min, max float64) float64 {
+	if max <= min {
+		return 0.5
+	}
+	norm := (val - min) / (max - min)
+	if norm < 0 {
+		return 0
+	}
+	if norm > 1 {
+		return 1
+	}
+	return norm
+}
+
+// generateExplanation 生成可解释性说明
+func (s *IPIService) generateExplanation(r *model.IPIResult) []string {
+	factors := make([]string, 0, 4)
+
+	// 表现盈余分析
+	if r.SPerfNorm >= 0.7 {
+		factors = append(factors, "近期表现优异")
+	} else if r.SPerfNorm <= 0.3 {
+		factors = append(factors, "近期表现一般")
+	}
+
+	// 价值洼地分析
+	if r.VGapNorm >= 0.7 {
+		factors = append(factors, "价格被低估")
+	} else if r.VGapNorm <= 0.3 {
+		factors = append(factors, "价格偏高")
+	}
+
+	// 成长动能分析
+	if r.MGrowthNorm >= 0.7 {
+		factors = append(factors, "成长潜力大")
+	}
+
+	// 风险分析
+	if r.RRisk >= 0.25 {
+		factors = append(factors, "价格接近历史高位")
+	}
+
+	// 能力值倒挂
+	if r.RankInversionIndex >= 0.1 {
+		factors = append(factors, "能力值存在倒挂")
+	}
+
+	// 税后安全边际
+	if r.MeetsTaxSafeMargin {
+		factors = append(factors, "具备税后安全边际")
+	}
+
+	return factors
 }
 
 // calcOneIPI 单球员 IPI 计算，聚合四维度与税后边际、倒挂指数
