@@ -9,6 +9,7 @@ type Players struct {
 	ShowName          string  `json:"p_name_show"`
 	EnName            string  `json:"p_name_en"`
 	TeamAbbr          string  `json:"team_abbr"`
+	Age               uint    `json:"age"`
 	Version           uint    `json:"version"`
 	CardType          uint    `json:"card_type"`
 	PlayerImg         string  `json:"player_img"`

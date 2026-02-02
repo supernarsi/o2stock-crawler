@@ -30,6 +30,7 @@ func ToPlayerDTO(p entity.Player) dto.Players {
 		ShowName:          p.ShowName,
 		EnName:            p.EnName,
 		TeamAbbr:          p.TeamAbbr,
+		Age:               p.Age,
 		Version:           p.Version,
 		CardType:          p.CardType,
 		PlayerImg:         p.PlayerImg,
