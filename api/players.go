@@ -45,6 +45,7 @@ type GameDataNbaToday struct {
 	Blocks    uint   `json:"blk" dc:"盖帽"`
 	Steals    uint   `json:"stl" dc:"抢断"`
 	Turnovers uint   `json:"tov" dc:"失误"`
+	Minutes   uint   `json:"min" dc:"上场时间（分钟）"`
 }
 
 type GameDataStandard struct {

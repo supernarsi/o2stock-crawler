@@ -473,6 +473,7 @@ func (s *PlayersService) GetPlayerGameData(ctx context.Context, txPlayerID uint)
 			Blocks:    uint(gs.Blocks),
 			Steals:    uint(gs.Steals),
 			Turnovers: uint(gs.Turnovers),
+			Minutes:   uint(gs.Minutes),
 		})
 	}
 
