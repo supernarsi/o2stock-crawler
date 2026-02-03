@@ -53,3 +53,40 @@ func main() {
 	log.Printf(">>> IPI 计算完成 <<< 耗时: %v, 写入条数: %d, 计算时间: %s",
 		time.Since(start), len(results), calculatedAt.Format(time.RFC3339))
 }
+
+/*
+SQL 语句：获取最近5场场均上场时间增长次数为4次的球员
+WITH RecentFive AS (
+    -- 1. 严格锁定每个球员最近的 5 场比赛
+    SELECT
+        tx_player_id,
+        minutes,
+        game_date,
+        ROW_NUMBER() OVER (PARTITION BY tx_player_id ORDER BY game_date DESC) as rn
+    FROM player_game_stats
+),
+StepAnalysis AS (
+    -- 2. 仅对这 5 场比赛进行“后一场比前一场”的对比
+    -- 注意：这里按日期升序排，对比的是这 5 场内部的连续性
+    SELECT
+        tx_player_id,
+        minutes,
+        LAG(minutes) OVER (PARTITION BY tx_player_id ORDER BY game_date ASC) as prev_minutes,
+        rn
+    FROM RecentFive
+    WHERE rn <= 4
+)
+-- 3. 统计增长次数。5场比赛必须有4次增长，且第5场（最早的那场）prev_minutes 为空是正常的
+SELECT
+    p.p_name_show AS '球员姓名',
+    p.team_abbr AS '球队',
+    GROUP_CONCAT(s.minutes ORDER BY s.rn DESC) AS '近5场时长(新->旧)',
+    p.price_current_lowest AS '最低售价',
+    p.tx_player_id
+FROM StepAnalysis s
+JOIN players p ON s.tx_player_id = p.tx_player_id
+GROUP BY s.tx_player_id, p.p_name_show, p.team_abbr, p.price_current_lowest
+HAVING
+    SUM(CASE WHEN s.minutes > s.prev_minutes THEN 1 ELSE 0 END) = 3
+    AND COUNT(*) = 4;
+*/
