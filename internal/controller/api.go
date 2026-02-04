@@ -8,6 +8,7 @@ import (
 
 // API 是控制器的主要结构体
 type API struct {
+	db               *db.DB
 	playersService    *service.PlayersService
 	userPlayerService *service.UserPlayerService
 	ipiRepo           *repositories.IPIRepository
@@ -17,6 +18,7 @@ type API struct {
 // NewAPI 创建新的 API 控制器实例
 func NewAPI(database *db.DB) *API {
 	return &API{
+		db:               database,
 		playersService:    service.NewPlayersService(database),
 		userPlayerService: service.NewUserPlayerService(database),
 		ipiRepo:           repositories.NewIPIRepository(database.DB),

@@ -57,6 +57,9 @@ func main() {
 	router.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)
 	router.RegisterAPI("/ipi/player", apiCtl.IPIPlayer(), http.MethodGet)
 
+	// 内部调试：推送指定用户的球员回本订阅消息（需要 DEBUG=true 且 Header: x-debug=42）
+	router.RegisterAPI("/debug/wechat/breakeven", apiCtl.DebugSendPlayerBreakEvenNotify(), http.MethodPost)
+
 	// --- 需要鉴权的接口 --- //
 	authGroup := middleware.NewRouter(append(globalMiddlewares, authCtl.Middleware)...)
 	// 标记购买
@@ -75,6 +78,8 @@ func main() {
 	authGroup.RegisterAPI("/player/fav", apiCtl.UserFavPlayer(), http.MethodPost)
 	// 用户取消收藏球员
 	authGroup.RegisterAPI("/player/fav", apiCtl.UserUnFavPlayer(), http.MethodDelete)
+	// 修改球员价格订阅（回本/盈利通知）
+	authGroup.RegisterAPI("/player-price/notify", apiCtl.PlayerPriceNotify(), http.MethodPost)
 
 	mux := http.NewServeMux()
 	router.Apply(mux)

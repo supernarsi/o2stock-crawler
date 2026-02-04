@@ -34,8 +34,12 @@ func (a *API) PlayerIn() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid dt format, expected: 2006-01-02"}
 		}
 
+		notifyType := req.NotifyType
+		if notifyType > 2 {
+			notifyType = 0
+		}
 		// 调用服务层
-		err = a.userPlayerService.PlayerIn(ctx, userID, req.PlayerID, req.Num, req.Cost, dt)
+		err = a.userPlayerService.PlayerIn(ctx, userID, req.PlayerID, req.Num, req.Cost, dt, notifyType)
 		if err != nil {
 			// 处理业务错误
 			if strings.Contains(err.Error(), "already owned more than 2 players") {
@@ -281,6 +285,37 @@ func (a *API) UserFavPlayer() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 
+		return nil, nil
+	})
+}
+
+// PlayerPriceNotify 修改球员价格订阅
+func (a *API) PlayerPriceNotify() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		var req api.PlayerPriceNotifyReq
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+		}
+		if req.PlayerID == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing player_id"}
+		}
+		if req.NotifyType > 2 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid notify_type"}
+		}
+
+		err := a.userPlayerService.SetPlayerNotify(ctx, userID, req.PlayerID, req.NotifyType)
+		if err != nil {
+			if strings.Contains(err.Error(), "未找到可修改的持仓记录") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
 		return nil, nil
 	})
 }

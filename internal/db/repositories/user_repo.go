@@ -42,3 +42,19 @@ func (r *UserRepository) Create(ctx context.Context, user *entity.User) error {
 func (r *UserRepository) Update(ctx context.Context, user *entity.User) error {
 	return r.ctx(ctx).Save(user).Error
 }
+
+// GetByIDs 批量根据用户 ID 获取用户，返回 map[uint]*entity.User
+func (r *UserRepository) GetByIDs(ctx context.Context, ids []uint) (map[uint]*entity.User, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var users []entity.User
+	if err := r.ctx(ctx).Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[uint]*entity.User, len(users))
+	for i := range users {
+		out[users[i].ID] = &users[i]
+	}
+	return out, nil
+}

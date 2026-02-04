@@ -23,8 +23,8 @@ func NewUserPlayerService(database *db.DB) *UserPlayerService {
 	return &UserPlayerService{db: database}
 }
 
-// PlayerIn 标记购买球员
-func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num, cost uint, dt time.Time) error {
+// PlayerIn 标记购买球员，notifyType: 0 不订阅 1 回本 2 盈利15%
+func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num, cost uint, dt time.Time, notifyType uint8) error {
 	ownRepo := repositories.NewOwnRepository(s.db.DB)
 
 	// 检查是否已拥有超过 2 条
@@ -36,8 +36,11 @@ func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num,
 		return fmt.Errorf("already owned more than 2 players")
 	}
 
+	if notifyType > 2 {
+		notifyType = 0
+	}
 	// 插入购买记录
-	if err := ownRepo.Create(ctx, userID, playerID, num, cost, dt); err != nil {
+	if err := ownRepo.Create(ctx, userID, playerID, num, cost, dt, notifyType); err != nil {
 		return fmt.Errorf("failed to insert player own: %w", err)
 	}
 
@@ -131,16 +134,21 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 		if !ok {
 			continue
 		}
+		notifyType := o.NotifyType
+		if o.Sta == 0 {
+			notifyType = 0
+		}
 		rosters = append(rosters, api.OwnedPlayer{
-			Id:       o.ID,
-			PlayerID: o.PlayerID,
-			PriceIn:  o.BuyPrice,
-			PriceOut: o.SellPrice,
-			OwnSta:   uint8(o.Sta),
-			OwnNum:   o.BuyCount,
-			DtIn:     o.BuyTime.Format("2006-01-02 15:04:05"),
-			DtOut:    formatTimeOrEmpty(o.SellTime),
-			PP:       ToPlayerDTO(pp),
+			Id:         o.ID,
+			PlayerID:   o.PlayerID,
+			PriceIn:    o.BuyPrice,
+			PriceOut:   o.SellPrice,
+			OwnSta:     uint8(o.Sta),
+			OwnNum:     o.BuyCount,
+			DtIn:       o.BuyTime.Format("2006-01-02 15:04:05"),
+			DtOut:      formatTimeOrEmpty(o.SellTime),
+			NotifyType: notifyType,
+			PP:         ToPlayerDTO(pp),
 		})
 	}
 
@@ -235,18 +243,35 @@ func (s *UserPlayerService) UnFavPlayer(ctx context.Context, userID, playerID ui
 	return nil
 }
 
+// SetPlayerNotify 修改用户对某球员的订阅类型（仅更新 own_sta=1 且未出售的记录）
+func (s *UserPlayerService) SetPlayerNotify(ctx context.Context, userID, playerID uint, notifyType uint8) error {
+	if notifyType > 2 {
+		return fmt.Errorf("invalid notify_type")
+	}
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+	n, err := ownRepo.UpdateNotifyByUserAndPlayer(ctx, userID, playerID, notifyType)
+	if err != nil {
+		return fmt.Errorf("failed to update notify: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("未找到可修改的持仓记录")
+	}
+	return nil
+}
+
 // Helper methods
 func (s *UserPlayerService) entityToOwnDTO(o *entity.UserPlayerOwn) *dto.UserPlayerOwn {
 	return &dto.UserPlayerOwn{
-		ID:       o.ID,
-		UserID:   o.UserID,
-		PlayerID: o.PlayerID,
-		OwnSta:   uint8(o.Sta),
-		PriceIn:  o.BuyPrice,
-		PriceOut: o.SellPrice,
-		NumIn:    o.BuyCount,
-		DtIn:     o.BuyTime,
-		DtOut:    o.SellTime,
+		ID:         o.ID,
+		UserID:     o.UserID,
+		PlayerID:   o.PlayerID,
+		OwnSta:     uint8(o.Sta),
+		PriceIn:    o.BuyPrice,
+		PriceOut:   o.SellPrice,
+		NumIn:      o.BuyCount,
+		DtIn:       o.BuyTime,
+		DtOut:      o.SellTime,
+		NotifyType: o.NotifyType,
 	}
 }
 
@@ -257,14 +282,19 @@ func (s *UserPlayerService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOw
 		if o.SellTime != nil {
 			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
 		}
+		notifyType := o.NotifyType
+		if o.Sta == 0 {
+			notifyType = 0
+		}
 		info := dto.OwnInfo{
-			PlayerID: o.PlayerID,
-			PriceIn:  o.BuyPrice,
-			PriceOut: o.SellPrice,
-			OwnSta:   uint8(o.Sta),
-			OwnNum:   o.BuyCount,
-			DtIn:     o.BuyTime.Format("2006-01-02 15:04:05"),
-			DtOut:    dtOut,
+			PlayerID:   o.PlayerID,
+			PriceIn:    o.BuyPrice,
+			PriceOut:   o.SellPrice,
+			OwnSta:     uint8(o.Sta),
+			OwnNum:     o.BuyCount,
+			DtIn:       o.BuyTime.Format("2006-01-02 15:04:05"),
+			DtOut:      dtOut,
+			NotifyType: notifyType,
 		}
 		result[o.PlayerID] = append(result[o.PlayerID], info)
 	}

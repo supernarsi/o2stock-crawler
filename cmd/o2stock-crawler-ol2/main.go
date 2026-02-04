@@ -8,6 +8,7 @@ import (
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/service"
+	"o2stock-crawler/internal/wechat"
 	"os"
 	"time"
 
@@ -99,6 +100,7 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 
 	log.Printf(">>> 开始按球队抓取球员数据，共 %d 支球队 <<<", len(consts.AllCrawlTeamIDs))
 	snapshotService := service.NewSnapshotService(database)
+	crawledPlayerIDs := make(map[uint]struct{})
 
 	for i, teamId := range consts.AllCrawlTeamIDs {
 		teamName := consts.TeamIDToName[teamId]
@@ -112,9 +114,13 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 			maxPages = 2
 		}
 
-		if err := fetchTeamRoster(ctx, client, snapshotService, teamId, teamName, maxPages); err != nil {
+		ids, err := fetchTeamRoster(ctx, client, snapshotService, teamId, teamName, maxPages)
+		if err != nil {
 			log.Printf("抓取球队 %s(teamId=%d) 失败: %v", teamName, teamId, err)
 			return err
+		}
+		for _, id := range ids {
+			crawledPlayerIDs[id] = struct{}{}
 		}
 
 		// 完成当前球队后暂停 10 秒再抓取下一支球队
@@ -140,17 +146,32 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 		}
 	}
 
+	// 盈利/回本订阅通知：仅针对本次抓取到的球员检查并发送
+	flatIDs := make([]uint, 0, len(crawledPlayerIDs))
+	for id := range crawledPlayerIDs {
+		flatIDs = append(flatIDs, id)
+	}
+	wxConfig := config.LoadWechatConfigFromEnv()
+	if wxConfig.AppID != "" && wxConfig.AppSecret != "" {
+		wc := wechat.NewClient(wxConfig)
+		notifySvc := service.NewPriceNotifyService(database, wc)
+		if err := notifySvc.RunForPlayerIDs(ctx, flatIDs); err != nil {
+			log.Printf("价格订阅通知执行失败: %v", err)
+		}
+	}
+
 	return nil
 }
 
-// fetchTeamRoster 抓取指定球队的球员数据，最多抓取 maxPages 页；根据 hasMore 决定是否翻页。
-func fetchTeamRoster(ctx context.Context, client *crawler.Client, snapshotService *service.SnapshotService, teamId int, teamName string, maxPages int) error {
+// fetchTeamRoster 抓取指定球队的球员数据，最多抓取 maxPages 页；根据 hasMore 决定是否翻页。返回本队本次抓取到的球员 ID 列表。
+func fetchTeamRoster(ctx context.Context, client *crawler.Client, snapshotService *service.SnapshotService, teamId int, teamName string, maxPages int) ([]uint, error) {
 	log.Printf("--> 开始抓取球队: %s (teamId=%d)，最多 %d 页 <--", teamName, teamId, maxPages)
 
+	var playerIDs []uint
 	for page := 1; page <= maxPages; page++ {
 		resp, err := client.FetchRoster(ctx, teamId, page)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		rosterList := client.ParseRosterItemList(resp.Data.RosterList)
@@ -161,7 +182,10 @@ func fetchTeamRoster(ctx context.Context, client *crawler.Client, snapshotServic
 		now := time.Now()
 		if err := snapshotService.SaveSnapshot(ctx, rosterList, now); err != nil {
 			log.Printf("保存 %s 第 %d 页球员数据失败: %v", teamName, page, err)
-			return err
+			return nil, err
+		}
+		for i := range rosterList {
+			playerIDs = append(playerIDs, rosterList[i].PlayerID)
 		}
 		log.Printf("保存 %s 第 %d 页球员数据成功，时间: %s，球员数量: %d", teamName, page, now.Format(time.RFC3339), len(rosterList))
 
@@ -170,7 +194,7 @@ func fetchTeamRoster(ctx context.Context, client *crawler.Client, snapshotServic
 		}
 		log.Println("------------------------------")
 	}
-	return nil
+	return playerIDs, nil
 }
 
 // shouldSkipCrawl 检查当前时间是否在禁止抓取的时间段（03:00~08:00）

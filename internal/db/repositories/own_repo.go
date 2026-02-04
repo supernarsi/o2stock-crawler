@@ -55,14 +55,29 @@ func (r *OwnRepository) GetByRecordID(ctx context.Context, recordID, userID uint
 	return &result, nil
 }
 
-func (r *OwnRepository) Create(ctx context.Context, userID, playerID, num, cost uint, dt time.Time) error {
+// GetLatestActiveByUserAndPlayer 获取用户某球员最新的一条持仓记录（仅 own_sta=1 且未出售）
+func (r *OwnRepository) GetLatestActiveByUserAndPlayer(ctx context.Context, userID, playerID uint) (*entity.UserPlayerOwn, error) {
+	var result entity.UserPlayerOwn
+	err := r.ctx(ctx).
+		Where("uid = ? AND pid = ? AND own_sta = 1 AND dt_out IS NULL", userID, playerID).
+		Order("dt_in DESC").
+		Limit(1).
+		First(&result).Error
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (r *OwnRepository) Create(ctx context.Context, userID, playerID, num, cost uint, dt time.Time, notifyType uint8) error {
 	own := entity.UserPlayerOwn{
-		UserID:   userID,
-		PlayerID: playerID,
-		BuyCount: num,
-		BuyPrice: cost,
-		BuyTime:  dt,
-		Sta:      1,
+		UserID:     userID,
+		PlayerID:   playerID,
+		BuyCount:   num,
+		BuyPrice:   cost,
+		BuyTime:    dt,
+		Sta:        1,
+		NotifyType: notifyType,
 	}
 	return r.ctx(ctx).Create(&own).Error
 }
@@ -88,4 +103,34 @@ func (r *OwnRepository) Delete(ctx context.Context, userID, recordID uint) error
 	return r.ctx(ctx).
 		Where("uid = ? AND id = ?", userID, recordID).
 		Delete(&entity.UserPlayerOwn{}).Error
+}
+
+// UpdateNotifyByUserAndPlayer 更新用户持有该球员的订阅类型，并将 notify_time 置空（仅更新 own_sta=1 且 dt_out 为空的记录）
+func (r *OwnRepository) UpdateNotifyByUserAndPlayer(ctx context.Context, userID, playerID uint, notifyType uint8) (int64, error) {
+	res := r.model(ctx).
+		Where("uid = ? AND pid = ? AND own_sta = 1 AND dt_out IS NULL", userID, playerID).
+		Updates(map[string]interface{}{
+			"notify_type": notifyType,
+			"notify_time": nil,
+		})
+	return res.RowsAffected, res.Error
+}
+
+// GetActiveNotifyOwnsByPlayerIDs 获取在给定球员 ID 下的、已购买未出售且订阅了通知的持仓（own_sta=1, dt_out IS NULL, notify_type IN (1,2)）
+func (r *OwnRepository) GetActiveNotifyOwnsByPlayerIDs(ctx context.Context, playerIDs []uint) ([]entity.UserPlayerOwn, error) {
+	if len(playerIDs) == 0 {
+		return nil, nil
+	}
+	var results []entity.UserPlayerOwn
+	err := r.ctx(ctx).
+		Where("pid IN ? AND own_sta = 1 AND dt_out IS NULL AND notify_type IN (1, 2)", playerIDs).
+		Find(&results).Error
+	return results, err
+}
+
+// SetNotifyTime 将指定记录的 notify_time 更新为给定时间
+func (r *OwnRepository) SetNotifyTime(ctx context.Context, ownID uint, t time.Time) error {
+	return r.model(ctx).
+		Where("id = ?", ownID).
+		Update("notify_time", t).Error
 }

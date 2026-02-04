@@ -615,14 +615,19 @@ func (s *PlayersService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) 
 		if o.SellTime != nil {
 			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
 		}
+		notifyType := o.NotifyType
+		if o.Sta == 0 {
+			notifyType = 0
+		}
 		info := dto.OwnInfo{
-			PlayerID: o.PlayerID,
-			PriceIn:  o.BuyPrice,
-			PriceOut: o.SellPrice,
-			OwnSta:   uint8(o.Sta),
-			OwnNum:   o.BuyCount,
-			DtIn:     o.BuyTime.Format("2006-01-02 15:04:05"),
-			DtOut:    dtOut,
+			PlayerID:   o.PlayerID,
+			PriceIn:    o.BuyPrice,
+			PriceOut:   o.SellPrice,
+			OwnSta:     uint8(o.Sta),
+			OwnNum:     o.BuyCount,
+			DtIn:       o.BuyTime.Format("2006-01-02 15:04:05"),
+			DtOut:      dtOut,
+			NotifyType: notifyType,
 		}
 		result[o.PlayerID] = append(result[o.PlayerID], info)
 	}
