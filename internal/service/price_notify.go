@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"o2stock-crawler/internal/consts"
@@ -12,6 +14,9 @@ import (
 	"o2stock-crawler/internal/entity"
 	"o2stock-crawler/internal/wechat"
 )
+
+// 发送订阅消息的并发协程数
+const priceNotifyWorkers = 5
 
 // PriceNotifyService 盈利/回本订阅通知服务
 type PriceNotifyService struct {
@@ -76,8 +81,16 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 		return fmt.Errorf("get users: %w", err)
 	}
 
-	now := time.Now()
-	successCount := 0
+	// 组装待发送任务（仅达到条件的记录）
+	type sendTask struct {
+		own         entity.UserPlayerOwn
+		openID      string
+		currentStr  string
+		costStr     string
+		remark      string
+		player      *entity.Player
+	}
+	var tasks []sendTask
 	for _, o := range toCheck {
 		player, ok := playerMap[o.PlayerID]
 		if !ok {
@@ -90,56 +103,66 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 		if o.BuyCount == 0 {
 			continue
 		}
-
 		costAvg := float64(o.BuyPrice) / float64(o.BuyCount)
 		if costAvg <= 0 {
 			continue
 		}
-
 		currentPrice := float64(player.PriceStandard)
 		effectivePrice := currentPrice * 0.75
-
-		var shouldSend bool
 		var remark string
 		switch o.NotifyType {
 		case consts.NotifyTypeBreakEven:
-			if effectivePrice > costAvg {
-				shouldSend = true
-				remark = "球员已达到回本价格"
+			if effectivePrice <= costAvg {
+				continue
 			}
+			remark = "球员已达到回本价格"
 		case consts.NotifyTypeProfit15:
-			if (effectivePrice-costAvg)/costAvg > 0.15 {
-				shouldSend = true
-				remark = "球员已盈利 15%"
+			if (effectivePrice-costAvg)/costAvg <= 0.15 {
+				continue
 			}
+			remark = "球员已盈利 15%"
 		default:
 			continue
 		}
-		if !shouldSend {
-			continue
-		}
-
-		if err := s.wechat.SendPriceNotify(
-			user.WxOpenID,
-			fmt.Sprintf("%.0f", currentPrice),
-			fmt.Sprintf("%.0f", costAvg),
-			remark,
-			&player,
-		); err != nil {
-			log.Printf("[price-notify] send wechat failed own_id=%d uid=%d pid=%d: %v", o.ID, o.UserID, o.PlayerID, err)
-			continue
-		}
-
-		if err := ownRepo.SetNotifyTime(ctx, o.ID, now); err != nil {
-			log.Printf("[price-notify] set notify_time failed own_id=%d: %v", o.ID, err)
-		}
-
-		// 打印推送成功日志
-		log.Printf("[price-notify] 发送订阅消息成功 own_id=%d uid=%d pid=%d: %s", o.ID, o.UserID, o.PlayerID, remark)
-		successCount++
+		tasks = append(tasks, sendTask{
+			own:        o,
+			openID:     user.WxOpenID,
+			currentStr: fmt.Sprintf("%.0f", currentPrice),
+			costStr:    fmt.Sprintf("%.0f", costAvg),
+			remark:     remark,
+			player:     &player,
+		})
 	}
-	// 打印发送成功数量
-	log.Printf("[price-notify] 发送订阅消息成功数量: %d", successCount)
+
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	var successCount atomic.Int32
+	sem := make(chan struct{}, priceNotifyWorkers)
+	var wg sync.WaitGroup
+	for i := range tasks {
+		task := tasks[i]
+		wg.Add(1)
+		go func(t sendTask) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if err := s.wechat.SendPriceNotify(t.openID, t.currentStr, t.costStr, t.remark, t.player); err != nil {
+				log.Printf("[price-notify] send wechat failed own_id=%d uid=%d pid=%d: %v", t.own.ID, t.own.UserID, t.own.PlayerID, err)
+				return
+			}
+			if err := ownRepo.SetNotifyTime(ctx, t.own.ID, now); err != nil {
+				log.Printf("[price-notify] set notify_time failed own_id=%d: %v", t.own.ID, err)
+				return
+			}
+			log.Printf("[price-notify] 发送订阅消息成功 own_id=%d uid=%d pid=%d: %s", t.own.ID, t.own.UserID, t.own.PlayerID, t.remark)
+			successCount.Add(1)
+		}(task)
+	}
+	wg.Wait()
+	log.Printf("[price-notify] 发送订阅消息完成，成功数量: %d/%d", successCount.Load(), len(tasks))
 
 	return nil
 }
