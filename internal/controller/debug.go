@@ -78,10 +78,10 @@ func (a *API) DebugSendPlayerBreakEvenNotify() http.HandlerFunc {
 
 		if err := wc.SendPriceNotify(
 			user.WxOpenID,
-			player.ShowName,
 			fmt.Sprintf("%d", player.PriceStandard),
 			fmt.Sprintf("%.0f", costAvg),
 			"球员已达到回本价格",
+			player,
 		); err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -89,4 +89,3 @@ func (a *API) DebugSendPlayerBreakEvenNotify() http.HandlerFunc {
 		return nil, nil
 	})
 }
-

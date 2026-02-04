@@ -106,7 +106,7 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 		case consts.NotifyTypeProfit15:
 			if (effectivePrice-costAvg)/costAvg > 0.15 {
 				shouldSend = true
-				remark = "球员已达到盈利价格"
+				remark = "球员已盈利 15%"
 			}
 		default:
 			continue
@@ -117,10 +117,10 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 
 		if err := s.wechat.SendPriceNotify(
 			user.WxOpenID,
-			player.ShowName,
 			fmt.Sprintf("%.0f", currentPrice),
 			fmt.Sprintf("%.0f", costAvg),
 			remark,
+			&player,
 		); err != nil {
 			log.Printf("[price-notify] send wechat failed own_id=%d uid=%d pid=%d: %v", o.ID, o.UserID, o.PlayerID, err)
 			continue
@@ -133,4 +133,3 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 
 	return nil
 }
-

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"o2stock-crawler/internal/config"
+	"o2stock-crawler/internal/entity"
 )
 
 const (
@@ -123,27 +124,22 @@ func (c *Client) SendSubscribe(openID, templateID, page string, data SubscribeDa
 
 // SendPriceNotify 发送价格订阅通知（固定模板变量结构）
 // templateID、page 若为空则使用 Client 配置中的默认值；如仍为空，使用内置默认值。
-func (c *Client) SendPriceNotify(openID, playerName, currentPrice, costPrice, remark string) error {
+func (c *Client) SendPriceNotify(openID, currentPrice, costPrice, remark string, player *entity.Player) error {
+	if player == nil {
+		return fmt.Errorf("player is nil")
+	}
 	templateID := c.cfg.SubscribeTemplateID
 	if templateID == "" {
 		templateID = "SLYNs1NJ5tU9iRPKh8DtQ4PiOiqgtFUJnBJZJfOn6zI"
 	}
 	page := c.cfg.SubscribePage
 	if page == "" {
-		page = "pages/player/player"
+		page = "pages/player/player?playerId=" + fmt.Sprintf("%d", player.PlayerID)
 	}
 
 	now := time.Now().Format("2006-01-02 15:04")
-	// 微信 thing 字段长度限制通常较短，这里做简单截断
-	if len(playerName) > 20 {
-		playerName = playerName[:17] + "..."
-	}
-	if len(remark) > 20 {
-		remark = remark[:17] + "..."
-	}
-
 	data := SubscribeData{
-		"thing2":  {Value: playerName},
+		"thing2":  {Value: player.ShowName},
 		"amount4": {Value: currentPrice},
 		"amount3": {Value: costPrice},
 		"time5":   {Value: now},
@@ -151,4 +147,3 @@ func (c *Client) SendPriceNotify(openID, playerName, currentPrice, costPrice, re
 	}
 	return c.SendSubscribe(openID, templateID, page, data)
 }
-
