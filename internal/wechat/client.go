@@ -130,7 +130,8 @@ func (c *Client) SendPriceNotify(openID, currentPrice, costPrice, remark string,
 	}
 	templateID := c.cfg.SubscribeTemplateID
 	if templateID == "" {
-		templateID = "SLYNs1NJ5tU9iRPKh8DtQ4PiOiqgtFUJnBJZJfOn6zI"
+		// 返回错误
+		return fmt.Errorf("subscribe template id is empty")
 	}
 	page := c.cfg.SubscribePage
 	if page == "" {

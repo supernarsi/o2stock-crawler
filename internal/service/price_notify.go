@@ -129,6 +129,9 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 		if err := ownRepo.SetNotifyTime(ctx, o.ID, now); err != nil {
 			log.Printf("[price-notify] set notify_time failed own_id=%d: %v", o.ID, err)
 		}
+
+		// 打印推送成功日志
+		log.Printf("[price-notify] 发送订阅消息成功 own_id=%d uid=%d pid=%d: %s", o.ID, o.UserID, o.PlayerID, remark)
 	}
 
 	return nil
