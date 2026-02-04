@@ -25,6 +25,9 @@ func NewPriceNotifyService(database *db.DB, wc *wechat.Client) *PriceNotifyServi
 
 // RunForPlayerIDs 仅针对给定球员 ID 检查订阅并发送通知（未发送过且达到条件才发，发送后更新 notify_time）
 func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []uint) error {
+	// 打印开始发送订阅消息日志
+	log.Printf("[price-notify] 开始发送订阅消息 playerIDs=%v", playerIDs)
+
 	if len(playerIDs) == 0 {
 		return nil
 	}
@@ -74,6 +77,7 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 	}
 
 	now := time.Now()
+	successCount := 0
 	for _, o := range toCheck {
 		player, ok := playerMap[o.PlayerID]
 		if !ok {
@@ -132,7 +136,10 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 
 		// 打印推送成功日志
 		log.Printf("[price-notify] 发送订阅消息成功 own_id=%d uid=%d pid=%d: %s", o.ID, o.UserID, o.PlayerID, remark)
+		successCount++
 	}
+	// 打印发送成功数量
+	log.Printf("[price-notify] 发送订阅消息成功数量: %d", successCount)
 
 	return nil
 }
