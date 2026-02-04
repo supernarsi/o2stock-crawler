@@ -54,9 +54,13 @@ type OwnRepositoryInterface interface {
 	GetByUserID(ctx context.Context, userID uint) ([]entity.UserPlayerOwn, error)
 	GetByPlayerIDs(ctx context.Context, userID uint, playerIDs []uint) ([]entity.UserPlayerOwn, error)
 	GetByRecordID(ctx context.Context, recordID, userID uint) (*entity.UserPlayerOwn, error)
-	Create(ctx context.Context, userID, playerID, num, cost uint, dt time.Time) error
+	GetLatestActiveByUserAndPlayer(ctx context.Context, userID, playerID uint) (*entity.UserPlayerOwn, error)
+	Create(ctx context.Context, userID, playerID, num, cost uint, dt time.Time, notifyType uint8) error
 	MarkAsSold(ctx context.Context, userID, playerID, cost uint, dt time.Time) error
 	Update(ctx context.Context, userID, recordID uint, updates map[string]interface{}) error
+	UpdateNotifyByUserAndPlayer(ctx context.Context, userID, playerID uint, notifyType uint8) (int64, error)
+	GetActiveNotifyOwnsByPlayerIDs(ctx context.Context, playerIDs []uint) ([]entity.UserPlayerOwn, error)
+	SetNotifyTime(ctx context.Context, ownID uint, t time.Time) error
 	Delete(ctx context.Context, userID, recordID uint) error
 }
 

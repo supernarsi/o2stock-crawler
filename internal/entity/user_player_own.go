@@ -6,15 +6,17 @@ import (
 
 // UserPlayerOwn 用户持有球员实体
 type UserPlayerOwn struct {
-	ID        uint       `gorm:"primaryKey;column:id"`
-	UserID    uint       `gorm:"column:uid;index:idx_uid"`
-	PlayerID  uint       `gorm:"column:pid;index:idx_pid"`
-	BuyPrice  uint       `gorm:"column:price_in"`
-	BuyCount  uint       `gorm:"column:num_in"`
-	SellPrice uint       `gorm:"column:price_out"`
-	Sta       int        `gorm:"column:own_sta"` // 1:持有 2:已售出
-	BuyTime   time.Time  `gorm:"column:dt_in"`
-	SellTime  *time.Time `gorm:"column:dt_out"`
+	ID         uint       `gorm:"primaryKey;column:id"`
+	UserID     uint       `gorm:"column:uid;index:idx_uid"`
+	PlayerID   uint       `gorm:"column:pid;index:idx_pid"`
+	BuyPrice   uint       `gorm:"column:price_in"`
+	BuyCount   uint       `gorm:"column:num_in"`
+	SellPrice  uint       `gorm:"column:price_out"`
+	Sta        int        `gorm:"column:own_sta"` // 1:持有 2:已售出
+	BuyTime    time.Time  `gorm:"column:dt_in"`
+	SellTime   *time.Time `gorm:"column:dt_out"`
+	NotifyType uint8      `gorm:"column:notify_type"` // 0:不订阅 1:回本 2:盈利15%
+	NotifyTime *time.Time `gorm:"column:notify_time"`
 }
 
 // TableName returns the table name for GORM.
