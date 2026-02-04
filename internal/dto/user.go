@@ -57,16 +57,9 @@ func (u *UserPlayerOwn) ToOwnInfo() OwnInfo {
 	if u.DtOut != nil {
 		info.DtOut = u.DtOut.Format("2006-01-02 15:04:05")
 	}
-	if info.OwnSta != consts.OwnStaHolding {
+	// 仅对“持有/已购买(own_sta=1)”的记录返回实际订阅类型；其他状态返回 0
+	if info.OwnSta != consts.OwnStaPurchased {
 		info.NotifyType = consts.NotifyTypeNone
 	}
 	return info
-}
-
-// UserPlayerFav 用户收藏DTO
-type UserPlayerFav struct {
-	ID       uint      `json:"id"`
-	UserID   uint      `json:"uid"`
-	PlayerID uint      `json:"pid"`
-	CTime    time.Time `json:"c_time"`
 }
