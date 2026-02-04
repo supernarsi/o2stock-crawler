@@ -83,12 +83,12 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 
 	// 组装待发送任务（仅达到条件的记录）
 	type sendTask struct {
-		own         entity.UserPlayerOwn
-		openID      string
-		currentStr  string
-		costStr     string
-		remark      string
-		player      *entity.Player
+		own        entity.UserPlayerOwn
+		openID     string
+		currentStr string
+		costStr    string
+		remark     string
+		player     *entity.Player
 	}
 	var tasks []sendTask
 	for _, o := range toCheck {
@@ -135,6 +135,7 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 	}
 
 	if len(tasks) == 0 {
+		log.Printf("[price-notify] 没有需要发送的订阅消息")
 		return nil
 	}
 
