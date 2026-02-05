@@ -12,6 +12,7 @@ type Config struct {
 	NonseStr    string
 	Sign        string
 	BaseURL     string
+	ItemListURL string // 道具列表接口 URL，可选环境变量 OL2_ITEM_LIST_URL
 }
 
 // LoadConfigFromEnv loads crawler config from environment variables.
@@ -48,11 +49,17 @@ func LoadConfigFromEnv() (*Config, error) {
 		baseURL = "https://nba2k2app.game.qq.com/game/trade/rosterList"
 	}
 
+	itemListURL := os.Getenv("OL2_ITEM_LIST_URL")
+	if itemListURL == "" {
+		itemListURL = "https://nba2k2app.game.qq.com/game/trade/itemList"
+	}
+
 	return &Config{
 		OpenID:      openID,
 		AccessToken: accessToken,
 		NonseStr:    nonseStr,
 		Sign:        sign,
 		BaseURL:     baseURL,
+		ItemListURL: itemListURL,
 	}, nil
 }

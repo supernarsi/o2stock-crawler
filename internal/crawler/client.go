@@ -199,3 +199,107 @@ func (c *Client) ParseRosterItemList(items []RosterItem) []RosterItemModel {
 	}
 	return rosterList
 }
+
+// --- 道具列表接口 ---
+
+// ItemListResponse 道具列表接口响应
+type ItemListResponse struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data struct {
+		ItemList []ItemListItem `json:"itemList"`
+	} `json:"data"`
+}
+
+// ItemListItem 接口返回的道具原始条目
+type ItemListItem struct {
+	ItemId         int    `json:"itemId"`
+	Name           string `json:"name"`
+	Desc           string `json:"desc"`
+	Icon           string `json:"icon"`
+	CommodityCount int    `json:"commodityCount"`
+	Price          struct {
+		StandardPrice      int    `json:"standardPrice"`
+		CurrentLowestPrice string `json:"currentLowestPrice"`
+		LowerPriceForSale  int    `json:"lowerPriceForSale"`
+		UpperPriceForSale  int    `json:"upperPriceForSale"`
+		Popularity         string `json:"popularity"`
+		SalePrice          int    `json:"salePrice"`
+	} `json:"price"`
+}
+
+// ItemModel 转换后的道具模型，与落库字段一致
+type ItemModel struct {
+	ItemID             uint
+	Name               string
+	Desc               string
+	Icon               string
+	PriceStandard      int
+	PriceCurrentLowest uint
+}
+
+// FetchItemList 请求道具列表接口，无需翻页
+func (c *Client) FetchItemList(ctx context.Context) (*ItemListResponse, error) {
+	ts := time.Now().UnixMilli()
+	nonceStr := c.generateNonceStr(5)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.ItemListURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	q := req.URL.Query()
+	q.Set("openid", c.cfg.OpenID)            // 用户 openid
+	q.Set("access_token", c.cfg.AccessToken) // 用户 access_token
+	q.Set("timeStamp", fmt.Sprintf("%d", ts))
+	q.Set("nonseStr", nonceStr)
+	q.Set("sign", c.generateSign(nonceStr, ts))
+	req.URL.RawQuery = q.Encode()
+
+	log.Printf("请求道具列表接口")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("请求道具列表接口失败，状态码: %s", resp.Status)
+	}
+
+	var out ItemListResponse
+	if err := jsoniter.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("解析道具列表失败: %s", err.Error())
+	}
+	if out.Code != 0 {
+		return nil, fmt.Errorf("请求道具列表接口失败，错误码: %d 错误信息: %s", out.Code, out.Msg)
+	}
+	log.Printf("抓取道具列表成功，数量: %d", len(out.Data.ItemList))
+	return &out, nil
+}
+
+// ParseItemList 将接口原始条目转为 ItemModel，price_standard 使用 standardPrice，currentLowestPrice 解析为 uint
+func (c *Client) ParseItemList(items []ItemListItem) []ItemModel {
+	list := make([]ItemModel, len(items))
+	for i := range items {
+		item := &items[i]
+		priceStandard := item.Price.StandardPrice
+		if priceStandard == 0 && item.Price.SalePrice > 0 {
+			priceStandard = item.Price.SalePrice
+		}
+		currentLowest := uint(0)
+		if item.Price.CurrentLowestPrice != "" && item.Price.CurrentLowestPrice != "0" {
+			if v, err := strconv.Atoi(item.Price.CurrentLowestPrice); err == nil && v > 0 {
+				currentLowest = uint(v)
+			}
+		}
+		list[i] = ItemModel{
+			ItemID:             uint(item.ItemId),
+			Name:               item.Name,
+			Desc:               item.Desc,
+			Icon:               item.Icon,
+			PriceStandard:      priceStandard,
+			PriceCurrentLowest: currentLowest,
+		}
+	}
+	return list
+}

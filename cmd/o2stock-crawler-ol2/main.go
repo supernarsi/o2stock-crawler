@@ -53,6 +53,11 @@ func main() {
 
 	command := os.Args[1]
 	switch command {
+	case "item":
+		if err := runItemOnce(ctx, client, database); err != nil {
+			log.Fatalf("抓取道具失败: %v", err)
+		}
+
 	case "run-once":
 		if err := runOnce(ctx, client, database); err != nil {
 			log.Fatalf("一次性抓取失败: %v", err)
@@ -160,6 +165,38 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 		}
 	}
 
+	// 抓取道具数据并同步涨跌幅
+	if err := runItemOnce(ctx, client, database); err != nil {
+		log.Printf("抓取道具失败: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// runItemOnce 仅执行一次道具抓取：请求 itemList → 写 items + p_i_history → 同步道具涨跌幅
+func runItemOnce(ctx context.Context, client *crawler.Client, database *db.DB) error {
+	log.Printf(">>> 开始抓取道具数据 <<<")
+	resp, err := client.FetchItemList(ctx)
+	if err != nil {
+		return err
+	}
+	list := client.ParseItemList(resp.Data.ItemList)
+	if len(list) == 0 {
+		log.Printf("抓取道具完成，数量: 0")
+		return nil
+	}
+
+	now := time.Now()
+	itemSvc := service.NewItemSnapshotService(database)
+	if err := itemSvc.SaveItemSnapshot(ctx, list, now); err != nil {
+		return err
+	}
+	if err := itemSvc.SyncAllItemsPriceChanges(ctx, now.Format("200601021504")); err != nil {
+		log.Printf("同步道具涨跌幅失败: %v", err)
+		// 不因涨跌幅失败而整体失败
+	}
+	log.Printf(">>> 抓取道具完成，数量: %d <<<", len(list))
 	return nil
 }
 
