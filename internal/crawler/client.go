@@ -122,7 +122,7 @@ func (c *Client) FetchRoster(ctx context.Context, teamId int, page int) (*APIRes
 	q.Set("orientation", "desc")             // 排序方向: desc 降序，asc 升序
 	q.Set("cardType", "1")                   // 筛选系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏
 	q.Set("badges", "-1")                    // 筛选徽章
-	q.Set("grade", "1")                      // 筛选突破等级
+	q.Set("grade", "7")                      // 筛选突破等级
 	q.Set("lowPrice", "0")                   // 固定为 0
 	q.Set("highPrice", "0")                  // 筛选最高价格，0 表示不限制
 	q.Set("collapseAll", "false")
