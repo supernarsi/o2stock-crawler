@@ -11,10 +11,10 @@ import (
 
 // Client 请求客户端信息，从 Header 提取，供 controller 从 ctx 获取
 type Client struct {
-	OS              int        // X-Client-OS：1.iOS；2.安卓；3.鸿蒙；0.未知
+	OS              int        // x-client-os：1.iOS；2.安卓；3.鸿蒙；0.未知
 	IP              []byte     // 客户端 IP，varbinary(16)，IPv4 映射为 16 字节
 	ReqTime         time.Time  // 服务端请求接收时间
-	ClientTimestamp *time.Time // 客户端请求时间戳，来自 X-Timestamp（unix 秒），未提供或解析失败为 nil
+	ClientTimestamp *time.Time // 客户端请求时间戳，来自 x-timestamp（unix 秒），未提供或解析失败为 nil
 	AppVersion      string     // x-app-version：客户端版本号，用于接口兼容（如 bbr 版本判断）
 }
 
@@ -26,10 +26,10 @@ var clientKey = &contextKey{}
 func ClientMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		client := Client{
-			OS:              parseIntHeader(r.Header.Get("X-Client-OS"), 0),
+			OS:              parseIntHeader(r.Header.Get("x-client-os"), 0),
 			IP:              parseClientIP(r),
 			ReqTime:         time.Now(),
-			ClientTimestamp: parseClientTimestamp(r.Header.Get("X-Timestamp")),
+			ClientTimestamp: parseClientTimestamp(r.Header.Get("x-timestamp")),
 			AppVersion:      strings.TrimSpace(r.Header.Get("x-app-version")),
 		}
 		ctx := context.WithValue(r.Context(), clientKey, &client)
