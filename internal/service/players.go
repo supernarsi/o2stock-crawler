@@ -381,8 +381,8 @@ func (s *PlayersService) mapToHistoryRows(rows []entity.PlayerPriceHistory) []*d
 	return res
 }
 
-// GetPlayerInfo 获取单个球员信息
-func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userID *uint) (*api.PlayerWithOwned, error) {
+// GetPlayerInfo 获取单个球员信息；needBbr 为 true 时查询并返回真实牛熊率，否则 bbr 固定为 0.5
+func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userID *uint, needBbr bool) (*api.PlayerWithOwned, error) {
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 	pp, err := playerRepo.GetByID(ctx, playerID)
 	if err != nil {
@@ -414,10 +414,20 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 		}
 	}
 
+	bbr := 0.5
+	if needBbr {
+		if statsMap, err := s.GetPlayerInvestmentStats(ctx, []uint{playerID}); err == nil {
+			if st, ok := statsMap[playerID]; ok {
+				bbr = st.BullBearRate
+			}
+		}
+	}
+
 	return &api.PlayerWithOwned{
 		PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(*pp),
 		Owned:                 owned,
 		IsFav:                 isFav,
+		Bbr:                   bbr,
 	}, nil
 }
 
@@ -632,6 +642,102 @@ func (s *PlayersService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) 
 		result[o.PlayerID] = append(result[o.PlayerID], info)
 	}
 	return result
+}
+
+// GetPlayerInvestmentStats 按球员聚合全平台 u_p_own + players 计算投资盈亏与牛熊率
+// playerIDs 为空时统计所有有持仓记录的球员；返回 map[playerID]Stats
+func (s *PlayersService) GetPlayerInvestmentStats(ctx context.Context, playerIDs []uint) (map[uint]dto.PlayerInvestmentStats, error) {
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+
+	owns, err := ownRepo.GetOwnRecordsForInvestmentStats(ctx, playerIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get own records: %w", err)
+	}
+	if len(owns) == 0 {
+		return map[uint]dto.PlayerInvestmentStats{}, nil
+	}
+
+	pids := make([]uint, 0, len(owns))
+	pidSet := make(map[uint]struct{})
+	for _, o := range owns {
+		if _, ok := pidSet[o.PlayerID]; !ok {
+			pidSet[o.PlayerID] = struct{}{}
+			pids = append(pids, o.PlayerID)
+		}
+	}
+	players, err := playerRepo.BatchGetByIDs(ctx, pids)
+	if err != nil {
+		return nil, fmt.Errorf("batch get players: %w", err)
+	}
+	currentPriceByPid := make(map[uint]uint)
+	for _, p := range players {
+		currentPriceByPid[p.PlayerID] = p.PriceStandard
+	}
+
+	// 按 pid 聚合：总成本、已实现盈亏、未实现盈亏、总盈利金额、总亏损金额、笔数、盈利笔数
+	type agg struct {
+		totalCost          uint64
+		totalRealizedPnl   int64
+		totalUnrealizedPnl int64
+		totalProfitAmount  float64
+		totalLossAmount    float64
+		positionCount      int
+		profitCount        int
+	}
+	byPid := make(map[uint]*agg)
+	for _, o := range owns {
+		if byPid[o.PlayerID] == nil {
+			byPid[o.PlayerID] = &agg{}
+		}
+		a := byPid[o.PlayerID]
+		cost := uint64(o.BuyPrice)
+		a.totalCost += cost
+		a.positionCount++
+
+		var pnl int64
+		if o.Sta == 1 {
+			currentPrice := uint(0)
+			if p, ok := currentPriceByPid[o.PlayerID]; ok {
+				currentPrice = p
+			}
+			marketValue := uint64(o.BuyCount) * uint64(currentPrice)
+			unrealized := int64(marketValue) - int64(cost)
+			a.totalUnrealizedPnl += unrealized
+			pnl = unrealized
+		} else {
+			realized := int64(o.SellPrice) - int64(cost)
+			a.totalRealizedPnl += realized
+			pnl = realized
+		}
+		if pnl > 0 {
+			a.totalProfitAmount += float64(pnl)
+			a.profitCount++
+		} else if pnl < 0 {
+			a.totalLossAmount += float64(-pnl)
+		}
+	}
+
+	out := make(map[uint]dto.PlayerInvestmentStats, len(byPid))
+	for pid, a := range byPid {
+		totalPnl := a.totalRealizedPnl + a.totalUnrealizedPnl
+		bullBear := 0.5
+		sum := a.totalProfitAmount + a.totalLossAmount
+		if sum > 0 {
+			bullBear = a.totalProfitAmount / sum
+		}
+		out[pid] = dto.PlayerInvestmentStats{
+			PlayerID:           pid,
+			TotalCost:          a.totalCost,
+			TotalRealizedPnl:   a.totalRealizedPnl,
+			TotalUnrealizedPnl: a.totalUnrealizedPnl,
+			TotalPnl:           totalPnl,
+			PositionCount:      a.positionCount,
+			ProfitCount:        a.profitCount,
+			BullBearRate:       round(bullBear, 4),
+		}
+	}
+	return out, nil
 }
 
 func round(val float64, precision int) float64 {

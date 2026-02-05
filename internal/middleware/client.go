@@ -15,6 +15,7 @@ type Client struct {
 	IP              []byte     // 客户端 IP，varbinary(16)，IPv4 映射为 16 字节
 	ReqTime         time.Time  // 服务端请求接收时间
 	ClientTimestamp *time.Time // 客户端请求时间戳，来自 X-Timestamp（unix 秒），未提供或解析失败为 nil
+	AppVersion      string     // x-app-version：客户端版本号，用于接口兼容（如 bbr 版本判断）
 }
 
 type contextKey struct{}
@@ -29,6 +30,7 @@ func ClientMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			IP:              parseClientIP(r),
 			ReqTime:         time.Now(),
 			ClientTimestamp: parseClientTimestamp(r.Header.Get("X-Timestamp")),
+			AppVersion:      strings.TrimSpace(r.Header.Get("x-app-version")),
 		}
 		ctx := context.WithValue(r.Context(), clientKey, &client)
 		next(w, r.WithContext(ctx))

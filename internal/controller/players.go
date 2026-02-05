@@ -71,7 +71,12 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 		if uid, ok := GetUserIDFromContext(ctx); ok {
 			userID = &uid
 		}
-		playerInfo, err := a.playersService.GetPlayerInfo(ctx, uint(playerID), userID)
+		appVersion := ""
+		if c := middleware.MustGetClient(ctx); c != nil {
+			appVersion = c.AppVersion
+		}
+		needBbr := ApiVersionGE(appVersion, "1.2.2")
+		playerInfo, err := a.playersService.GetPlayerInfo(ctx, uint(playerID), userID, needBbr)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -163,5 +168,32 @@ func (a *API) MultiPlayersHistory() http.HandlerFunc {
 		}
 
 		return api.MultiPlayersHistoryRes{History: historyList}, nil
+	})
+}
+
+// PlayerInvestmentStats 获取球员投资盈亏统计（全平台 u_p_own + players），可选 player_ids 过滤
+func (a *API) PlayerInvestmentStats() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		var playerIDs []uint
+		if s := r.URL.Query().Get("player_ids"); s != "" {
+			parts := splitCommaSeparated(s)
+			for _, p := range parts {
+				id, err := strconv.ParseUint(p, 10, 32)
+				if err != nil {
+					return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid player_ids"}
+				}
+				playerIDs = append(playerIDs, uint(id))
+			}
+		}
+		statsMap, err := a.playersService.GetPlayerInvestmentStats(ctx, playerIDs)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+		list := make([]dto.PlayerInvestmentStats, 0, len(statsMap))
+		for _, v := range statsMap {
+			list = append(list, v)
+		}
+		return api.PlayerInvestmentStatsRes{List: list}, nil
 	})
 }

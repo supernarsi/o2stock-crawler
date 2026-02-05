@@ -54,6 +54,7 @@ func main() {
 	router.RegisterAPI("/players", apiCtl.Players(), http.MethodGet)
 	router.RegisterAPI("/player-history", apiCtl.PlayerHistory(), http.MethodGet)
 	router.RegisterAPI("/multi-players-history", apiCtl.MultiPlayersHistory(), http.MethodGet)
+	router.RegisterAPI("/players/investment-stats", apiCtl.PlayerInvestmentStats(), http.MethodGet)
 	router.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)
 	router.RegisterAPI("/ipi/player", apiCtl.IPIPlayer(), http.MethodGet)
 

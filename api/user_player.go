@@ -69,6 +69,7 @@ type PlayerWithOwned struct {
 	dto.PlayerWithPriceChange
 	Owned []*dto.OwnInfo `json:"owned"`
 	IsFav bool           `json:"is_fav"`
+	Bbr   float64        `json:"bbr"` // 牛熊率 0~1（仅 player-history 等单球员接口返回）
 }
 
 // UserFavPlayerReq 用户收藏球员请求

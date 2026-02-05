@@ -16,6 +16,11 @@ type MultiPlayersHistoryRes struct {
 	History []PlayerHistoryItem `json:"history"`
 }
 
+// PlayerInvestmentStatsRes 球员投资盈亏统计列表响应
+type PlayerInvestmentStatsRes struct {
+	List []dto.PlayerInvestmentStats `json:"list"`
+}
+
 // PlayerHistoryItem 单个球员的历史价格项
 type PlayerHistoryItem struct {
 	PlayerID uint32                 `json:"player_id"`

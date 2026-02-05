@@ -134,3 +134,15 @@ func (r *OwnRepository) SetNotifyTime(ctx context.Context, ownID uint, t time.Ti
 		Where("id = ?", ownID).
 		Update("notify_time", t).Error
 }
+
+// GetOwnRecordsForInvestmentStats 获取用于投资盈亏统计的持仓记录（含持有与已售），按球员 ID 聚合用
+// playerIDs 为空时查询全部球员
+func (r *OwnRepository) GetOwnRecordsForInvestmentStats(ctx context.Context, playerIDs []uint) ([]entity.UserPlayerOwn, error) {
+	query := r.ctx(ctx).Where("own_sta IN (1, 2)")
+	if len(playerIDs) > 0 {
+		query = query.Where("pid IN ?", playerIDs)
+	}
+	var results []entity.UserPlayerOwn
+	err := query.Order("pid, dt_in").Find(&results).Error
+	return results, err
+}

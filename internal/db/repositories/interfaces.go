@@ -61,6 +61,7 @@ type OwnRepositoryInterface interface {
 	UpdateNotifyByUserAndPlayer(ctx context.Context, userID, playerID uint, notifyType uint8) (int64, error)
 	GetActiveNotifyOwnsByPlayerIDs(ctx context.Context, playerIDs []uint) ([]entity.UserPlayerOwn, error)
 	SetNotifyTime(ctx context.Context, ownID uint, t time.Time) error
+	GetOwnRecordsForInvestmentStats(ctx context.Context, playerIDs []uint) ([]entity.UserPlayerOwn, error)
 	Delete(ctx context.Context, userID, recordID uint) error
 }
 
