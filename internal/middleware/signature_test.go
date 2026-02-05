@@ -30,13 +30,13 @@ func TestSignatureMiddleware(t *testing.T) {
 		nonce := "1234567890123456"
 		ts := strconv.FormatInt(time.Now().Unix(), 10)
 		body := []byte(`{"foo":"bar"}`)
-		
+
 		req := httptest.NewRequest("POST", "/test?q=1", bytes.NewBuffer(body))
-		
+
 		bodyHash := sha256.Sum256(body)
 		bodyDigest := hex.EncodeToString(bodyHash[:])
 		raw := fmt.Sprintf("%s%s%s%s%s", "POST", "/test?q=1", ts, nonce, bodyDigest)
-		
+
 		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write([]byte(raw))
 		sig := hex.EncodeToString(mac.Sum(nil))
@@ -56,9 +56,9 @@ func TestSignatureMiddleware(t *testing.T) {
 	t.Run("Invalid Signature", func(t *testing.T) {
 		nonce := "1234567890123456"
 		ts := strconv.FormatInt(time.Now().Unix(), 10)
-		
+
 		req := httptest.NewRequest("GET", "/test", nil)
-		
+
 		req.Header.Set("x-signature", "invalid")
 		req.Header.Set("x-timestamp", ts)
 		req.Header.Set("x-nonce", nonce)
@@ -74,7 +74,7 @@ func TestSignatureMiddleware(t *testing.T) {
 	t.Run("Expired Timestamp", func(t *testing.T) {
 		nonce := "1234567890123457"
 		ts := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
-		
+
 		req := httptest.NewRequest("GET", "/test", nil)
 		req.Header.Set("x-signature", "dummy")
 		req.Header.Set("x-timestamp", ts)
@@ -103,14 +103,14 @@ func TestSignatureMiddleware(t *testing.T) {
 	t.Run("Nonce Replay", func(t *testing.T) {
 		nonce := "1234567890123458"
 		ts := strconv.FormatInt(time.Now().Unix(), 10)
-		
+
 		// 1st Request (Valid)
 		req1 := httptest.NewRequest("GET", "/test", nil)
-		
+
 		bodyHash := sha256.Sum256(nil)
 		bodyDigest := hex.EncodeToString(bodyHash[:])
 		raw := fmt.Sprintf("%s%s%s%s%s", "GET", "/test", ts, nonce, bodyDigest)
-		
+
 		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write([]byte(raw))
 		sig := hex.EncodeToString(mac.Sum(nil))

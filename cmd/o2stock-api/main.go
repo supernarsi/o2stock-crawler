@@ -53,6 +53,8 @@ func main() {
 	router.RegisterAPI("/login", authCtl.Login(), http.MethodPost)
 	router.RegisterAPI("/players", apiCtl.Players(), http.MethodGet)
 	router.RegisterAPI("/player-history", apiCtl.PlayerHistory(), http.MethodGet)
+	router.RegisterAPI("/items", apiCtl.Items(), http.MethodGet)
+	router.RegisterAPI("/item-history", apiCtl.ItemHistory(), http.MethodGet)
 	router.RegisterAPI("/multi-players-history", apiCtl.MultiPlayersHistory(), http.MethodGet)
 	router.RegisterAPI("/players/investment-stats", apiCtl.PlayerInvestmentStats(), http.MethodGet)
 	router.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)

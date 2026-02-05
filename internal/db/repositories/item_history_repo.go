@@ -18,6 +18,17 @@ func NewItemHistoryRepository(db *gorm.DB) *ItemHistoryRepository {
 	}
 }
 
+// GetByItemID 按 item_id 查询价格历史，用于 GET /item-history
+func (r *ItemHistoryRepository) GetByItemID(ctx context.Context, itemID uint, startTime time.Time, limit int) ([]entity.ItemPriceHistory, error) {
+	var history []entity.ItemPriceHistory
+	err := r.ctx(ctx).
+		Where("item_id = ? AND at_date_hour >= ?", itemID, startTime.Format("200601021504")).
+		Order("at_date_hour ASC").
+		Limit(limit).
+		Find(&history).Error
+	return history, err
+}
+
 // GetPriceHistoryMap 取 at_date_hour >= startTime 时每个 item_id 最小 at_date_hour 的一条，用于计算 1d/7d 基准价
 func (r *ItemHistoryRepository) GetPriceHistoryMap(ctx context.Context, startTime time.Time) (map[uint]entity.ItemPriceHistory, error) {
 	startStr := startTime.Format("200601021504")

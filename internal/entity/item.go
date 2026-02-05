@@ -13,7 +13,7 @@ type Item struct {
 	PriceCurrentLowest uint      `gorm:"column:price_current_lowest"`
 	PriceChange1d      float64   `gorm:"column:price_change_1d"`
 	PriceChange7d      float64   `gorm:"column:price_change_7d"`
-	UpdatedAt         time.Time `gorm:"column:update_at;autoUpdateTime"`
+	UpdatedAt          time.Time `gorm:"column:update_at;autoUpdateTime"`
 }
 
 // TableName 表名

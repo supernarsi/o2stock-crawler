@@ -45,8 +45,8 @@ type PlayerInvestmentStats struct {
 	TotalCost          uint64  `json:"total_cost"`           // 总成本（所有仓位 price_in 之和）
 	TotalRealizedPnl   int64   `json:"total_realized_pnl"`   // 已实现盈亏（已售：price_out - price_in 之和）
 	TotalUnrealizedPnl int64   `json:"total_unrealized_pnl"` // 未实现盈亏（持有：当前市值 - price_in 之和）
-	TotalPnl           int64   `json:"total_pnl"`             // 总盈亏 = 已实现 + 未实现
-	PositionCount      int     `json:"position_count"`        // 仓位笔数（含持有+已售）
+	TotalPnl           int64   `json:"total_pnl"`            // 总盈亏 = 已实现 + 未实现
+	PositionCount      int     `json:"position_count"`       // 仓位笔数（含持有+已售）
 	ProfitCount        int     `json:"profit_count"`         // 盈利笔数（单笔 pnl > 0）
-	BullBearRate       float64 `json:"bull_bear_rate"`        // 牛熊率 0~1：1=全赚，0=全亏，0.5=中性（按金额：盈利/(盈利+亏损)）
+	BullBearRate       float64 `json:"bull_bear_rate"`       // 牛熊率 0~1：1=全赚，0=全亏，0.5=中性（按金额：盈利/(盈利+亏损)）
 }
