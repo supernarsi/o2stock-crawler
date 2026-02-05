@@ -559,15 +559,18 @@ func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 	return nil
 }
 
-// SyncAllPlayersPriceChanges 计算并同步所有球员的日涨跌幅
-func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context) error {
-	log.Printf(">>> 开始同步球员价格涨跌幅 <<<")
+// SyncAllPlayersPriceChanges 计算并同步指定球员的日涨跌幅。仅同步本次更新了数据的球员时传入 playerIDs；为空则跳过。
+func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context, playerIDs []uint) error {
+	if len(playerIDs) == 0 {
+		return nil
+	}
+	log.Printf(">>> 开始同步球员价格涨跌幅（本次抓取球员数: %d）<<<", len(playerIDs))
 	startTime := time.Now()
 
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 	historyRepo := repositories.NewHistoryRepository(s.db.DB)
 
-	players, err := playerRepo.List(ctx, repositories.PlayerFilter{Limit: 10000})
+	players, err := playerRepo.BatchGetByIDs(ctx, playerIDs)
 	if err != nil {
 		return fmt.Errorf("failed to list players: %w", err)
 	}

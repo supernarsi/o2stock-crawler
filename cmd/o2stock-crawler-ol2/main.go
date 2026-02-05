@@ -137,10 +137,15 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 
 	log.Printf(">>> 按球队抓取球员数据完成 <<<")
 
+	flatIDs := make([]uint, 0, len(crawledPlayerIDs))
+	for id := range crawledPlayerIDs {
+		flatIDs = append(flatIDs, id)
+	}
+
 	playersService := service.NewPlayersService(database)
 
-	// 同步涨跌幅逻辑：在抓取完成后执行
-	if err := playersService.SyncAllPlayersPriceChanges(ctx); err != nil {
+	// 同步涨跌幅：仅针对本次抓取到的球员
+	if err := playersService.SyncAllPlayersPriceChanges(ctx, flatIDs); err != nil {
 		log.Printf("同步球员涨跌幅失败: %v", err)
 	}
 
@@ -152,10 +157,6 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 	}
 
 	// 盈利/回本订阅通知：仅针对本次抓取到的球员检查并发送
-	flatIDs := make([]uint, 0, len(crawledPlayerIDs))
-	for id := range crawledPlayerIDs {
-		flatIDs = append(flatIDs, id)
-	}
 	wxConfig := config.LoadWechatConfigFromEnv()
 	if wxConfig.AppID != "" && wxConfig.AppSecret != "" {
 		wc := wechat.NewClient(wxConfig)
