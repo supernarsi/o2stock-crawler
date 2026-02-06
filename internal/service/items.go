@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/dto"
@@ -30,6 +31,11 @@ func NewItemsService(database *db.DB) *ItemsService {
 
 // ListItems 查询道具列表（不分页，最多 Limit 条，默认 100）
 func (s *ItemsService) ListItems(ctx context.Context, opts ItemListOptions) ([]dto.Item, error) {
+	return s.ListItemsWithOwned(ctx, opts, nil)
+}
+
+// ListItemsWithOwned 查询道具列表，并可选地包含用户的拥有信息
+func (s *ItemsService) ListItemsWithOwned(ctx context.Context, opts ItemListOptions, userID *uint) ([]dto.Item, error) {
 	itemRepo := repositories.NewItemRepository(s.db.DB)
 	limit := opts.Limit
 	if limit <= 0 {
@@ -46,11 +52,41 @@ func (s *ItemsService) ListItems(ctx context.Context, opts ItemListOptions) ([]d
 	if err != nil {
 		return nil, err
 	}
-	return s.mapItemsToDTO(items), nil
+
+	out := s.mapItemsToDTO(items)
+	// ensure owned is not null
+	for i := range out {
+		out[i].Owned = []*dto.ItemOwnInfo{}
+	}
+
+	if userID != nil && len(items) > 0 {
+		itemIDs := make([]uint, len(items))
+		for i, it := range items {
+			itemIDs[i] = it.ItemID
+		}
+		ownRepo := repositories.NewItemOwnRepository(s.db.DB)
+		ownRecords, err := ownRepo.GetByItemIDs(ctx, *userID, itemIDs)
+		if err != nil {
+			return nil, err
+		}
+		ownedMap := s.mapItemOwnRecordsToInfoMap(ownRecords)
+		for i := range out {
+			if owned, ok := ownedMap[out[i].ItemID]; ok {
+				out[i].Owned = owned
+			}
+		}
+	}
+
+	return out, nil
 }
 
 // GetItemHistory 获取单个道具信息及其价格历史（默认最近 24 小时，最多 limit 条）
 func (s *ItemsService) GetItemHistory(ctx context.Context, itemID uint, limit int) (*dto.Item, []*dto.ItemPriceHistoryRow, error) {
+	return s.GetItemHistoryWithOwned(ctx, itemID, limit, nil)
+}
+
+// GetItemHistoryWithOwned 获取单个道具信息及其价格历史，并可选包含用户拥有信息
+func (s *ItemsService) GetItemHistoryWithOwned(ctx context.Context, itemID uint, limit int, userID *uint) (*dto.Item, []*dto.ItemPriceHistoryRow, error) {
 	itemRepo := repositories.NewItemRepository(s.db.DB)
 	historyRepo := repositories.NewItemHistoryRepository(s.db.DB)
 
@@ -67,6 +103,18 @@ func (s *ItemsService) GetItemHistory(ctx context.Context, itemID uint, limit in
 		return nil, nil, err
 	}
 	itemDTO := s.itemToDTO(item)
+	itemDTO.Owned = []*dto.ItemOwnInfo{}
+	if userID != nil {
+		ownRepo := repositories.NewItemOwnRepository(s.db.DB)
+		ownRecords, err := ownRepo.GetByItemIDs(ctx, *userID, []uint{itemID})
+		if err != nil {
+			return nil, nil, err
+		}
+		ownedMap := s.mapItemOwnRecordsToInfoMap(ownRecords)
+		if owned, ok := ownedMap[itemID]; ok {
+			itemDTO.Owned = owned
+		}
+	}
 	historyDTO := s.mapItemHistoryToDTO(rows)
 	return &itemDTO, historyDTO, nil
 }
@@ -89,6 +137,7 @@ func (s *ItemsService) itemToDTO(e *entity.Item) dto.Item {
 		PriceCurrentLowest: e.PriceCurrentLowest,
 		PriceChange1d:      e.PriceChange1d,
 		PriceChange7d:      e.PriceChange7d,
+		Owned:              []*dto.ItemOwnInfo{},
 	}
 }
 
@@ -105,4 +154,34 @@ func (s *ItemsService) mapItemHistoryToDTO(rows []entity.ItemPriceHistory) []*dt
 		}
 	}
 	return out
+}
+
+func (s *ItemsService) mapItemOwnRecordsToInfoMap(records []entity.UserItemOwn) map[uint][]*dto.ItemOwnInfo {
+	result := make(map[uint][]*dto.ItemOwnInfo)
+	for _, o := range records {
+		dtOut := ""
+		if o.SellTime != nil {
+			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
+		}
+		notifyType := o.NotifyType
+		if o.Sta == consts.OwnStaNone {
+			notifyType = 0
+		}
+		info := &dto.ItemOwnInfo{
+			ItemID:     o.ItemID,
+			PriceIn:    o.BuyPrice,
+			PriceOut:   o.SellPrice,
+			OwnSta:     uint8(o.Sta),
+			OwnNum:     o.BuyCount,
+			DtIn:       o.BuyTime.Format("2006-01-02 15:04:05"),
+			DtOut:      dtOut,
+			NotifyType: notifyType,
+		}
+		// 仅对“持有/已购买”的记录返回实际订阅类型；其他状态返回 0
+		if info.OwnSta != consts.OwnStaPurchased {
+			info.NotifyType = consts.NotifyTypeNone
+		}
+		result[o.ItemID] = append(result[o.ItemID], info)
+	}
+	return result
 }

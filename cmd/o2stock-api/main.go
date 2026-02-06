@@ -69,12 +69,18 @@ func main() {
 	authGroup.RegisterAPI("/player/in", apiCtl.PlayerIn(), http.MethodPost)
 	// 标记出售
 	authGroup.RegisterAPI("/player/out", apiCtl.PlayerOut(), http.MethodPost)
+	// 标记购买道具
+	authGroup.RegisterAPI("/item/in", apiCtl.ItemIn(), http.MethodPost)
+	// 标记出售道具
+	authGroup.RegisterAPI("/item/out", apiCtl.ItemOut(), http.MethodPost)
 	// 修改持仓记录
 	authGroup.RegisterAPI("/u-player/record", apiCtl.PlayerOwnEdit(), http.MethodPut)
 	// 删除持仓记录
 	authGroup.RegisterAPI("/u-player/record", apiCtl.PlayerOwnDel(), http.MethodDelete)
 	// 用户拥有球员列表
 	authGroup.RegisterAPI("/u-players", apiCtl.UserPlayers(), http.MethodGet)
+	// 用户拥有道具列表
+	authGroup.RegisterAPI("/u-items", apiCtl.UserItems(), http.MethodGet)
 	// 用户收藏球员列表
 	authGroup.RegisterAPI("/u-fav-players", apiCtl.UserFavList(), http.MethodGet)
 	// 用户收藏球员

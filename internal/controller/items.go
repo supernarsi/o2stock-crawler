@@ -17,6 +17,12 @@ func (a *API) Items() http.HandlerFunc {
 		orderAsc := r.URL.Query().Get("order_asc") == "true"
 		itemName := r.URL.Query().Get("item_name")
 
+		// 解析可选的 user_id (从 Token 获取)
+		var userID *uint
+		if uid, ok := GetUserIDFromContext(ctx); ok {
+			userID = &uid
+		}
+
 		opts := service.ItemListOptions{
 			Limit:    100, // 固定最多 100 条，不分页
 			OrderBy:  orderBy,
@@ -24,7 +30,7 @@ func (a *API) Items() http.HandlerFunc {
 			ItemName: itemName,
 		}
 
-		items, err := a.itemsService.ListItems(ctx, opts)
+		items, err := a.itemsService.ListItemsWithOwned(ctx, opts, userID)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
@@ -46,9 +52,14 @@ func (a *API) ItemHistory() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid item_id"}
 		}
 
+		var userID *uint
+		if uid, ok := GetUserIDFromContext(ctx); ok {
+			userID = &uid
+		}
+
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 500)
 
-		itemInfo, history, err := a.itemsService.GetItemHistory(ctx, uint(itemID), limit)
+		itemInfo, history, err := a.itemsService.GetItemHistoryWithOwned(ctx, uint(itemID), limit, userID)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}

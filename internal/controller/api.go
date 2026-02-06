@@ -11,6 +11,7 @@ type API struct {
 	db               *db.DB
 	playersService   *service.PlayersService
 	userPlayerService *service.UserPlayerService
+	userItemService  *service.UserItemService
 	itemsService     *service.ItemsService
 	ipiRepo          *repositories.IPIRepository
 	playerRepo       *repositories.PlayerRepository
@@ -22,6 +23,7 @@ func NewAPI(database *db.DB) *API {
 		db:                database,
 		playersService:    service.NewPlayersService(database),
 		userPlayerService: service.NewUserPlayerService(database),
+		userItemService:   service.NewUserItemService(database),
 		itemsService:      service.NewItemsService(database),
 		ipiRepo:           repositories.NewIPIRepository(database.DB),
 		playerRepo:        repositories.NewPlayerRepository(database.DB),

@@ -1,6 +1,8 @@
 package consts
 
+// 持仓状态：用于 u_p_own / u_i_own.own_sta
 const (
-	OwnStaPurchased = 1 // 已购买
+	OwnStaNone      = 0 // 未拥有
+	OwnStaPurchased = 1 // 已购买（持有中）
 	OwnStaSold      = 2 // 已售出
 )
