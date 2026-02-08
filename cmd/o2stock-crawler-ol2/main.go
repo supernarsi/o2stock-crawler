@@ -54,8 +54,17 @@ func main() {
 	command := os.Args[1]
 	switch command {
 	case "item":
-		if err := runItemOnce(ctx, client, database); err != nil {
+		itemIDs, err := runItemOnce(ctx, client, database)
+		if err != nil {
 			log.Fatalf("抓取道具失败: %v", err)
+		}
+		wxConfig := config.LoadWechatConfigFromEnv()
+		if len(itemIDs) > 0 && wxConfig.AppID != "" && wxConfig.AppSecret != "" {
+			wc := wechat.NewClient(wxConfig)
+			notifySvc := service.NewPriceNotifyService(database, wc)
+			if err := notifySvc.RunForItemIDs(ctx, itemIDs); err != nil {
+				log.Printf("道具价格订阅通知执行失败: %v", err)
+			}
 		}
 
 	case "run-once":
@@ -156,49 +165,59 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 		}
 	}
 
-	// 盈利/回本订阅通知：仅针对本次抓取到的球员检查并发送
+	// 盈利/回本订阅通知（球员 + 道具共用同一模板 id）
 	wxConfig := config.LoadWechatConfigFromEnv()
+	var notifySvc *service.PriceNotifyService
 	if wxConfig.AppID != "" && wxConfig.AppSecret != "" {
 		wc := wechat.NewClient(wxConfig)
-		notifySvc := service.NewPriceNotifyService(database, wc)
+		notifySvc = service.NewPriceNotifyService(database, wc)
 		if err := notifySvc.RunForPlayerIDs(ctx, flatIDs); err != nil {
-			log.Printf("价格订阅通知执行失败: %v", err)
+			log.Printf("球员价格订阅通知执行失败: %v", err)
 		}
 	}
 
-	// 抓取道具数据并同步涨跌幅
-	if err := runItemOnce(ctx, client, database); err != nil {
+	// 抓取道具数据、同步涨跌幅、道具价格订阅通知
+	itemIDs, err := runItemOnce(ctx, client, database)
+	if err != nil {
 		log.Printf("抓取道具失败: %v", err)
 		return err
+	}
+	if notifySvc != nil && len(itemIDs) > 0 {
+		if err := notifySvc.RunForItemIDs(ctx, itemIDs); err != nil {
+			log.Printf("道具价格订阅通知执行失败: %v", err)
+		}
 	}
 
 	return nil
 }
 
-// runItemOnce 仅执行一次道具抓取：请求 itemList → 写 items + p_i_history → 同步道具涨跌幅
-func runItemOnce(ctx context.Context, client *crawler.Client, database *db.DB) error {
+// runItemOnce 仅执行一次道具抓取：请求 itemList → 写 items + p_i_history → 同步道具涨跌幅；返回本次抓取到的道具 ID 列表
+func runItemOnce(ctx context.Context, client *crawler.Client, database *db.DB) ([]uint, error) {
 	log.Printf(">>> 开始抓取道具数据 <<<")
 	resp, err := client.FetchItemList(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	list := client.ParseItemList(resp.Data.ItemList)
 	if len(list) == 0 {
 		log.Printf("抓取道具完成，数量: 0")
-		return nil
+		return nil, nil
 	}
 
 	now := time.Now()
 	itemSvc := service.NewItemSnapshotService(database)
 	if err := itemSvc.SaveItemSnapshot(ctx, list, now); err != nil {
-		return err
+		return nil, err
 	}
 	if err := itemSvc.SyncAllItemsPriceChanges(ctx, now.Format("200601021504")); err != nil {
 		log.Printf("同步道具涨跌幅失败: %v", err)
-		// 不因涨跌幅失败而整体失败
+	}
+	itemIDs := make([]uint, 0, len(list))
+	for i := range list {
+		itemIDs = append(itemIDs, list[i].ItemID)
 	}
 	log.Printf(">>> 抓取道具完成，数量: %d <<<", len(list))
-	return nil
+	return itemIDs, nil
 }
 
 // fetchTeamRoster 抓取指定球队的球员数据，最多抓取 maxPages 页；根据 hasMore 决定是否翻页。返回本队本次抓取到的球员 ID 列表。

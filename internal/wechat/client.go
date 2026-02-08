@@ -122,7 +122,7 @@ func (c *Client) SendSubscribe(openID, templateID, page string, data SubscribeDa
 	return nil
 }
 
-// SendPriceNotify 发送价格订阅通知（固定模板变量结构）
+// SendPriceNotify 发送价格订阅通知（固定模板变量结构，球员）
 // templateID、page 若为空则使用 Client 配置中的默认值；如仍为空，使用内置默认值。
 func (c *Client) SendPriceNotify(openID, currentPrice, costPrice, remark string, player *entity.Player) error {
 	if player == nil {
@@ -130,17 +130,39 @@ func (c *Client) SendPriceNotify(openID, currentPrice, costPrice, remark string,
 	}
 	templateID := c.cfg.SubscribeTemplateID
 	if templateID == "" {
-		// 返回错误
 		return fmt.Errorf("subscribe template id is empty")
 	}
 	page := c.cfg.SubscribePage
 	if page == "" {
 		page = "pages/player/player?playerId=" + fmt.Sprintf("%d", player.PlayerID)
 	}
-
 	now := time.Now().Format("2006-01-02 15:04")
 	data := SubscribeData{
 		"thing2":  {Value: player.ShowName},
+		"amount4": {Value: currentPrice},
+		"amount3": {Value: costPrice},
+		"time5":   {Value: now},
+		"thing6":  {Value: remark},
+	}
+	return c.SendSubscribe(openID, templateID, page, data)
+}
+
+// SendPriceNotifyForItem 发送道具价格订阅通知（与球员共用同一模板 id，thing2 为道具名称）
+func (c *Client) SendPriceNotifyForItem(openID, currentPrice, costPrice, remark string, item *entity.Item) error {
+	if item == nil {
+		return fmt.Errorf("item is nil")
+	}
+	templateID := c.cfg.SubscribeTemplateID
+	if templateID == "" {
+		return fmt.Errorf("subscribe template id is empty")
+	}
+	page := c.cfg.SubscribePage
+	if page == "" {
+		page = "pages/item/item?itemId=" + fmt.Sprintf("%d", item.ItemID)
+	}
+	now := time.Now().Format("2006-01-02 15:04")
+	data := SubscribeData{
+		"thing2":  {Value: item.Name},
 		"amount4": {Value: currentPrice},
 		"amount3": {Value: costPrice},
 		"time5":   {Value: now},

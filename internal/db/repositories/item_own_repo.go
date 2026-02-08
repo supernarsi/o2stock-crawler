@@ -89,3 +89,22 @@ func (r *ItemOwnRepository) UpdateNotifyByUserAndItem(ctx context.Context, userI
 		})
 	return res.RowsAffected, res.Error
 }
+
+// GetActiveNotifyOwnsByItemIDs 获取在给定道具 ID 下的、已购买未出售且订阅了通知的持仓（own_sta=1, dt_out IS NULL, notify_type IN (1,2)）
+func (r *ItemOwnRepository) GetActiveNotifyOwnsByItemIDs(ctx context.Context, itemIDs []uint) ([]entity.UserItemOwn, error) {
+	if len(itemIDs) == 0 {
+		return nil, nil
+	}
+	var results []entity.UserItemOwn
+	err := r.ctx(ctx).
+		Where("item_id IN ? AND own_sta = ? AND dt_out IS NULL AND notify_type IN (1, 2)", itemIDs, consts.OwnStaPurchased).
+		Find(&results).Error
+	return results, err
+}
+
+// SetNotifyTime 将指定记录的 notify_time 更新为给定时间
+func (r *ItemOwnRepository) SetNotifyTime(ctx context.Context, ownID uint, t time.Time) error {
+	return r.model(ctx).
+		Where("id = ?", ownID).
+		Update("notify_time", t).Error
+}
