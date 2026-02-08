@@ -17,6 +17,7 @@ type ItemListOptions struct {
 	OrderBy  string
 	OrderAsc bool
 	ItemName string
+	SoldOut  bool // true 时仅返回 price_current_lowest = 0 的道具
 }
 
 // ItemsService 道具相关服务
@@ -47,6 +48,7 @@ func (s *ItemsService) ListItemsWithOwned(ctx context.Context, opts ItemListOpti
 		OrderBy:  opts.OrderBy,
 		OrderAsc: opts.OrderAsc,
 		ItemName: opts.ItemName,
+		SoldOut:  opts.SoldOut,
 	}
 	items, err := itemRepo.List(ctx, filter)
 	if err != nil {

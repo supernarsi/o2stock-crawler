@@ -6,4 +6,3 @@ const (
 	NotifyTypeBreakEven uint8 = 1 // 回本通知
 	NotifyTypeProfit15  uint8 = 2 // 盈利 15% 通知
 )
-

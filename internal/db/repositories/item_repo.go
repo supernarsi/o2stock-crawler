@@ -19,6 +19,7 @@ type ItemFilter struct {
 	OrderBy  string
 	OrderAsc bool
 	ItemName string
+	SoldOut  bool // true 时仅筛选 price_current_lowest = 0
 }
 
 func NewItemRepository(db *gorm.DB) *ItemRepository {
@@ -32,6 +33,9 @@ func (r *ItemRepository) List(ctx context.Context, filter ItemFilter) ([]entity.
 	query := r.model(ctx)
 	if filter.ItemName != "" {
 		query = query.Where("name LIKE ?", "%"+filter.ItemName+"%")
+	}
+	if filter.SoldOut {
+		query = query.Where("price_current_lowest = 0")
 	}
 	if filter.OrderBy != "" {
 		direction := "DESC"

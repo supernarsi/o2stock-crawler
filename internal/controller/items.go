@@ -16,6 +16,7 @@ func (a *API) Items() http.HandlerFunc {
 		orderBy := r.URL.Query().Get("order_by")
 		orderAsc := r.URL.Query().Get("order_asc") == "true"
 		itemName := r.URL.Query().Get("item_name")
+		soldOut := r.URL.Query().Get("sold_out") == "true"
 
 		// 解析可选的 user_id (从 Token 获取)
 		var userID *uint
@@ -28,6 +29,7 @@ func (a *API) Items() http.HandlerFunc {
 			OrderBy:  orderBy,
 			OrderAsc: orderAsc,
 			ItemName: itemName,
+			SoldOut:  soldOut,
 		}
 
 		items, err := a.itemsService.ListItemsWithOwned(ctx, opts, userID)

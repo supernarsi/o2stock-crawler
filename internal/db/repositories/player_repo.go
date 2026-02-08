@@ -73,10 +73,7 @@ func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]ent
 
 	// Pagination
 	if filter.Limit > 0 {
-		offset := (filter.Page - 1) * filter.Limit
-		if offset < 0 {
-			offset = 0
-		}
+		offset := max((filter.Page-1)*filter.Limit, 0)
 		query = query.Offset(offset).Limit(filter.Limit)
 	}
 
