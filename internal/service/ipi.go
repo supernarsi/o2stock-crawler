@@ -23,6 +23,12 @@ const (
 
 	// minPriceForIPI 参与 IPI 计算的球员最低价格（price_standard），只计算价格 > minPriceForIPI 的球员
 	minPriceForIPI = 8000
+
+	// minRecentGamesForIPI 参与 IPI 计算至少需要的近期比赛场次，少于此场次的球员被排除（样本太少）
+	minRecentGamesForIPI = 5
+
+	// ipiWinsorizePercentile 归一化前对 IPI 做截断的分位数，避免极端异常值拉偏整体尺度
+	ipiWinsorizePercentile = 0.99
 )
 
 // ipiPreloadData 批量预加载的数据，避免 N+1 查询
@@ -127,6 +133,27 @@ func percentileAt(sorted []uint, p float64) uint {
 	}
 	frac := idx - float64(lo)
 	return uint(float64(sorted[lo])*(1-frac) + float64(sorted[hi])*frac)
+}
+
+// percentileAtFloat64 计算 float64 切片在给定分位（0~1）的值，线性插值
+func percentileAtFloat64(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if p <= 0 {
+		return sorted[0]
+	}
+	if p >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	idx := p * float64(len(sorted)-1)
+	lo := int(idx)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	frac := idx - float64(lo)
+	return sorted[lo]*(1-frac) + sorted[hi]*frac
 }
 
 // ipiRankData 参与排名球员的 power_per5、over_all 排名，用于计算 RankInversionIndex
@@ -314,7 +341,9 @@ func (s *IPIService) CalcIPI(sPerf, vGap, mGrowth, rRisk float64) float64 {
 }
 
 // BatchCalcIPI 批量计算 IPI：给定球员 ID 列表；若 playerIDs 为空则对「全部参与 IPI 计算的球员」计算
-// 排除：价格 ≤ minPriceForIPI、本赛季无场均数据、历史价格数据少于 minHistoryDaysForIPI 天的球员
+// 排除：价格 ≤ minPriceForIPI、本赛季无场均数据、能力值 over_all=0、历史价格数据少于 minHistoryDaysForIPI 天、
+//       近期比赛数据 < minRecentGamesForIPI 场的球员；计算中非有限分量（NaN/Inf）的球员跳过；
+//       归一化前对 IPI 做 99 分位截断以弱化异常高值影响。
 // 优化：批量预加载价格历史、比赛数据、OVR 均价，避免 N+1 查询
 func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]model.IPIResult, error) {
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
@@ -362,6 +391,15 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 	}
 	players = playersWithSeason
 
+	// 排除能力值为 0 的球员（无效或未设定 OVR）
+	playersWithOVR := make([]entity.Player, 0, len(players))
+	for i := range players {
+		if players[i].OverAll > 0 {
+			playersWithOVR = append(playersWithOVR, players[i])
+		}
+	}
+	players = playersWithOVR
+
 	// 排除历史价格数据少于 minHistoryDaysForIPI 天的球员
 	withinDays := s.config.HistoryDays
 	if withinDays <= 0 {
@@ -395,13 +433,23 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 		return nil, err
 	}
 
+	// 排除近期比赛数据 < minRecentGamesForIPI 场的球员（样本太少，近期战力/趋势不可靠）
+	playersWithEnoughGames := make([]entity.Player, 0, len(players))
+	for i := range players {
+		n := len(preload.recentGameStats[players[i].TxPlayerID])
+		if n >= minRecentGamesForIPI {
+			playersWithEnoughGames = append(playersWithEnoughGames, players[i])
+		}
+	}
+	players = playersWithEnoughGames
+
 	playerMap := make(map[uint]*entity.Player)
 	for i := range players {
 		playerMap[players[i].PlayerID] = &players[i]
 	}
 	rankData := s.buildRankDataFromPlayers(players)
 
-	// 第一轮：计算所有球员的原始分数
+	// 第一轮：计算所有球员的原始分数（非有限分量会跳过）
 	rawResults := make([]model.IPIResult, 0, len(players))
 	for _, p := range players {
 		res, err := s.calcOneIPIWithPreload(ctx, &p, seasonStatsMap[p.TxPlayerID], rankData, preload)
@@ -471,6 +519,7 @@ func (s *IPIService) preloadBatchData(ctx context.Context, playerIDs, txPlayerID
 }
 
 // calcOneIPIWithPreload 使用预加载数据计算单球员 IPI（避免单独查询 DB）
+// 若任一维度为 NaN/Inf 则返回错误，该球员被排除，避免明显异常潜力值进入结果
 func (s *IPIService) calcOneIPIWithPreload(ctx context.Context, player *entity.Player, seasonStats *entity.PlayerSeasonStats, rankData *ipiRankData, preload *ipiPreloadData) (*model.IPIResult, error) {
 	rankInv := s.rankInversionIndex(player.PlayerID, rankData)
 	sPerf := s.CalcSPerf(ctx, player, seasonStats, rankInv)
@@ -483,6 +532,10 @@ func (s *IPIService) calcOneIPIWithPreload(ctx context.Context, player *entity.P
 
 	// R_risk：使用预加载的价格历史
 	rRisk := s.calcRRiskWithPreload(player, preload)
+
+	if !isFinite(sPerf) || !isFinite(vGap) || !isFinite(mGrowth) || !isFinite(rRisk) {
+		return nil, fmt.Errorf("non-finite IPI component: player_id=%d", player.PlayerID)
+	}
 
 	ipi := s.CalcIPI(sPerf, vGap, mGrowth, rRisk)
 	meetsTax := s.MeetsTaxSafeMargin(player.PriceStandard, priceOVRAvg)
@@ -595,10 +648,29 @@ func (s *IPIService) calcRRiskWithPreload(player *entity.Player, preload *ipiPre
 	return rRisk
 }
 
+// isFinite 判断 float64 为有限值（非 NaN、非 Inf）
+func isFinite(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
+}
+
 // normalizeAndExplain 对原始分数进行 Min-Max 归一化，并添加可解释性说明
+// 归一化前对 IPI 做 99 分位截断，排除明显异常高值对尺度的拉偏
 func (s *IPIService) normalizeAndExplain(rawResults []model.IPIResult) []model.IPIResult {
 	if len(rawResults) == 0 {
 		return rawResults
+	}
+
+	// 对 IPI 做分位数截断，避免极端异常值影响归一化
+	ipiValues := make([]float64, len(rawResults))
+	for i := range rawResults {
+		ipiValues[i] = rawResults[i].IPI
+	}
+	sort.Float64s(ipiValues)
+	p99 := percentileAtFloat64(ipiValues, ipiWinsorizePercentile)
+	for i := range rawResults {
+		if rawResults[i].IPI > p99 {
+			rawResults[i].IPI = p99
+		}
 	}
 
 	// 计算各维度的 min/max
