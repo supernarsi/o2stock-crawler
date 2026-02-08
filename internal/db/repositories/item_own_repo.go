@@ -78,3 +78,14 @@ func (r *ItemOwnRepository) MarkAsSoldByID(ctx context.Context, userID, ownID, c
 		})
 	return res.RowsAffected, res.Error
 }
+
+// UpdateNotifyByUserAndItem 更新用户持有该道具的订阅类型，并将 notify_time 置空（仅更新 own_sta=1 且 dt_out 为空的记录，同球员逻辑）
+func (r *ItemOwnRepository) UpdateNotifyByUserAndItem(ctx context.Context, userID, itemID uint, notifyType uint8) (int64, error) {
+	res := r.model(ctx).
+		Where("uid = ? AND item_id = ? AND own_sta = ? AND dt_out IS NULL", userID, itemID, consts.OwnStaPurchased).
+		Updates(map[string]any{
+			"notify_type": notifyType,
+			"notify_time": nil,
+		})
+	return res.RowsAffected, res.Error
+}

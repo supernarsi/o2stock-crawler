@@ -89,6 +89,8 @@ func main() {
 	authGroup.RegisterAPI("/player/fav", apiCtl.UserUnFavPlayer(), http.MethodDelete)
 	// 修改球员价格订阅（回本/盈利通知）
 	authGroup.RegisterAPI("/player-price/notify", apiCtl.PlayerPriceNotify(), http.MethodPost)
+	// 修改道具价格订阅（回本/盈利通知）
+	authGroup.RegisterAPI("/item-price/notify", apiCtl.ItemPriceNotify(), http.MethodPost)
 
 	mux := http.NewServeMux()
 	router.Apply(mux)

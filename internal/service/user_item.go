@@ -63,6 +63,22 @@ func (s *UserItemService) ItemOut(ctx context.Context, userID, ownID, itemID, co
 	return nil
 }
 
+// SetItemNotify 修改用户对某道具的订阅类型（仅更新 own_sta=1 且未出售的记录，同球员逻辑）
+func (s *UserItemService) SetItemNotify(ctx context.Context, userID, itemID uint, notifyType uint8) error {
+	if notifyType > 2 {
+		return fmt.Errorf("invalid notify_type")
+	}
+	ownRepo := repositories.NewItemOwnRepository(s.db.DB)
+	n, err := ownRepo.UpdateNotifyByUserAndItem(ctx, userID, itemID, notifyType)
+	if err != nil {
+		return fmt.Errorf("failed to update notify: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("未找到可修改的持仓记录")
+	}
+	return nil
+}
+
 // GetUserItems 获取用户拥有道具列表
 func (s *UserItemService) GetUserItems(ctx context.Context, userID uint) ([]api.OwnedItem, error) {
 	ownRepo := repositories.NewItemOwnRepository(s.db.DB)

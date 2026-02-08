@@ -106,3 +106,34 @@ func (a *API) UserItems() http.HandlerFunc {
 		return api.UserItemsRes{Rosters: rosters}, nil
 	})
 }
+
+// ItemPriceNotify 修改道具价格订阅
+func (a *API) ItemPriceNotify() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		var req api.ItemPriceNotifyReq
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+		}
+		if req.ItemID == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing item_id"}
+		}
+		if req.NotifyType > 2 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid notify_type"}
+		}
+
+		err := a.userItemService.SetItemNotify(ctx, userID, req.ItemID, req.NotifyType)
+		if err != nil {
+			if strings.Contains(err.Error(), "未找到可修改的持仓记录") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+		return nil, nil
+	})
+}

@@ -30,6 +30,12 @@ type ItemOutReq struct {
 	Dt     string `json:"dt"` // 格式: 2006-01-02
 }
 
+// ItemPriceNotifyReq 修改道具价格订阅请求
+type ItemPriceNotifyReq struct {
+	ItemID     uint  `json:"item_id"`
+	NotifyType uint8 `json:"notify_type"` // 0:不订阅 1:回本 2:盈利15%
+}
+
 // OwnedItem 用户拥有的道具（包含道具信息）
 type OwnedItem struct {
 	Id         uint     `json:"id" dc:"持仓记录 id"`
