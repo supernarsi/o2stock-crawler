@@ -56,7 +56,7 @@ type APIResponse struct {
 	} `json:"data"`
 }
 
-// 接口返回的原始数据类型
+// 接口返回的原始数据类型（支持 overAll 与 over_all 两种字段名，兼容 API 返回格式差异）
 type RosterItem struct {
 	PlayerID    string `json:"playerId" dc:"球员ID"`
 	Grade       string `json:"grade" dc:"等级"`
@@ -66,7 +66,8 @@ type RosterItem struct {
 	TeamAbbr    string `json:"teamAbbr" dc:"球队"`
 	CardTypeStr string `json:"cardType" dc:"系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏"`
 	VersionStr  string `json:"Version" dc:"球员年代，0 表示现役"`
-	OverAll     int    `json:"overAll" dc:"球员能力值"`
+	OverAll     int    `json:"overAll" dc:"球员能力值(驼峰)"`
+	OverAllSnake int   `json:"over_all" dc:"球员能力值(蛇形，兼容)"`
 	Price       struct {
 		StandardPrice      int    `json:"standardPrice" dc:"标准价格"`
 		CurrentLowestPrice string `json:"currentLowestPrice" dc:"当前出售的最低价格"`
@@ -178,6 +179,14 @@ func (c *Client) generateSign(nonceStr string, timestamp int64) string {
 func (c *Client) parseRosterItem(item RosterItem) RosterItemModel {
 	playerID, _ := strconv.Atoi(item.PlayerID)
 	grade, _ := strconv.Atoi(item.Grade)
+	// 兼容 overAll / over_all 两种字段名，优先取非零值
+	overAll := item.OverAll
+	if overAll == 0 && item.OverAllSnake != 0 {
+		overAll = item.OverAllSnake
+	}
+	if overAll == 0 {
+		log.Printf("[Crawler] 解析到 overAll=0 player_id=%s showName=%s，可能为接口字段缺失或格式异常", item.PlayerID, item.ShowName)
+	}
 	return RosterItemModel{
 		PlayerID:    uint(playerID),
 		Grade:       uint8(grade),
@@ -188,7 +197,7 @@ func (c *Client) parseRosterItem(item RosterItem) RosterItemModel {
 		CardTypeStr: item.CardTypeStr,
 		VersionStr:  item.VersionStr,
 		Price:       item.Price,
-		OverAll:     item.OverAll,
+		OverAll:     overAll,
 	}
 }
 

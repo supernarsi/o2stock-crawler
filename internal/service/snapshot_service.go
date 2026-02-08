@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
@@ -89,7 +90,8 @@ func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *c
 
 	if exists {
 		// 执行更新，通过主键 ID 锁定记录，不会触发 auto_increment 自增
-		return tx.WithContext(ctx).Model(existing).Updates(map[string]any{
+		// over_all：仅当接口返回有效值(>0)时更新，否则保留 DB 原值，避免 API 字段缺失/解析失败导致覆盖为 0
+		updates := map[string]any{
 			"p_name_show":          item.ShowName,
 			"team_abbr":            item.TeamAbbr,
 			"version":              uint(version),
@@ -99,12 +101,21 @@ func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *c
 			"price_current_lowest": uint(currentLowest),
 			"price_sale_lower":     uint(priceSaleLower),
 			"price_sale_upper":     uint(priceSaleUpper),
-			"over_all":             uint(item.OverAll),
 			"update_at":            now,
-		}).Error
+		}
+		if item.OverAll > 0 {
+			updates["over_all"] = uint(item.OverAll)
+		} else if existing.OverAll > 0 {
+			log.Printf("[SaveSnapshot] 更新跳过 over_all player_id=%d showName=%s 接口返回 0，保留原值 %d", item.PlayerID, item.ShowName, existing.OverAll)
+		}
+		return tx.WithContext(ctx).Model(existing).Updates(updates).Error
 	}
 
 	// 执行插入
+	overAll := uint(item.OverAll)
+	if item.OverAll <= 0 {
+		log.Printf("[SaveSnapshot] 新球员 player_id=%d showName=%s 接口返回 overAll=0，插入时保持 0", item.PlayerID, item.ShowName)
+	}
 	player := entity.Player{
 		PlayerID:           item.PlayerID,
 		ShowName:           item.ShowName,
@@ -117,7 +128,7 @@ func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *c
 		PriceCurrentLowest: uint(currentLowest),
 		PriceSaleLower:     uint(priceSaleLower),
 		PriceSaleUpper:     uint(priceSaleUpper),
-		OverAll:            uint(item.OverAll),
+		OverAll:            overAll,
 		UpdatedAt:          now,
 	}
 	return tx.WithContext(ctx).Create(&player).Error
