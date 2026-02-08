@@ -17,6 +17,7 @@ type Item struct {
 
 // ItemOwnInfo 简化版道具持仓信息 DTO（用于 items/item-history 的 owned 字段）
 type ItemOwnInfo struct {
+	OwnID      uint   `json:"own_id"` // 持仓记录 id，POST /item/out 时传参
 	ItemID     uint   `json:"item_id"`
 	PriceIn    uint   `json:"price_in"`
 	PriceOut   uint   `json:"price_out"`

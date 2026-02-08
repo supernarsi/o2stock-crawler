@@ -39,7 +39,7 @@ func (a *API) Items() http.HandlerFunc {
 	})
 }
 
-// ItemHistory 获取单个道具价格历史 GET /item-history?item_id=xxx
+// ItemHistory 获取单个道具价格历史 GET /item-history?item_id=xxx&mode=realtime|5d|10d|30d|dailyk
 func (a *API) ItemHistory() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		ctx := r.Context()
@@ -57,9 +57,20 @@ func (a *API) ItemHistory() http.HandlerFunc {
 			userID = &uid
 		}
 
+		mode := r.URL.Query().Get("mode")
+		if mode == "" {
+			mode = "realtime"
+		}
+		switch mode {
+		case "realtime", "5d", "10d", "30d", "dailyk":
+			// valid
+		default:
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid mode, must be one of: realtime, 5d, 10d, 30d, dailyk"}
+		}
+
 		limit := parseIntDefault(r.URL.Query().Get("limit"), 500)
 
-		itemInfo, history, err := a.itemsService.GetItemHistoryWithOwned(ctx, uint(itemID), limit, userID)
+		itemInfo, history, err := a.itemsService.GetItemHistoryWithOwned(ctx, uint(itemID), mode, limit, userID)
 		if err != nil {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}

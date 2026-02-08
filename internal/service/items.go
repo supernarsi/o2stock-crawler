@@ -2,12 +2,12 @@ package service
 
 import (
 	"context"
+	"math"
 	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/entity"
-	"time"
 )
 
 // ItemListOptions 道具列表查询参数
@@ -80,13 +80,14 @@ func (s *ItemsService) ListItemsWithOwned(ctx context.Context, opts ItemListOpti
 	return out, nil
 }
 
-// GetItemHistory 获取单个道具信息及其价格历史（默认最近 24 小时，最多 limit 条）
+// GetItemHistory 获取单个道具信息及其价格历史（默认 realtime 模式）
 func (s *ItemsService) GetItemHistory(ctx context.Context, itemID uint, limit int) (*dto.Item, []*dto.ItemPriceHistoryRow, error) {
-	return s.GetItemHistoryWithOwned(ctx, itemID, limit, nil)
+	return s.GetItemHistoryWithOwned(ctx, itemID, "realtime", limit, nil)
 }
 
 // GetItemHistoryWithOwned 获取单个道具信息及其价格历史，并可选包含用户拥有信息
-func (s *ItemsService) GetItemHistoryWithOwned(ctx context.Context, itemID uint, limit int, userID *uint) (*dto.Item, []*dto.ItemPriceHistoryRow, error) {
+// mode: realtime | 5d | 10d | 30d | dailyk，与 GET /player-history 一致；limit 仅 realtime 时生效（默认 500）
+func (s *ItemsService) GetItemHistoryWithOwned(ctx context.Context, itemID uint, mode string, limit int, userID *uint) (*dto.Item, []*dto.ItemPriceHistoryRow, error) {
 	itemRepo := repositories.NewItemRepository(s.db.DB)
 	historyRepo := repositories.NewItemHistoryRepository(s.db.DB)
 
@@ -94,14 +95,47 @@ func (s *ItemsService) GetItemHistoryWithOwned(ctx context.Context, itemID uint,
 	if err != nil {
 		return nil, nil, err
 	}
+	if mode == "" {
+		mode = "realtime"
+	}
 	if limit <= 0 {
 		limit = 500
 	}
-	startTime := time.Now().Add(-24 * time.Hour)
-	rows, err := historyRepo.GetByItemID(ctx, itemID, startTime, limit)
-	if err != nil {
-		return nil, nil, err
+
+	var rows []entity.ItemPriceHistory
+	switch mode {
+	case "realtime":
+		rows, err = historyRepo.GetRealtime(ctx, itemID)
+		if err != nil {
+			return nil, nil, err
+		}
+		rows = s.sampleItemRealtime(rows)
+	case "5d":
+		rows, err = historyRepo.Get5Days(ctx, itemID)
+		if err != nil {
+			return nil, nil, err
+		}
+		rows = s.sampleItem5Days(rows)
+	case "10d":
+		rows, err = historyRepo.GetDays(ctx, itemID, 10)
+		if err != nil {
+			return nil, nil, err
+		}
+	case "30d":
+		rows, err = historyRepo.GetDays(ctx, itemID, 30)
+		if err != nil {
+			return nil, nil, err
+		}
+	case "dailyk":
+		rows, err = historyRepo.GetDailyK(ctx, itemID)
+		if err != nil {
+			return nil, nil, err
+		}
+	default:
+		// 由 controller 校验 mode，此处不返回 error 避免重复
+		rows = nil
 	}
+
 	itemDTO := s.itemToDTO(item)
 	itemDTO.Owned = []*dto.ItemOwnInfo{}
 	if userID != nil {
@@ -117,6 +151,61 @@ func (s *ItemsService) GetItemHistoryWithOwned(ctx context.Context, itemID uint,
 	}
 	historyDTO := s.mapItemHistoryToDTO(rows)
 	return &itemDTO, historyDTO, nil
+}
+
+// sampleItemRealtime 分时采样：每小时保留该小时第一个点，并保留最后一个点（与球员一致）
+func (s *ItemsService) sampleItemRealtime(rows []entity.ItemPriceHistory) []entity.ItemPriceHistory {
+	if len(rows) == 0 {
+		return rows
+	}
+	var sampled []entity.ItemPriceHistory
+	seenHour := make(map[string]bool)
+	for i := 0; i < len(rows)-1; i++ {
+		row := rows[i]
+		key := row.AtDate.Format("2006010215") + row.AtHour
+		if !seenHour[key] {
+			sampled = append(sampled, row)
+			seenHour[key] = true
+		}
+	}
+	sampled = append(sampled, rows[len(rows)-1])
+	return sampled
+}
+
+// sampleItem5Days 5 日采样：每天最多 4 个点（0, 1/3, 2/3, last 索引）+ 最后一个点（与球员一致）
+func (s *ItemsService) sampleItem5Days(rows []entity.ItemPriceHistory) []entity.ItemPriceHistory {
+	if len(rows) == 0 {
+		return rows
+	}
+	dayMap := make(map[string][]entity.ItemPriceHistory)
+	var days []string
+	for i := 0; i < len(rows)-1; i++ {
+		row := rows[i]
+		dayKey := row.AtDate.Format("2006-01-02")
+		if _, exists := dayMap[dayKey]; !exists {
+			days = append(days, dayKey)
+		}
+		dayMap[dayKey] = append(dayMap[dayKey], row)
+	}
+	var sampled []entity.ItemPriceHistory
+	for _, day := range days {
+		dayRows := dayMap[day]
+		count := len(dayRows)
+		if count <= 4 {
+			sampled = append(sampled, dayRows...)
+		} else {
+			step := float64(count-1) / 3.0
+			for k := 0; k < 4; k++ {
+				idx := int(math.Round(float64(k) * step))
+				if idx >= count {
+					idx = count - 1
+				}
+				sampled = append(sampled, dayRows[idx])
+			}
+		}
+	}
+	sampled = append(sampled, rows[len(rows)-1])
+	return sampled
 }
 
 func (s *ItemsService) mapItemsToDTO(items []entity.Item) []dto.Item {
@@ -168,6 +257,7 @@ func (s *ItemsService) mapItemOwnRecordsToInfoMap(records []entity.UserItemOwn) 
 			notifyType = 0
 		}
 		info := &dto.ItemOwnInfo{
+			OwnID:      o.ID,
 			ItemID:     o.ItemID,
 			PriceIn:    o.BuyPrice,
 			PriceOut:   o.SellPrice,
