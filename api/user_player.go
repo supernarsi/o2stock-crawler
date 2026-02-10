@@ -43,6 +43,7 @@ type PlayerOwnDeleteReq struct {
 // OwnedPlayer 用户拥有的球员（包含球员信息）
 type OwnedPlayer struct {
 	Id         uint        `json:"id" dc:"持仓记录 id"`
+	OwnGoods   uint8       `json:"own_goods"`
 	PlayerID   uint        `json:"player_id"`
 	PriceIn    uint        `json:"price_in"`
 	PriceOut   uint        `json:"price_out"`

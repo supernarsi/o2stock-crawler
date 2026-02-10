@@ -41,7 +41,7 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 	userRepo := repositories.NewUserRepository(s.db.DB)
 
-	owns, err := ownRepo.GetActiveNotifyOwnsByPlayerIDs(ctx, playerIDs)
+	owns, err := ownRepo.GetActiveNotifyOwnsByGoodsIDs(ctx, playerIDs, consts.OwnGoodsPlayer)
 	if err != nil {
 		return fmt.Errorf("get active notify owns: %w", err)
 	}
@@ -175,11 +175,11 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 	}
 	log.Printf("[price-notify] 开始发送道具订阅消息 itemIDs 数量: %d", len(itemIDs))
 
-	itemOwnRepo := repositories.NewItemOwnRepository(s.db.DB)
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
 	itemRepo := repositories.NewItemRepository(s.db.DB)
 	userRepo := repositories.NewUserRepository(s.db.DB)
 
-	owns, err := itemOwnRepo.GetActiveNotifyOwnsByItemIDs(ctx, itemIDs)
+	owns, err := ownRepo.GetActiveNotifyOwnsByGoodsIDs(ctx, itemIDs, consts.OwnGoodsItem)
 	if err != nil {
 		return fmt.Errorf("get active notify owns by item ids: %w", err)
 	}
@@ -187,7 +187,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 		return nil
 	}
 
-	var toCheck []entity.UserItemOwn
+	var toCheck []entity.UserPlayerOwn
 	for i := range owns {
 		if owns[i].NotifyTime == nil {
 			toCheck = append(toCheck, owns[i])
@@ -200,7 +200,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 	ids := make([]uint, 0, len(toCheck))
 	uids := make([]uint, 0, len(toCheck))
 	for _, o := range toCheck {
-		ids = append(ids, o.ItemID)
+		ids = append(ids, o.PlayerID)
 		uids = append(uids, o.UserID)
 	}
 
@@ -219,7 +219,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 	}
 
 	type itemSendTask struct {
-		own        entity.UserItemOwn
+		own        entity.UserPlayerOwn
 		openID     string
 		currentStr string
 		costStr    string
@@ -228,7 +228,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 	}
 	var tasks []itemSendTask
 	for _, o := range toCheck {
-		item, ok := itemMap[o.ItemID]
+		item, ok := itemMap[o.PlayerID]
 		if !ok {
 			continue
 		}
@@ -287,14 +287,14 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if err := s.wechat.SendPriceNotifyForItem(t.openID, t.currentStr, t.costStr, t.remark, t.item); err != nil {
-				log.Printf("[price-notify] send item wechat failed own_id=%d uid=%d item_id=%d: %v", t.own.ID, t.own.UserID, t.own.ItemID, err)
+				log.Printf("[price-notify] send item wechat failed own_id=%d uid=%d item_id=%d: %v", t.own.ID, t.own.UserID, t.own.PlayerID, err)
 				return
 			}
-			if err := itemOwnRepo.SetNotifyTime(ctx, t.own.ID, now); err != nil {
+			if err := ownRepo.SetNotifyTime(ctx, t.own.ID, now); err != nil {
 				log.Printf("[price-notify] set item notify_time failed own_id=%d: %v", t.own.ID, err)
 				return
 			}
-			log.Printf("[price-notify] 发送道具订阅消息成功 own_id=%d uid=%d item_id=%d: %s", t.own.ID, t.own.UserID, t.own.ItemID, t.remark)
+			log.Printf("[price-notify] 发送道具订阅消息成功 own_id=%d uid=%d item_id=%d: %s", t.own.ID, t.own.UserID, t.own.PlayerID, t.remark)
 			successCount.Add(1)
 		}(task)
 	}

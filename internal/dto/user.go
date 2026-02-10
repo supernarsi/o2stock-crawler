@@ -21,6 +21,7 @@ type User struct {
 type UserPlayerOwn struct {
 	ID         uint       `json:"id"`
 	UserID     uint       `json:"uid"`
+	OwnGoods   uint8      `json:"own_goods"`
 	PlayerID   uint       `json:"pid"`
 	OwnSta     uint8      `json:"own_sta"`
 	PriceIn    uint       `json:"price_in"`
@@ -34,6 +35,7 @@ type UserPlayerOwn struct {
 // OwnInfo 简化版持仓信息DTO
 type OwnInfo struct {
 	PlayerID   uint   `json:"player_id"`
+	OwnGoods   uint8  `json:"own_goods"` // 1:球员; 2:道具
 	PriceIn    uint   `json:"price_in"`
 	PriceOut   uint   `json:"price_out"`
 	OwnSta     uint8  `json:"own_sta"`
@@ -47,6 +49,7 @@ type OwnInfo struct {
 func (u *UserPlayerOwn) ToOwnInfo() OwnInfo {
 	info := OwnInfo{
 		PlayerID:   u.PlayerID,
+		OwnGoods:   u.OwnGoods,
 		PriceIn:    u.PriceIn,
 		PriceOut:   u.PriceOut,
 		OwnSta:     u.OwnSta,

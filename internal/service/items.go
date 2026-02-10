@@ -66,8 +66,8 @@ func (s *ItemsService) ListItemsWithOwned(ctx context.Context, opts ItemListOpti
 		for i, it := range items {
 			itemIDs[i] = it.ItemID
 		}
-		ownRepo := repositories.NewItemOwnRepository(s.db.DB)
-		ownRecords, err := ownRepo.GetByItemIDs(ctx, *userID, itemIDs)
+		ownRepo := repositories.NewOwnRepository(s.db.DB)
+		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *userID, itemIDs, consts.OwnGoodsItem)
 		if err != nil {
 			return nil, err
 		}
@@ -141,8 +141,8 @@ func (s *ItemsService) GetItemHistoryWithOwned(ctx context.Context, itemID uint,
 	itemDTO := s.itemToDTO(item)
 	itemDTO.Owned = []*dto.ItemOwnInfo{}
 	if userID != nil {
-		ownRepo := repositories.NewItemOwnRepository(s.db.DB)
-		ownRecords, err := ownRepo.GetByItemIDs(ctx, *userID, []uint{itemID})
+		ownRepo := repositories.NewOwnRepository(s.db.DB)
+		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *userID, []uint{itemID}, consts.OwnGoodsItem)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -247,7 +247,7 @@ func (s *ItemsService) mapItemHistoryToDTO(rows []entity.ItemPriceHistory) []*dt
 	return out
 }
 
-func (s *ItemsService) mapItemOwnRecordsToInfoMap(records []entity.UserItemOwn) map[uint][]*dto.ItemOwnInfo {
+func (s *ItemsService) mapItemOwnRecordsToInfoMap(records []entity.UserPlayerOwn) map[uint][]*dto.ItemOwnInfo {
 	result := make(map[uint][]*dto.ItemOwnInfo)
 	for _, o := range records {
 		dtOut := ""
@@ -255,12 +255,12 @@ func (s *ItemsService) mapItemOwnRecordsToInfoMap(records []entity.UserItemOwn) 
 			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
 		}
 		notifyType := o.NotifyType
-		if o.Sta == consts.OwnStaNone {
-			notifyType = 0
+		if o.Sta == int(consts.OwnStaNone) {
+			notifyType = consts.NotifyTypeNone
 		}
 		info := &dto.ItemOwnInfo{
 			OwnID:      o.ID,
-			ItemID:     o.ItemID,
+			ItemID:     o.PlayerID,
 			PriceIn:    o.BuyPrice,
 			PriceOut:   o.SellPrice,
 			OwnSta:     uint8(o.Sta),
@@ -273,7 +273,7 @@ func (s *ItemsService) mapItemOwnRecordsToInfoMap(records []entity.UserItemOwn) 
 		if info.OwnSta != consts.OwnStaPurchased {
 			info.NotifyType = consts.NotifyTypeNone
 		}
-		result[o.ItemID] = append(result[o.ItemID], info)
+		result[o.PlayerID] = append(result[o.PlayerID], info)
 	}
 	return result
 }

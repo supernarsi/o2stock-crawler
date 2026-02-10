@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"o2stock-crawler/api"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/dto"
@@ -28,7 +29,7 @@ func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num,
 	ownRepo := repositories.NewOwnRepository(s.db.DB)
 
 	// 检查是否已拥有超过 2 条
-	count, err := ownRepo.CountOwned(ctx, userID, playerID)
+	count, err := ownRepo.CountOwned(ctx, userID, playerID, consts.OwnGoodsPlayer)
 	if err != nil {
 		return fmt.Errorf("failed to count owned players: %w", err)
 	}
@@ -37,10 +38,10 @@ func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num,
 	}
 
 	if notifyType > 2 {
-		notifyType = 0
+		notifyType = consts.NotifyTypeNone
 	}
 	// 插入购买记录
-	if err := ownRepo.Create(ctx, userID, playerID, num, cost, dt, notifyType); err != nil {
+	if err := ownRepo.Create(ctx, userID, playerID, num, cost, dt, notifyType, consts.OwnGoodsPlayer); err != nil {
 		return fmt.Errorf("failed to insert player own: %w", err)
 	}
 
@@ -50,7 +51,7 @@ func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num,
 // PlayerOut 标记出售球员
 func (s *UserPlayerService) PlayerOut(ctx context.Context, userID, playerID, cost uint, dt time.Time) error {
 	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	if err := ownRepo.MarkAsSold(ctx, userID, playerID, cost, dt); err != nil {
+	if err := ownRepo.MarkAsSold(ctx, userID, playerID, cost, dt, consts.OwnGoodsPlayer); err != nil {
 		return fmt.Errorf("failed to update player own to sold: %w", err)
 	}
 	return nil
@@ -101,7 +102,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 	ownRepo := repositories.NewOwnRepository(s.db.DB)
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 
-	ownedList, err := ownRepo.GetByUserID(ctx, userID)
+	ownedList, err := ownRepo.GetByUserID(ctx, userID, consts.OwnGoodsPlayer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user owned players: %w", err)
 	}
@@ -135,8 +136,8 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 			continue
 		}
 		notifyType := o.NotifyType
-		if o.Sta == 0 {
-			notifyType = 0
+		if o.Sta == int(consts.OwnStaNone) {
+			notifyType = consts.NotifyTypeNone
 		}
 		rosters = append(rosters, api.OwnedPlayer{
 			Id:         o.ID,
@@ -178,7 +179,7 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 	}
 
 	// 3. 获取拥有信息
-	ownRecords, err := ownRepo.GetByPlayerIDs(ctx, userID, favIDs)
+	ownRecords, err := ownRepo.GetByGoodsIDs(ctx, userID, favIDs, consts.OwnGoodsPlayer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get owned info: %w", err)
 	}
@@ -249,7 +250,7 @@ func (s *UserPlayerService) SetPlayerNotify(ctx context.Context, userID, playerI
 		return fmt.Errorf("invalid notify_type")
 	}
 	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	n, err := ownRepo.UpdateNotifyByUserAndPlayer(ctx, userID, playerID, notifyType)
+	n, err := ownRepo.UpdateNotifyByUserAndGoods(ctx, userID, playerID, notifyType, consts.OwnGoodsPlayer)
 	if err != nil {
 		return fmt.Errorf("failed to update notify: %w", err)
 	}
@@ -283,8 +284,8 @@ func (s *UserPlayerService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOw
 			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
 		}
 		notifyType := o.NotifyType
-		if o.Sta == 0 {
-			notifyType = 0
+		if o.Sta == int(consts.OwnStaNone) {
+			notifyType = consts.NotifyTypeNone
 		}
 		info := dto.OwnInfo{
 			PlayerID:   o.PlayerID,

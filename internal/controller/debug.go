@@ -7,12 +7,19 @@ import (
 
 	"o2stock-crawler/api"
 	"o2stock-crawler/internal/config"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/middleware"
 	"o2stock-crawler/internal/wechat"
 
 	"gorm.io/gorm"
 )
+
+func (a *API) Test() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		return nil, nil
+	})
+}
 
 // DebugSendPlayerBreakEvenNotify 内部调试：传入 uid + player_id，给该用户推送该球员的回本订阅消息
 //
@@ -68,7 +75,7 @@ func (a *API) DebugSendPlayerBreakEvenNotify() http.HandlerFunc {
 
 		// 固定推送“回本信息”：amount4=当前身价（price_standard），amount3=成本均价（优先取持仓成本）
 		costAvg := float64(0)
-		own, err := ownRepo.GetLatestActiveByUserAndPlayer(ctx, req.UID, req.PlayerID)
+		own, err := ownRepo.GetLatestActiveByUserAndGoods(ctx, req.UID, req.PlayerID, consts.OwnGoodsPlayer)
 		if err != nil && err != gorm.ErrRecordNotFound {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}

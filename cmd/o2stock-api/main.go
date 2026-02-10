@@ -93,6 +93,10 @@ func main() {
 	authGroup.RegisterAPI("/item-price/notify", apiCtl.ItemPriceNotify(), http.MethodPost)
 
 	mux := http.NewServeMux()
+
+	// 测试接口，不需要任何鉴权/签名等中间件，直接挂在 mux 上
+	mux.HandleFunc("/", apiCtl.Test())
+
 	router.Apply(mux)
 	authGroup.Apply(mux)
 

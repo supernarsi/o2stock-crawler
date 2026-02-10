@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"o2stock-crawler/api"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/dto"
@@ -78,7 +79,7 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 			pids[i] = p.PlayerID
 		}
 		ownRepo := repositories.NewOwnRepository(s.db.DB)
-		ownRecords, err := ownRepo.GetByPlayerIDs(ctx, *opts.UserID, pids)
+		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *opts.UserID, pids, consts.OwnGoodsPlayer)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get owned info: %w", err)
 		}
@@ -141,7 +142,7 @@ func (s *PlayersService) GetPlayersWithOwnedByIDs(ctx context.Context, playerIDs
 	var ownedMap map[uint][]dto.OwnInfo
 	if userID != nil {
 		ownRepo := repositories.NewOwnRepository(s.db.DB)
-		ownRecords, err := ownRepo.GetByPlayerIDs(ctx, *userID, playerIDs)
+		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *userID, playerIDs, consts.OwnGoodsPlayer)
 		if err != nil {
 			return nil, err
 		}
@@ -393,7 +394,7 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 	owned := []*dto.OwnInfo{}
 	if userID != nil {
 		ownRepo := repositories.NewOwnRepository(s.db.DB)
-		ownRecords, err := ownRepo.GetByPlayerIDs(ctx, *userID, []uint{playerID})
+		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *userID, []uint{playerID}, consts.OwnGoodsPlayer)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get owned info: %w", err)
 		}
@@ -629,8 +630,8 @@ func (s *PlayersService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) 
 			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
 		}
 		notifyType := o.NotifyType
-		if o.Sta == 0 {
-			notifyType = 0
+		if o.Sta == int(consts.OwnStaNone) {
+			notifyType = consts.NotifyTypeNone
 		}
 		info := dto.OwnInfo{
 			PlayerID:   o.PlayerID,
@@ -653,7 +654,7 @@ func (s *PlayersService) GetPlayerInvestmentStats(ctx context.Context, playerIDs
 	ownRepo := repositories.NewOwnRepository(s.db.DB)
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 
-	owns, err := ownRepo.GetOwnRecordsForInvestmentStats(ctx, playerIDs)
+	owns, err := ownRepo.GetOwnRecordsForInvestmentStats(ctx, playerIDs, consts.OwnGoodsPlayer)
 	if err != nil {
 		return nil, fmt.Errorf("get own records: %w", err)
 	}
@@ -699,7 +700,7 @@ func (s *PlayersService) GetPlayerInvestmentStats(ctx context.Context, playerIDs
 		a.positionCount++
 
 		var pnl int64
-		if o.Sta == 1 {
+		if o.Sta == int(consts.OwnStaPurchased) {
 			currentPrice := uint(0)
 			if p, ok := currentPriceByPid[o.PlayerID]; ok {
 				currentPrice = p
