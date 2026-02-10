@@ -114,7 +114,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 	// 获取球员 ID 列表
 	playerIDs := make([]uint, len(ownedList))
 	for i, o := range ownedList {
-		playerIDs[i] = o.PlayerID
+		playerIDs[i] = o.PID
 	}
 
 	// 查询球员详细信息
@@ -131,7 +131,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 
 	rosters := make([]api.OwnedPlayer, 0, len(ownedList))
 	for _, o := range ownedList {
-		pp, ok := playerMap[o.PlayerID]
+		pp, ok := playerMap[o.PID]
 		if !ok {
 			continue
 		}
@@ -141,7 +141,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 		}
 		rosters = append(rosters, api.OwnedPlayer{
 			Id:         o.ID,
-			PlayerID:   o.PlayerID,
+			PlayerID:   o.PID,
 			PriceIn:    o.BuyPrice,
 			PriceOut:   o.SellPrice,
 			OwnSta:     uint8(o.Sta),
@@ -183,7 +183,7 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get owned info: %w", err)
 	}
-	ownedMap := s.mapOwnRecordsToInfoMap(ownRecords)
+	ownedMap := ToOwnInfoDTOMap(ownRecords)
 
 	// 4. 构建响应
 	result := make([]api.PlayerWithOwned, len(players))
@@ -261,11 +261,11 @@ func (s *UserPlayerService) SetPlayerNotify(ctx context.Context, userID, playerI
 }
 
 // Helper methods
-func (s *UserPlayerService) entityToOwnDTO(o *entity.UserPlayerOwn) *dto.UserPlayerOwn {
+func (s *UserPlayerService) entityToOwnDTO(o *entity.UserPOwn) *dto.UserPlayerOwn {
 	return &dto.UserPlayerOwn{
 		ID:         o.ID,
 		UserID:     o.UserID,
-		PlayerID:   o.PlayerID,
+		PlayerID:   o.PID,
 		OwnSta:     uint8(o.Sta),
 		PriceIn:    o.BuyPrice,
 		PriceOut:   o.SellPrice,
@@ -276,35 +276,103 @@ func (s *UserPlayerService) entityToOwnDTO(o *entity.UserPlayerOwn) *dto.UserPla
 	}
 }
 
-func (s *UserPlayerService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) map[uint][]dto.OwnInfo {
-	result := make(map[uint][]dto.OwnInfo)
-	for _, o := range records {
-		dtOut := ""
-		if o.SellTime != nil {
-			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
-		}
-		notifyType := o.NotifyType
-		if o.Sta == int(consts.OwnStaNone) {
-			notifyType = consts.NotifyTypeNone
-		}
-		info := dto.OwnInfo{
-			PlayerID:   o.PlayerID,
-			PriceIn:    o.BuyPrice,
-			PriceOut:   o.SellPrice,
-			OwnSta:     uint8(o.Sta),
-			OwnNum:     o.BuyCount,
-			DtIn:       o.BuyTime.Format("2006-01-02 15:04:05"),
-			DtOut:      dtOut,
-			NotifyType: notifyType,
-		}
-		result[o.PlayerID] = append(result[o.PlayerID], info)
-	}
-	return result
-}
-
 func formatTimeOrEmpty(t *time.Time) string {
 	if t == nil {
 		return ""
 	}
 	return t.Format("2006-01-02 15:04:05")
+}
+
+// GetUnifiedOwnGoods 获取统一持仓列表
+func (s *UserPlayerService) GetUnifiedOwnGoods(ctx context.Context, userID uint) ([]dto.UnifiedOwnGoods, error) {
+	ownRepo := repositories.NewOwnRepository(s.db.DB)
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+	itemRepo := repositories.NewItemRepository(s.db.DB)
+
+	// 1. 获取用户所有持仓记录
+	allOwns, err := ownRepo.GetByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unified owns: %w", err)
+	}
+
+	if len(allOwns) == 0 {
+		return []dto.UnifiedOwnGoods{}, nil
+	}
+
+	// 2. 分类 ID
+	playerIDs := []uint{}
+	itemIDs := []uint{}
+	for _, o := range allOwns {
+		if o.OwnGoods == consts.OwnGoodsPlayer {
+			playerIDs = append(playerIDs, o.PID)
+		} else if o.OwnGoods == consts.OwnGoodsItem {
+			itemIDs = append(itemIDs, o.PID)
+		}
+	}
+
+	// 3. 批量获取详情
+	playerMap := make(map[uint]entity.Player)
+	if len(playerIDs) > 0 {
+		players, err := playerRepo.BatchGetByIDs(ctx, playerIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to batch get players: %w", err)
+		}
+		for _, p := range players {
+			playerMap[p.PlayerID] = p
+		}
+	}
+
+	itemMap := make(map[uint]entity.Item)
+	if len(itemIDs) > 0 {
+		items, err := itemRepo.BatchGetByItemIDs(ctx, itemIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to batch get items: %w", err)
+		}
+		for _, it := range items {
+			itemMap[it.ItemID] = it
+		}
+	}
+
+	// 4. 组装
+	result := make([]dto.UnifiedOwnGoods, 0, len(allOwns))
+	for _, o := range allOwns {
+		res := dto.UnifiedOwnGoods{
+			OwnID:    o.ID,
+			OwnGoods: o.OwnGoods,
+			GoodsID:  o.PID,
+			PriceIn:  o.BuyPrice,
+			PriceOut: o.SellPrice,
+			OwnSta:   uint8(o.Sta),
+			OwnNum:   o.BuyCount,
+			DtIn:     o.BuyTime.Format("2006-01-02 15:04:05"),
+		}
+		if o.SellTime != nil {
+			res.DtOut = o.SellTime.Format("2006-01-02 15:04:05")
+		}
+
+		if o.OwnGoods == consts.OwnGoodsPlayer {
+			if p, ok := playerMap[o.PID]; ok {
+				res.GoodsName = p.ShowName
+				res.GoodsNameEn = p.EnName
+				res.GoodsImg = p.PlayerImg
+				res.PriceStandard = p.PriceStandard
+				res.PriceCurrentLowest = p.PriceCurrentLowest
+			} else {
+				continue // 找不到球员详情，跳过
+			}
+		} else if o.OwnGoods == consts.OwnGoodsItem {
+			if it, ok := itemMap[o.PID]; ok {
+				res.GoodsName = it.Name
+				res.GoodsNameEn = "" // 道具没有英文名
+				res.GoodsImg = it.Icon
+				res.PriceStandard = it.PriceStandard
+				res.PriceCurrentLowest = it.PriceCurrentLowest
+			} else {
+				continue // 找不到道具详情，跳过
+			}
+		}
+		result = append(result, res)
+	}
+
+	return result, nil
 }

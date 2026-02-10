@@ -4,12 +4,12 @@ import (
 	"time"
 )
 
-// UserPlayerOwn 用户持有记录实体（球员/道具统一持仓表）
-type UserPlayerOwn struct {
+// UserPOwn 用户持有记录实体（球员/道具统一持仓表）
+type UserPOwn struct {
 	ID         uint       `gorm:"primaryKey;column:id"`
 	UserID     uint       `gorm:"column:uid;index:idx_uid"`
 	OwnGoods   uint8      `gorm:"column:own_goods;index:idx_uid_own_goods"` // 持仓的类型：1.球员；2.道具
-	PlayerID   uint       `gorm:"column:pid;index:idx_pid"`                 // 球员id 或 道具id
+	PID        uint       `gorm:"column:pid;index:idx_pid"`                 // 球员id 或 道具id
 	BuyPrice   uint       `gorm:"column:price_in"`
 	BuyCount   uint       `gorm:"column:num_in"`
 	SellPrice  uint       `gorm:"column:price_out"`
@@ -21,6 +21,6 @@ type UserPlayerOwn struct {
 }
 
 // TableName returns the table name for GORM.
-func (UserPlayerOwn) TableName() string {
+func (UserPOwn) TableName() string {
 	return "u_p_own"
 }

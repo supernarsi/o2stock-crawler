@@ -58,7 +58,7 @@ func (s *ItemsService) ListItemsWithOwned(ctx context.Context, opts ItemListOpti
 	out := s.mapItemsToDTO(items)
 	// ensure owned is not null
 	for i := range out {
-		out[i].Owned = []*dto.ItemOwnInfo{}
+		out[i].Owned = []*dto.OwnInfo{}
 	}
 
 	if userID != nil && len(items) > 0 {
@@ -71,10 +71,17 @@ func (s *ItemsService) ListItemsWithOwned(ctx context.Context, opts ItemListOpti
 		if err != nil {
 			return nil, err
 		}
-		ownedMap := s.mapItemOwnRecordsToInfoMap(ownRecords)
+		ownedMap := ToOwnInfoDTOPointerMap(ownRecords)
+
+		favRepo := repositories.NewItemFavRepository(s.db.DB)
+		favMap, _ := favRepo.GetFavMap(ctx, *userID, itemIDs)
+
 		for i := range out {
 			if owned, ok := ownedMap[out[i].ItemID]; ok {
 				out[i].Owned = owned
+			}
+			if favMap != nil {
+				out[i].IsFav = favMap[out[i].ItemID]
 			}
 		}
 	}
@@ -139,17 +146,21 @@ func (s *ItemsService) GetItemHistoryWithOwned(ctx context.Context, itemID uint,
 	}
 
 	itemDTO := s.itemToDTO(item)
-	itemDTO.Owned = []*dto.ItemOwnInfo{}
+	itemDTO.Owned = []*dto.OwnInfo{}
 	if userID != nil {
 		ownRepo := repositories.NewOwnRepository(s.db.DB)
 		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *userID, []uint{itemID}, consts.OwnGoodsItem)
 		if err != nil {
 			return nil, nil, err
 		}
-		ownedMap := s.mapItemOwnRecordsToInfoMap(ownRecords)
+		ownedMap := ToOwnInfoDTOPointerMap(ownRecords)
 		if owned, ok := ownedMap[itemID]; ok {
 			itemDTO.Owned = owned
 		}
+
+		favRepo := repositories.NewItemFavRepository(s.db.DB)
+		isFav, _ := favRepo.Count(ctx, *userID, itemID)
+		itemDTO.IsFav = isFav > 0
 	}
 	historyDTO := s.mapItemHistoryToDTO(rows)
 	return &itemDTO, historyDTO, nil
@@ -228,7 +239,7 @@ func (s *ItemsService) itemToDTO(e *entity.Item) dto.Item {
 		PriceCurrentLowest: e.PriceCurrentLowest,
 		PriceChange1d:      e.PriceChange1d,
 		PriceChange7d:      e.PriceChange7d,
-		Owned:              []*dto.ItemOwnInfo{},
+		Owned:              []*dto.OwnInfo{},
 	}
 }
 
@@ -245,35 +256,4 @@ func (s *ItemsService) mapItemHistoryToDTO(rows []entity.ItemPriceHistory) []*dt
 		}
 	}
 	return out
-}
-
-func (s *ItemsService) mapItemOwnRecordsToInfoMap(records []entity.UserPlayerOwn) map[uint][]*dto.ItemOwnInfo {
-	result := make(map[uint][]*dto.ItemOwnInfo)
-	for _, o := range records {
-		dtOut := ""
-		if o.SellTime != nil {
-			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
-		}
-		notifyType := o.NotifyType
-		if o.Sta == int(consts.OwnStaNone) {
-			notifyType = consts.NotifyTypeNone
-		}
-		info := &dto.ItemOwnInfo{
-			OwnID:      o.ID,
-			ItemID:     o.PlayerID,
-			PriceIn:    o.BuyPrice,
-			PriceOut:   o.SellPrice,
-			OwnSta:     uint8(o.Sta),
-			OwnNum:     o.BuyCount,
-			DtIn:       o.BuyTime.Format("2006-01-02 15:04:05"),
-			DtOut:      dtOut,
-			NotifyType: notifyType,
-		}
-		// 仅对“持有/已购买”的记录返回实际订阅类型；其他状态返回 0
-		if info.OwnSta != consts.OwnStaPurchased {
-			info.NotifyType = consts.NotifyTypeNone
-		}
-		result[o.PlayerID] = append(result[o.PlayerID], info)
-	}
-	return result
 }

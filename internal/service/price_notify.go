@@ -49,7 +49,7 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 		return nil
 	}
 
-	var toCheck []entity.UserPlayerOwn
+	var toCheck []entity.UserPOwn
 	for i := range owns {
 		// 设计：若已存在 notify_time，则不再重复发送
 		if owns[i].NotifyTime == nil {
@@ -63,7 +63,7 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 	pids := make([]uint, 0, len(toCheck))
 	uids := make([]uint, 0, len(toCheck))
 	for _, o := range toCheck {
-		pids = append(pids, o.PlayerID)
+		pids = append(pids, o.PID)
 		uids = append(uids, o.UserID)
 	}
 
@@ -83,7 +83,7 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 
 	// 组装待发送任务（仅达到条件的记录）
 	type sendTask struct {
-		own        entity.UserPlayerOwn
+		own        entity.UserPOwn
 		openID     string
 		currentStr string
 		costStr    string
@@ -92,7 +92,7 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 	}
 	var tasks []sendTask
 	for _, o := range toCheck {
-		player, ok := playerMap[o.PlayerID]
+		player, ok := playerMap[o.PID]
 		if !ok {
 			continue
 		}
@@ -151,14 +151,14 @@ func (s *PriceNotifyService) RunForPlayerIDs(ctx context.Context, playerIDs []ui
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if err := s.wechat.SendPriceNotify(t.openID, t.currentStr, t.costStr, t.remark, t.player); err != nil {
-				log.Printf("[price-notify] send wechat failed own_id=%d uid=%d pid=%d: %v", t.own.ID, t.own.UserID, t.own.PlayerID, err)
+				log.Printf("[price-notify] send wechat failed own_id=%d uid=%d pid=%d: %v", t.own.ID, t.own.UserID, t.own.PID, err)
 				return
 			}
 			if err := ownRepo.SetNotifyTime(ctx, t.own.ID, now); err != nil {
 				log.Printf("[price-notify] set notify_time failed own_id=%d: %v", t.own.ID, err)
 				return
 			}
-			log.Printf("[price-notify] 发送订阅消息成功 own_id=%d uid=%d pid=%d: %s", t.own.ID, t.own.UserID, t.own.PlayerID, t.remark)
+			log.Printf("[price-notify] 发送订阅消息成功 own_id=%d uid=%d pid=%d: %s", t.own.ID, t.own.UserID, t.own.PID, t.remark)
 			successCount.Add(1)
 		}(task)
 	}
@@ -187,7 +187,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 		return nil
 	}
 
-	var toCheck []entity.UserPlayerOwn
+	var toCheck []entity.UserPOwn
 	for i := range owns {
 		if owns[i].NotifyTime == nil {
 			toCheck = append(toCheck, owns[i])
@@ -200,7 +200,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 	ids := make([]uint, 0, len(toCheck))
 	uids := make([]uint, 0, len(toCheck))
 	for _, o := range toCheck {
-		ids = append(ids, o.PlayerID)
+		ids = append(ids, o.PID)
 		uids = append(uids, o.UserID)
 	}
 
@@ -219,7 +219,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 	}
 
 	type itemSendTask struct {
-		own        entity.UserPlayerOwn
+		own        entity.UserPOwn
 		openID     string
 		currentStr string
 		costStr    string
@@ -228,7 +228,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 	}
 	var tasks []itemSendTask
 	for _, o := range toCheck {
-		item, ok := itemMap[o.PlayerID]
+		item, ok := itemMap[o.PID]
 		if !ok {
 			continue
 		}
@@ -287,14 +287,14 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if err := s.wechat.SendPriceNotifyForItem(t.openID, t.currentStr, t.costStr, t.remark, t.item); err != nil {
-				log.Printf("[price-notify] send item wechat failed own_id=%d uid=%d item_id=%d: %v", t.own.ID, t.own.UserID, t.own.PlayerID, err)
+				log.Printf("[price-notify] send item wechat failed own_id=%d uid=%d item_id=%d: %v", t.own.ID, t.own.UserID, t.own.PID, err)
 				return
 			}
 			if err := ownRepo.SetNotifyTime(ctx, t.own.ID, now); err != nil {
 				log.Printf("[price-notify] set item notify_time failed own_id=%d: %v", t.own.ID, err)
 				return
 			}
-			log.Printf("[price-notify] 发送道具订阅消息成功 own_id=%d uid=%d item_id=%d: %s", t.own.ID, t.own.UserID, t.own.PlayerID, t.remark)
+			log.Printf("[price-notify] 发送道具订阅消息成功 own_id=%d uid=%d item_id=%d: %s", t.own.ID, t.own.UserID, t.own.PID, t.remark)
 			successCount.Add(1)
 		}(task)
 	}

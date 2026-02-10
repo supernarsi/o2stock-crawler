@@ -10,12 +10,12 @@ import (
 )
 
 type OwnRepository struct {
-	baseRepository[entity.UserPlayerOwn]
+	baseRepository[entity.UserPOwn]
 }
 
 func NewOwnRepository(db *gorm.DB) *OwnRepository {
 	return &OwnRepository{
-		baseRepository: baseRepository[entity.UserPlayerOwn]{db: db},
+		baseRepository: baseRepository[entity.UserPOwn]{db: db},
 	}
 }
 
@@ -27,8 +27,8 @@ func (r *OwnRepository) CountOwned(ctx context.Context, userID, goodsID uint, ow
 	return count, err
 }
 
-func (r *OwnRepository) GetByUserID(ctx context.Context, userID uint, ownGoods ...uint8) ([]entity.UserPlayerOwn, error) {
-	var results []entity.UserPlayerOwn
+func (r *OwnRepository) GetByUserID(ctx context.Context, userID uint, ownGoods ...uint8) ([]entity.UserPOwn, error) {
+	var results []entity.UserPOwn
 	query := r.ctx(ctx).Where("uid = ?", userID)
 	if len(ownGoods) > 0 {
 		goods := make([]int, len(ownGoods))
@@ -41,8 +41,8 @@ func (r *OwnRepository) GetByUserID(ctx context.Context, userID uint, ownGoods .
 	return results, err
 }
 
-func (r *OwnRepository) GetByGoodsIDs(ctx context.Context, userID uint, goodsIDs []uint, ownGoods uint8) ([]entity.UserPlayerOwn, error) {
-	var results []entity.UserPlayerOwn
+func (r *OwnRepository) GetByGoodsIDs(ctx context.Context, userID uint, goodsIDs []uint, ownGoods uint8) ([]entity.UserPOwn, error) {
+	var results []entity.UserPOwn
 	err := r.ctx(ctx).
 		Where("uid = ? AND own_goods = ? AND pid IN ? AND own_sta IN ?", userID, ownGoods, goodsIDs, []int{int(consts.OwnStaPurchased), int(consts.OwnStaSold)}).
 		Order("dt_in DESC, id DESC").
@@ -50,8 +50,8 @@ func (r *OwnRepository) GetByGoodsIDs(ctx context.Context, userID uint, goodsIDs
 	return results, err
 }
 
-func (r *OwnRepository) GetByRecordID(ctx context.Context, recordID, userID uint) (*entity.UserPlayerOwn, error) {
-	var result entity.UserPlayerOwn
+func (r *OwnRepository) GetByRecordID(ctx context.Context, recordID, userID uint) (*entity.UserPOwn, error) {
+	var result entity.UserPOwn
 	err := r.ctx(ctx).
 		Where("id = ? AND uid = ?", recordID, userID).
 		First(&result).Error
@@ -62,8 +62,8 @@ func (r *OwnRepository) GetByRecordID(ctx context.Context, recordID, userID uint
 }
 
 // GetLatestActiveByUserAndGoods 获取用户某球员/道具最新的一条持仓记录（仅 own_sta=1 且未出售）
-func (r *OwnRepository) GetLatestActiveByUserAndGoods(ctx context.Context, userID, goodsID uint, ownGoods uint8) (*entity.UserPlayerOwn, error) {
-	var result entity.UserPlayerOwn
+func (r *OwnRepository) GetLatestActiveByUserAndGoods(ctx context.Context, userID, goodsID uint, ownGoods uint8) (*entity.UserPOwn, error) {
+	var result entity.UserPOwn
 	err := r.ctx(ctx).
 		Where("uid = ? AND own_goods = ? AND pid = ? AND own_sta = ? AND dt_out IS NULL", userID, ownGoods, goodsID, consts.OwnStaPurchased).
 		Order("dt_in DESC").
@@ -76,10 +76,10 @@ func (r *OwnRepository) GetLatestActiveByUserAndGoods(ctx context.Context, userI
 }
 
 func (r *OwnRepository) Create(ctx context.Context, userID, goodsID, num, cost uint, dt time.Time, notifyType uint8, ownGoods uint8) error {
-	own := entity.UserPlayerOwn{
+	own := entity.UserPOwn{
 		UserID:     userID,
 		OwnGoods:   ownGoods,
-		PlayerID:   goodsID,
+		PID:        goodsID,
 		BuyCount:   num,
 		BuyPrice:   cost,
 		BuyTime:    dt,
@@ -121,7 +121,7 @@ func (r *OwnRepository) Update(ctx context.Context, userID, recordID uint, updat
 func (r *OwnRepository) Delete(ctx context.Context, userID, recordID uint) error {
 	return r.ctx(ctx).
 		Where("uid = ? AND id = ?", userID, recordID).
-		Delete(&entity.UserPlayerOwn{}).Error
+		Delete(&entity.UserPOwn{}).Error
 }
 
 // UpdateNotifyByUserAndGoods 更新用户持有该球员/道具的订阅类型，并将 notify_time 置空（仅更新 own_sta=1 且 dt_out 为空的记录）
@@ -136,11 +136,11 @@ func (r *OwnRepository) UpdateNotifyByUserAndGoods(ctx context.Context, userID, 
 }
 
 // GetActiveNotifyOwnsByGoodsIDs 获取在给定球员/道具 ID 下的、已购买未出售且订阅了通知的持仓（own_sta=1, dt_out IS NULL, notify_type IN (1,2)）
-func (r *OwnRepository) GetActiveNotifyOwnsByGoodsIDs(ctx context.Context, goodsIDs []uint, ownGoods uint8) ([]entity.UserPlayerOwn, error) {
+func (r *OwnRepository) GetActiveNotifyOwnsByGoodsIDs(ctx context.Context, goodsIDs []uint, ownGoods uint8) ([]entity.UserPOwn, error) {
 	if len(goodsIDs) == 0 {
 		return nil, nil
 	}
-	var results []entity.UserPlayerOwn
+	var results []entity.UserPOwn
 	err := r.ctx(ctx).
 		Where("own_goods = ? AND pid IN ? AND own_sta = ? AND dt_out IS NULL AND notify_type IN ?", ownGoods, goodsIDs, consts.OwnStaPurchased, []int{int(consts.NotifyTypeBreakEven), int(consts.NotifyTypeProfit15)}).
 		Find(&results).Error
@@ -155,12 +155,12 @@ func (r *OwnRepository) SetNotifyTime(ctx context.Context, ownID uint, t time.Ti
 }
 
 // GetOwnRecordsForInvestmentStats 获取用于投资盈亏统计的持仓记录（含持有与已售），按球员 ID 聚合用
-func (r *OwnRepository) GetOwnRecordsForInvestmentStats(ctx context.Context, goodsIDs []uint, ownGoods uint8) ([]entity.UserPlayerOwn, error) {
+func (r *OwnRepository) GetOwnRecordsForInvestmentStats(ctx context.Context, goodsIDs []uint, ownGoods uint8) ([]entity.UserPOwn, error) {
 	query := r.ctx(ctx).Where("own_goods = ? AND own_sta IN ?", ownGoods, []int{int(consts.OwnStaPurchased), int(consts.OwnStaSold)})
 	if len(goodsIDs) > 0 {
 		query = query.Where("pid IN ?", goodsIDs)
 	}
-	var results []entity.UserPlayerOwn
+	var results []entity.UserPOwn
 	err := query.Order("pid, dt_in").Find(&results).Error
 	return results, err
 }
