@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"o2stock-crawler/api"
+	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/middleware"
 )
 
@@ -135,5 +136,78 @@ func (a *API) ItemPriceNotify() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 		return nil, nil
+	})
+}
+
+// FavItem 收藏道具接口
+func (a *API) FavItem() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		var req struct {
+			ItemID uint `json:"item_id"`
+		}
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+		}
+
+		if req.ItemID == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing item_id"}
+		}
+
+		if err := a.userItemService.FavItem(ctx, userID, req.ItemID); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+		}
+		return nil, nil
+	})
+}
+
+// UnFavItem 取消收藏道具接口
+func (a *API) UnFavItem() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		var req struct {
+			ItemID uint `json:"item_id"`
+		}
+		if err := middleware.DecodeJSONBody(r, &req); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+		}
+
+		if req.ItemID == 0 {
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing item_id"}
+		}
+
+		if err := a.userItemService.UnFavItem(ctx, userID, req.ItemID); err != nil {
+			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+		}
+		return nil, nil
+	})
+}
+
+// UserFavItems 获取收藏道具列表接口
+func (a *API) UserFavItems() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		items, err := a.userItemService.GetUserFavItems(ctx, userID)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+		return struct {
+			Items []dto.Item `json:"items"`
+		}{Items: items}, nil
 	})
 }

@@ -39,6 +39,7 @@ type ItemPriceNotifyReq struct {
 // OwnedItem 用户拥有的道具（包含道具信息）
 type OwnedItem struct {
 	Id         uint     `json:"id" dc:"持仓记录 id"`
+	OwnGoods   uint8    `json:"own_goods"`
 	ItemID     uint     `json:"item_id"`
 	PriceIn    uint     `json:"price_in"`
 	PriceOut   uint     `json:"price_out"`

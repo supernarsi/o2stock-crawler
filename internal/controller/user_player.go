@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"o2stock-crawler/api"
+	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/middleware"
 )
 
@@ -317,5 +318,24 @@ func (a *API) PlayerPriceNotify() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 		return nil, nil
+	})
+}
+
+// UserUnifiedOwnGoods 获取统一持仓列表接口
+func (a *API) UserUnifiedOwnGoods() http.HandlerFunc {
+	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		ctx := r.Context()
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
+		}
+
+		goods, err := a.userPlayerService.GetUnifiedOwnGoods(ctx, userID)
+		if err != nil {
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+		}
+		return struct {
+			Goods []dto.UnifiedOwnGoods `json:"goods"`
+		}{Goods: goods}, nil
 	})
 }

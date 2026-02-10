@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"o2stock-crawler/api"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/dto"
@@ -78,11 +79,11 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 			pids[i] = p.PlayerID
 		}
 		ownRepo := repositories.NewOwnRepository(s.db.DB)
-		ownRecords, err := ownRepo.GetByPlayerIDs(ctx, *opts.UserID, pids)
+		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *opts.UserID, pids, consts.OwnGoodsPlayer)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get owned info: %w", err)
 		}
-		ownedMap = s.mapOwnRecordsToInfoMap(ownRecords)
+		ownedMap = ToOwnInfoDTOMap(ownRecords)
 	}
 
 	var favMap map[uint]bool
@@ -141,11 +142,11 @@ func (s *PlayersService) GetPlayersWithOwnedByIDs(ctx context.Context, playerIDs
 	var ownedMap map[uint][]dto.OwnInfo
 	if userID != nil {
 		ownRepo := repositories.NewOwnRepository(s.db.DB)
-		ownRecords, err := ownRepo.GetByPlayerIDs(ctx, *userID, playerIDs)
+		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *userID, playerIDs, consts.OwnGoodsPlayer)
 		if err != nil {
 			return nil, err
 		}
-		ownedMap = s.mapOwnRecordsToInfoMap(ownRecords)
+		ownedMap = ToOwnInfoDTOMap(ownRecords)
 	}
 	var favMap map[uint]bool
 	if userID != nil {
@@ -393,11 +394,11 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 	owned := []*dto.OwnInfo{}
 	if userID != nil {
 		ownRepo := repositories.NewOwnRepository(s.db.DB)
-		ownRecords, err := ownRepo.GetByPlayerIDs(ctx, *userID, []uint{playerID})
+		ownRecords, err := ownRepo.GetByGoodsIDs(ctx, *userID, []uint{playerID}, consts.OwnGoodsPlayer)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get owned info: %w", err)
 		}
-		ownedMap := s.mapOwnRecordsToInfoMap(ownRecords)
+		ownedMap := ToOwnInfoDTOMap(ownRecords)
 		if ownedR, ok := ownedMap[playerID]; ok {
 			for i := range ownedR {
 				owned = append(owned, &ownedR[i])
@@ -621,39 +622,13 @@ func (s *PlayersService) SyncAllPlayersPriceChanges(ctx context.Context, playerI
 
 // Helper methods
 
-func (s *PlayersService) mapOwnRecordsToInfoMap(records []entity.UserPlayerOwn) map[uint][]dto.OwnInfo {
-	result := make(map[uint][]dto.OwnInfo)
-	for _, o := range records {
-		dtOut := ""
-		if o.SellTime != nil {
-			dtOut = o.SellTime.Format("2006-01-02 15:04:05")
-		}
-		notifyType := o.NotifyType
-		if o.Sta == 0 {
-			notifyType = 0
-		}
-		info := dto.OwnInfo{
-			PlayerID:   o.PlayerID,
-			PriceIn:    o.BuyPrice,
-			PriceOut:   o.SellPrice,
-			OwnSta:     uint8(o.Sta),
-			OwnNum:     o.BuyCount,
-			DtIn:       o.BuyTime.Format("2006-01-02 15:04:05"),
-			DtOut:      dtOut,
-			NotifyType: notifyType,
-		}
-		result[o.PlayerID] = append(result[o.PlayerID], info)
-	}
-	return result
-}
-
 // GetPlayerInvestmentStats 按球员聚合全平台 u_p_own + players 计算投资盈亏与牛熊率
 // playerIDs 为空时统计所有有持仓记录的球员；返回 map[playerID]Stats
 func (s *PlayersService) GetPlayerInvestmentStats(ctx context.Context, playerIDs []uint) (map[uint]dto.PlayerInvestmentStats, error) {
 	ownRepo := repositories.NewOwnRepository(s.db.DB)
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)
 
-	owns, err := ownRepo.GetOwnRecordsForInvestmentStats(ctx, playerIDs)
+	owns, err := ownRepo.GetOwnRecordsForInvestmentStats(ctx, playerIDs, consts.OwnGoodsPlayer)
 	if err != nil {
 		return nil, fmt.Errorf("get own records: %w", err)
 	}
@@ -664,9 +639,9 @@ func (s *PlayersService) GetPlayerInvestmentStats(ctx context.Context, playerIDs
 	pids := make([]uint, 0, len(owns))
 	pidSet := make(map[uint]struct{})
 	for _, o := range owns {
-		if _, ok := pidSet[o.PlayerID]; !ok {
-			pidSet[o.PlayerID] = struct{}{}
-			pids = append(pids, o.PlayerID)
+		if _, ok := pidSet[o.PID]; !ok {
+			pidSet[o.PID] = struct{}{}
+			pids = append(pids, o.PID)
 		}
 	}
 	players, err := playerRepo.BatchGetByIDs(ctx, pids)
@@ -690,18 +665,18 @@ func (s *PlayersService) GetPlayerInvestmentStats(ctx context.Context, playerIDs
 	}
 	byPid := make(map[uint]*agg)
 	for _, o := range owns {
-		if byPid[o.PlayerID] == nil {
-			byPid[o.PlayerID] = &agg{}
+		if byPid[o.PID] == nil {
+			byPid[o.PID] = &agg{}
 		}
-		a := byPid[o.PlayerID]
+		a := byPid[o.PID]
 		cost := uint64(o.BuyPrice)
 		a.totalCost += cost
 		a.positionCount++
 
 		var pnl int64
-		if o.Sta == 1 {
+		if o.Sta == int(consts.OwnStaPurchased) {
 			currentPrice := uint(0)
-			if p, ok := currentPriceByPid[o.PlayerID]; ok {
+			if p, ok := currentPriceByPid[o.PID]; ok {
 				currentPrice = p
 			}
 			marketValue := uint64(o.BuyCount) * uint64(currentPrice)

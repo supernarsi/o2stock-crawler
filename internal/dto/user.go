@@ -21,6 +21,7 @@ type User struct {
 type UserPlayerOwn struct {
 	ID         uint       `json:"id"`
 	UserID     uint       `json:"uid"`
+	OwnGoods   uint8      `json:"own_goods"`
 	PlayerID   uint       `json:"pid"`
 	OwnSta     uint8      `json:"own_sta"`
 	PriceIn    uint       `json:"price_in"`
@@ -33,7 +34,9 @@ type UserPlayerOwn struct {
 
 // OwnInfo 简化版持仓信息DTO
 type OwnInfo struct {
-	PlayerID   uint   `json:"player_id"`
+	OwnID      uint   `json:"own_id"`    // 持仓记录 id，用于出售等操作
+	OwnGoods   uint8  `json:"own_goods"` // 1:球员; 2:道具
+	GoodsID    uint   `json:"goods_id"`  // 球员id 或 道具id
 	PriceIn    uint   `json:"price_in"`
 	PriceOut   uint   `json:"price_out"`
 	OwnSta     uint8  `json:"own_sta"`
@@ -46,7 +49,9 @@ type OwnInfo struct {
 // ToOwnInfo 转换为OwnInfo
 func (u *UserPlayerOwn) ToOwnInfo() OwnInfo {
 	info := OwnInfo{
-		PlayerID:   u.PlayerID,
+		OwnID:      u.ID,
+		GoodsID:    u.PlayerID,
+		OwnGoods:   u.OwnGoods,
 		PriceIn:    u.PriceIn,
 		PriceOut:   u.PriceOut,
 		OwnSta:     u.OwnSta,
@@ -62,4 +67,22 @@ func (u *UserPlayerOwn) ToOwnInfo() OwnInfo {
 		info.NotifyType = consts.NotifyTypeNone
 	}
 	return info
+}
+
+// UnifiedOwnGoods 统一持仓 DTO
+type UnifiedOwnGoods struct {
+	OwnID              uint   `json:"own_id"`
+	OwnGoods           uint8  `json:"own_goods"` // 1:球员; 2:道具
+	GoodsID            uint   `json:"goods_id"`
+	PriceIn            uint   `json:"price_in"`
+	PriceOut           uint   `json:"price_out"`
+	OwnSta             uint8  `json:"own_sta"`
+	OwnNum             uint   `json:"own_num"`
+	DtIn               string `json:"dt_in"`
+	DtOut              string `json:"dt_out"`
+	GoodsName          string `json:"goods_name"`
+	GoodsNameEn        string `json:"goods_name_en"`
+	GoodsImg           string `json:"goods_img"`
+	PriceStandard      uint   `json:"price_standard"`
+	PriceCurrentLowest uint   `json:"price_current_lowest"`
 }

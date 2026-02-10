@@ -48,20 +48,21 @@ type FavRepositoryInterface interface {
 	GetFavMap(ctx context.Context, userID uint, playerIDs []uint) (map[uint]bool, error)
 }
 
-// OwnRepositoryInterface defines the contract for player ownership data access
+// OwnRepositoryInterface defines the contract for goods ownership data access (players/items)
 type OwnRepositoryInterface interface {
-	CountOwned(ctx context.Context, userID, playerID uint) (int64, error)
-	GetByUserID(ctx context.Context, userID uint) ([]entity.UserPlayerOwn, error)
-	GetByPlayerIDs(ctx context.Context, userID uint, playerIDs []uint) ([]entity.UserPlayerOwn, error)
-	GetByRecordID(ctx context.Context, recordID, userID uint) (*entity.UserPlayerOwn, error)
-	GetLatestActiveByUserAndPlayer(ctx context.Context, userID, playerID uint) (*entity.UserPlayerOwn, error)
-	Create(ctx context.Context, userID, playerID, num, cost uint, dt time.Time, notifyType uint8) error
-	MarkAsSold(ctx context.Context, userID, playerID, cost uint, dt time.Time) error
+	CountOwned(ctx context.Context, userID, goodsID uint, ownGoods uint8) (int64, error)
+	GetByUserID(ctx context.Context, userID uint, ownGoods ...uint8) ([]entity.UserPOwn, error)
+	GetByGoodsIDs(ctx context.Context, userID uint, goodsIDs []uint, ownGoods uint8) ([]entity.UserPOwn, error)
+	GetByRecordID(ctx context.Context, recordID, userID uint) (*entity.UserPOwn, error)
+	GetLatestActiveByUserAndGoods(ctx context.Context, userID, goodsID uint, ownGoods uint8) (*entity.UserPOwn, error)
+	Create(ctx context.Context, userID, goodsID, num, cost uint, dt time.Time, notifyType uint8, ownGoods uint8) error
+	MarkAsSold(ctx context.Context, userID, goodsID, cost uint, dt time.Time, ownGoods uint8) error
+	MarkAsSoldByID(ctx context.Context, userID, recordID, cost uint, dt time.Time) (int64, error)
 	Update(ctx context.Context, userID, recordID uint, updates map[string]interface{}) error
-	UpdateNotifyByUserAndPlayer(ctx context.Context, userID, playerID uint, notifyType uint8) (int64, error)
-	GetActiveNotifyOwnsByPlayerIDs(ctx context.Context, playerIDs []uint) ([]entity.UserPlayerOwn, error)
+	UpdateNotifyByUserAndGoods(ctx context.Context, userID, goodsID uint, notifyType uint8, ownGoods uint8) (int64, error)
+	GetActiveNotifyOwnsByGoodsIDs(ctx context.Context, goodsIDs []uint, ownGoods uint8) ([]entity.UserPOwn, error)
 	SetNotifyTime(ctx context.Context, ownID uint, t time.Time) error
-	GetOwnRecordsForInvestmentStats(ctx context.Context, playerIDs []uint) ([]entity.UserPlayerOwn, error)
+	GetOwnRecordsForInvestmentStats(ctx context.Context, goodsIDs []uint, ownGoods uint8) ([]entity.UserPOwn, error)
 	Delete(ctx context.Context, userID, recordID uint) error
 }
 
@@ -72,10 +73,21 @@ type StatsRepositoryInterface interface {
 	GetRecentGameStats(ctx context.Context, txPlayerID uint, limit int) ([]entity.PlayerGameStats, error)
 }
 
+// ItemFavRepositoryInterface defines the contract for item favorites data access
+type ItemFavRepositoryInterface interface {
+	Count(ctx context.Context, userID, itemID uint) (int64, error)
+	CountUserTotal(ctx context.Context, userID uint) (int64, error)
+	Add(ctx context.Context, userID, itemID uint) error
+	Remove(ctx context.Context, userID, itemID uint) error
+	GetItemIDs(ctx context.Context, userID uint) ([]uint, error)
+	GetFavMap(ctx context.Context, userID uint, itemIDs []uint) (map[uint]bool, error)
+}
+
 // Compile-time interface compliance checks
 var _ PlayerRepositoryInterface = (*PlayerRepository)(nil)
 var _ UserRepositoryInterface = (*UserRepository)(nil)
 var _ FavRepositoryInterface = (*FavRepository)(nil)
+var _ ItemFavRepositoryInterface = (*ItemFavRepository)(nil)
 var _ OwnRepositoryInterface = (*OwnRepository)(nil)
 var _ StatsRepositoryInterface = (*StatsRepository)(nil)
 

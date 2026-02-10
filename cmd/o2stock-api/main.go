@@ -91,8 +91,20 @@ func main() {
 	authGroup.RegisterAPI("/player-price/notify", apiCtl.PlayerPriceNotify(), http.MethodPost)
 	// 修改道具价格订阅（回本/盈利通知）
 	authGroup.RegisterAPI("/item-price/notify", apiCtl.ItemPriceNotify(), http.MethodPost)
+	// 收藏道具
+	authGroup.RegisterAPI("/item/fav", apiCtl.FavItem(), http.MethodPost)
+	// 取消收藏道具
+	authGroup.RegisterAPI("/item/fav", apiCtl.UnFavItem(), http.MethodDelete)
+	// 收藏道具列表
+	authGroup.RegisterAPI("/u-fav-items", apiCtl.UserFavItems(), http.MethodGet)
+	// 统一持仓列表
+	authGroup.RegisterAPI("/u-own-goods", apiCtl.UserUnifiedOwnGoods(), http.MethodGet)
 
 	mux := http.NewServeMux()
+
+	// 测试接口，不需要任何鉴权/签名等中间件，直接挂在 mux 上
+	mux.HandleFunc("/", apiCtl.Test())
+
 	router.Apply(mux)
 	authGroup.Apply(mux)
 
