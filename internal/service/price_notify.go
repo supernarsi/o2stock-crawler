@@ -184,6 +184,7 @@ func (s *PriceNotifyService) RunForItemIDs(ctx context.Context, itemIDs []uint) 
 		return fmt.Errorf("get active notify owns by item ids: %w", err)
 	}
 	if len(owns) == 0 {
+		log.Printf("[price-notify] 暂无用户订阅道具消息")
 		return nil
 	}
 
