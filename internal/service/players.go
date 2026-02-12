@@ -12,6 +12,7 @@ import (
 	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/entity"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -38,6 +39,7 @@ type PlayerListOptions struct {
 	MinPrice   uint
 	MaxPrice   uint
 	ExFree     bool
+	TeamAbbr   string // TeamAbbr 为前端传入的球队英文简称（如 OKC、MIN、FA）
 }
 
 // ListPlayersWithOwned 获取球员列表，支持分页、排序，并可选地包含用户的拥有信息
@@ -53,17 +55,40 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 		opts.Page = 1
 	}
 
+	// 处理球队筛选：前端传入英文简称（如 OKC、MIN、FA）
+	var teamCN string
+	onlyFreeAgent := false
+	if opts.TeamAbbr != "" {
+		t := strings.ToUpper(strings.TrimSpace(opts.TeamAbbr))
+		switch t {
+		case "FA":
+			// 仅筛选自由球员
+			onlyFreeAgent = true
+		default:
+			// 通过已有的 teamNames 映射（中文 -> 英文简称）反查出中文球队名
+			for cn, abbr := range teamNames {
+				if abbr == t {
+					teamCN = cn
+					break
+				}
+			}
+		}
+		// 若未找到对应中文队名，则视为无效参数：不做任何球队筛选
+	}
+
 	filter := repositories.PlayerFilter{
-		Page:       opts.Page,
-		Limit:      opts.Limit,
-		OrderBy:    s.mapOrderBy(opts.OrderBy),
-		OrderAsc:   opts.OrderAsc,
-		Period:     opts.Period,
-		SoldOut:    opts.SoldOut,
-		PlayerName: opts.PlayerName,
-		MinPrice:   opts.MinPrice,
-		MaxPrice:   opts.MaxPrice,
-		ExFree:     opts.ExFree,
+		Page:          opts.Page,
+		Limit:         opts.Limit,
+		OrderBy:       s.mapOrderBy(opts.OrderBy),
+		OrderAsc:      opts.OrderAsc,
+		Period:        opts.Period,
+		SoldOut:       opts.SoldOut,
+		PlayerName:    opts.PlayerName,
+		MinPrice:      opts.MinPrice,
+		MaxPrice:      opts.MaxPrice,
+		ExFree:        opts.ExFree,
+		TeamAbbr:      teamCN,
+		OnlyFreeAgent: onlyFreeAgent,
 	}
 
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)

@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"o2stock-crawler/api"
 	"o2stock-crawler/internal/dto"
@@ -25,6 +26,9 @@ func (a *API) Players() http.HandlerFunc {
 		maxPrice := parseIntDefault(r.URL.Query().Get("max_price"), 0)
 		exFree := r.URL.Query().Get("ex_free") == "true"
 
+		// 可选球队筛选：team=OKC/MIN/...；特殊值 FA 表示自由球员
+		teamParam := strings.TrimSpace(r.URL.Query().Get("team"))
+
 		// 解析可选的 user_id (从 Token 获取)
 		var userID *uint
 		if uid, ok := GetUserIDFromContext(ctx); ok {
@@ -43,6 +47,7 @@ func (a *API) Players() http.HandlerFunc {
 			MinPrice:   uint(minPrice),
 			MaxPrice:   uint(maxPrice),
 			ExFree:     exFree,
+			TeamAbbr:   teamParam,
 		}
 
 		players, err := a.playersService.ListPlayersWithOwned(ctx, opts)

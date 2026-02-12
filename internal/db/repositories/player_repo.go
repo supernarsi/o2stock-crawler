@@ -20,17 +20,19 @@ func NewPlayerRepository(db *gorm.DB) *PlayerRepository {
 }
 
 type PlayerFilter struct {
-	Page       int
-	Limit      int
-	OrderBy    string
-	OrderAsc   bool
-	Period     uint8
-	SoldOut    bool
-	PlayerName string
-	PlayerIDs  []uint
-	MinPrice   uint
-	MaxPrice   uint
-	ExFree     bool
+	Page          int
+	Limit         int
+	OrderBy       string
+	OrderAsc      bool
+	Period        uint8
+	SoldOut       bool
+	PlayerName    string
+	PlayerIDs     []uint
+	MinPrice      uint
+	MaxPrice      uint
+	ExFree        bool
+	TeamAbbr      string
+	OnlyFreeAgent bool
 }
 
 func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]entity.Player, error) {
@@ -52,6 +54,12 @@ func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]ent
 	}
 	if filter.ExFree {
 		query = query.Where("team_abbr != ?", "自由球员")
+	}
+	if filter.OnlyFreeAgent {
+		query = query.Where("team_abbr = ?", "自由球员")
+	}
+	if filter.TeamAbbr != "" {
+		query = query.Where("team_abbr = ?", filter.TeamAbbr)
 	}
 	if len(filter.PlayerIDs) > 0 {
 		query = query.Where("player_id IN ?", filter.PlayerIDs)
