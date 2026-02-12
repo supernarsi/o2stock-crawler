@@ -35,3 +35,6 @@ alwaysApply: false
 
 - Prefer table-driven tests.
 - Keep tests deterministic; avoid real network calls unless explicitly intended.
+- **数据库操作测试**：
+  - 涉及**写入、修改、删除**操作时，**必须使用 mock**，不要真实执行数据库变更。
+  - **查询操作**可以真实执行（读取测试数据）。
