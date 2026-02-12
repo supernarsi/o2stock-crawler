@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"o2stock-crawler/internal/db"
+	"o2stock-crawler/internal/db/repositories"
 	"testing"
 
 	"github.com/joho/godotenv"
@@ -33,7 +34,13 @@ func TestUserFavLimit(t *testing.T) {
 	defer teardown()
 
 	ctx := context.Background()
-	userSvc := NewUserPlayerService(database)
+	userSvc := NewUserPlayerService(
+		database,
+		repositories.NewOwnRepository(database.DB),
+		repositories.NewPlayerRepository(database.DB),
+		repositories.NewItemRepository(database.DB),
+		repositories.NewFavRepository(database.DB),
+	)
 	userID := uint(99998) // Another Test User ID
 
 	// Clean up

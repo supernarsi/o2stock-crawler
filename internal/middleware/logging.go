@@ -30,7 +30,10 @@ func Logging(next http.HandlerFunc) http.HandlerFunc {
 		next(rec, r)
 		dur := time.Since(start)
 		// 记录请求url，且包含query参数
-		reqUrl := r.URL.Path + "?" + r.URL.RawQuery
+		reqUrl := r.URL.Path
+		if r.URL.RawQuery != "" {
+			reqUrl += "?" + r.URL.RawQuery
+		}
 		log.Printf("%s %s %d %d %s", r.Method, reqUrl, rec.status, rec.bytes, dur)
 	}
 }

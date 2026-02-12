@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"o2stock-crawler/api"
 	"o2stock-crawler/internal/db"
 	"strconv"
 	"sync"
@@ -78,8 +79,7 @@ func SignatureMiddleware(cfg *db.Config) Middleware {
 
 			if sig == "" || tsStr == "" || nonce == "" {
 				log.Println("[Signature] Missing headers")
-				http.Error(w, "Missing signature headers", http.StatusUnauthorized)
-				// writeJSON(w, api.Error(http.StatusUnauthorized, "Missing signature headers"))
+				writeJSON(w, api.Error(http.StatusUnauthorized, "Missing signature headers"))
 				return
 			}
 
@@ -87,29 +87,25 @@ func SignatureMiddleware(cfg *db.Config) Middleware {
 			ts, err := strconv.ParseInt(tsStr, 10, 64)
 			if err != nil {
 				log.Printf("[Signature] Invalid timestamp: %s", tsStr)
-				http.Error(w, "Invalid timestamp", http.StatusUnauthorized)
-				// writeJSON(w, api.Error(http.StatusUnauthorized, "Invalid timestamp"))
+				writeJSON(w, api.Error(http.StatusUnauthorized, "Invalid timestamp"))
 				return
 			}
 			now := time.Now().Unix()
 			if now-ts > 300 || ts-now > 300 { // +/- 5 minutes
 				log.Printf("[Signature] Timestamp expired: %d (now: %d)", ts, now)
-				http.Error(w, "Timestamp expired", http.StatusUnauthorized)
-				// writeJSON(w, api.Error(http.StatusUnauthorized, "Timestamp expired"))
+				writeJSON(w, api.Error(http.StatusUnauthorized, "Timestamp expired"))
 				return
 			}
 
 			// 3. Validate nonce
 			if len(nonce) < 16 {
 				log.Printf("[Signature] Nonce too short: %s", nonce)
-				http.Error(w, "Nonce too short", http.StatusUnauthorized)
-				// writeJSON(w, api.Error(http.StatusUnauthorized, "Nonce too short"))
+				writeJSON(w, api.Error(http.StatusUnauthorized, "Nonce too short"))
 				return
 			}
 			if nonceCache.Exists(nonce) {
 				log.Printf("[Signature] Nonce reused: %s", nonce)
-				http.Error(w, "Nonce reused", http.StatusUnauthorized)
-				// writeJSON(w, api.Error(http.StatusUnauthorized, "Nonce reused"))
+				writeJSON(w, api.Error(http.StatusUnauthorized, "Nonce reused"))
 				return
 			}
 			nonceCache.Add(nonce)
@@ -120,8 +116,7 @@ func SignatureMiddleware(cfg *db.Config) Middleware {
 				bodyBytes, err = io.ReadAll(r.Body)
 				if err != nil {
 					log.Printf("[Signature] Failed to read body: %v", err)
-					http.Error(w, "Failed to read body", http.StatusInternalServerError)
-					// writeJSON(w, api.Error(http.StatusInternalServerError, "Failed to read body"))
+					writeJSON(w, api.Error(http.StatusInternalServerError, "Failed to read body"))
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore body
@@ -141,8 +136,7 @@ func SignatureMiddleware(cfg *db.Config) Middleware {
 
 			if !hmac.Equal([]byte(sig), []byte(expectedSig)) {
 				log.Printf("[Signature] Verification failed. Raw: %s, Expected: %s, Got: %s", raw, expectedSig, sig)
-				http.Error(w, "Invalid signature", http.StatusUnauthorized)
-				// writeJSON(w, api.Error(http.StatusUnauthorized, "Invalid signature"))
+				writeJSON(w, api.Error(http.StatusUnauthorized, "Invalid signature"))
 				return
 			}
 

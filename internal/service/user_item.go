@@ -15,11 +15,19 @@ import (
 
 // UserItemService 用户道具服务
 type UserItemService struct {
-	db *db.DB
+	db       *db.DB
+	ownRepo  *repositories.OwnRepository
+	itemRepo *repositories.ItemRepository
+	favRepo  *repositories.ItemFavRepository
 }
 
-func NewUserItemService(database *db.DB) *UserItemService {
-	return &UserItemService{db: database}
+func NewUserItemService(database *db.DB, ownRepo *repositories.OwnRepository, itemRepo *repositories.ItemRepository, favRepo *repositories.ItemFavRepository) *UserItemService {
+	return &UserItemService{
+		db:       database,
+		ownRepo:  ownRepo,
+		itemRepo: itemRepo,
+		favRepo:  favRepo,
+	}
 }
 
 // ItemIn 标记购买道具，notifyType: 0 不订阅 1 回本 2 盈利15%
@@ -27,8 +35,7 @@ func (s *UserItemService) ItemIn(ctx context.Context, userID, itemID, num, cost 
 	if notifyType > 2 {
 		notifyType = consts.NotifyTypeNone
 	}
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	if err := ownRepo.Create(ctx, userID, itemID, num, cost, dt, notifyType, consts.OwnGoodsItem); err != nil {
+	if err := s.ownRepo.Create(ctx, userID, itemID, num, cost, dt, notifyType, consts.OwnGoodsItem); err != nil {
 		return fmt.Errorf("failed to insert item own: %w", err)
 	}
 	return nil
@@ -36,9 +43,7 @@ func (s *UserItemService) ItemIn(ctx context.Context, userID, itemID, num, cost 
 
 // ItemOut 标记出售道具（指定持仓记录 ownID）
 func (s *UserItemService) ItemOut(ctx context.Context, userID, ownID, itemID, cost uint, dt time.Time) error {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-
-	own, err := ownRepo.GetByRecordID(ctx, ownID, userID)
+	own, err := s.ownRepo.GetByRecordID(ctx, ownID, userID)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return fmt.Errorf("own record not found")
@@ -52,7 +57,7 @@ func (s *UserItemService) ItemOut(ctx context.Context, userID, ownID, itemID, co
 		return fmt.Errorf("own record not sellable")
 	}
 
-	affected, err := ownRepo.MarkAsSoldByID(ctx, userID, ownID, cost, dt)
+	affected, err := s.ownRepo.MarkAsSoldByID(ctx, userID, ownID, cost, dt)
 	if err != nil {
 		return fmt.Errorf("failed to update item own to sold: %w", err)
 	}
@@ -68,8 +73,7 @@ func (s *UserItemService) SetItemNotify(ctx context.Context, userID, itemID uint
 	if notifyType > 2 {
 		return fmt.Errorf("invalid notify_type")
 	}
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	n, err := ownRepo.UpdateNotifyByUserAndGoods(ctx, userID, itemID, notifyType, consts.OwnGoodsItem)
+	n, err := s.ownRepo.UpdateNotifyByUserAndGoods(ctx, userID, itemID, notifyType, consts.OwnGoodsItem)
 	if err != nil {
 		return fmt.Errorf("failed to update notify: %w", err)
 	}
@@ -81,10 +85,7 @@ func (s *UserItemService) SetItemNotify(ctx context.Context, userID, itemID uint
 
 // GetUserItems 获取用户拥有道具列表
 func (s *UserItemService) GetUserItems(ctx context.Context, userID uint) ([]api.OwnedItem, error) {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	itemRepo := repositories.NewItemRepository(s.db.DB)
-
-	ownedList, err := ownRepo.GetByUserID(ctx, userID, consts.OwnGoodsItem)
+	ownedList, err := s.ownRepo.GetByUserID(ctx, userID, consts.OwnGoodsItem)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user owned items: %w", err)
 	}
@@ -102,7 +103,7 @@ func (s *UserItemService) GetUserItems(ctx context.Context, userID uint) ([]api.
 		itemIDs = append(itemIDs, o.PID)
 	}
 
-	items, err := itemRepo.BatchGetByItemIDs(ctx, itemIDs)
+	items, err := s.itemRepo.BatchGetByItemIDs(ctx, itemIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get items by item_ids: %w", err)
 	}
@@ -146,10 +147,8 @@ func (s *UserItemService) GetUserItems(ctx context.Context, userID uint) ([]api.
 
 // FavItem 用户收藏道具
 func (s *UserItemService) FavItem(ctx context.Context, userID, itemID uint) error {
-	favRepo := repositories.NewItemFavRepository(s.db.DB)
-
 	// 检查是否已收藏
-	count, err := favRepo.Count(ctx, userID, itemID)
+	count, err := s.favRepo.Count(ctx, userID, itemID)
 	if err != nil {
 		return fmt.Errorf("failed to count fav item: %w", err)
 	}
@@ -158,7 +157,7 @@ func (s *UserItemService) FavItem(ctx context.Context, userID, itemID uint) erro
 	}
 
 	// 检查收藏数量是否已达上限 (50)
-	totalFavs, err := favRepo.CountUserTotal(ctx, userID)
+	totalFavs, err := s.favRepo.CountUserTotal(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("failed to count user favs: %w", err)
 	}
@@ -167,7 +166,7 @@ func (s *UserItemService) FavItem(ctx context.Context, userID, itemID uint) erro
 	}
 
 	// 插入收藏记录
-	if err := favRepo.Add(ctx, userID, itemID); err != nil {
+	if err := s.favRepo.Add(ctx, userID, itemID); err != nil {
 		return fmt.Errorf("failed to insert fav item: %w", err)
 	}
 
@@ -176,8 +175,7 @@ func (s *UserItemService) FavItem(ctx context.Context, userID, itemID uint) erro
 
 // UnFavItem 用户取消收藏道具
 func (s *UserItemService) UnFavItem(ctx context.Context, userID, itemID uint) error {
-	favRepo := repositories.NewItemFavRepository(s.db.DB)
-	if err := favRepo.Remove(ctx, userID, itemID); err != nil {
+	if err := s.favRepo.Remove(ctx, userID, itemID); err != nil {
 		return fmt.Errorf("failed to delete fav item: %w", err)
 	}
 	return nil
@@ -185,12 +183,8 @@ func (s *UserItemService) UnFavItem(ctx context.Context, userID, itemID uint) er
 
 // GetUserFavItems 获取用户收藏道具列表（含持仓信息）
 func (s *UserItemService) GetUserFavItems(ctx context.Context, userID uint) ([]dto.Item, error) {
-	favRepo := repositories.NewItemFavRepository(s.db.DB)
-	itemRepo := repositories.NewItemRepository(s.db.DB)
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-
 	// 1. 获取用户收藏的道具ID列表
-	itemIDs, err := favRepo.GetItemIDs(ctx, userID)
+	itemIDs, err := s.favRepo.GetItemIDs(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fav item ids: %w", err)
 	}
@@ -200,13 +194,13 @@ func (s *UserItemService) GetUserFavItems(ctx context.Context, userID uint) ([]d
 	}
 
 	// 2. 获取道具详细信息
-	items, err := itemRepo.BatchGetByItemIDs(ctx, itemIDs)
+	items, err := s.itemRepo.BatchGetByItemIDs(ctx, itemIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get items: %w", err)
 	}
 
 	// 3. 获取拥有信息
-	ownRecords, err := ownRepo.GetByGoodsIDs(ctx, userID, itemIDs, consts.OwnGoodsItem)
+	ownRecords, err := s.ownRepo.GetByGoodsIDs(ctx, userID, itemIDs, consts.OwnGoodsItem)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get owned info: %w", err)
 	}

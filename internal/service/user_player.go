@@ -16,20 +16,29 @@ import (
 
 // UserPlayerService 用户球员服务
 type UserPlayerService struct {
-	db *db.DB
+	db         *db.DB
+	ownRepo    *repositories.OwnRepository
+	playerRepo *repositories.PlayerRepository
+	itemRepo   *repositories.ItemRepository
+	favRepo    *repositories.FavRepository
 }
 
 // NewUserPlayerService 创建用户球员服务实例
-func NewUserPlayerService(database *db.DB) *UserPlayerService {
-	return &UserPlayerService{db: database}
+func NewUserPlayerService(database *db.DB, ownRepo *repositories.OwnRepository, playerRepo *repositories.PlayerRepository, itemRepo *repositories.ItemRepository, favRepo *repositories.FavRepository) *UserPlayerService {
+	return &UserPlayerService{
+		db:         database,
+		ownRepo:    ownRepo,
+		playerRepo: playerRepo,
+		itemRepo:   itemRepo,
+		favRepo:    favRepo,
+	}
 }
 
 // PlayerIn 标记购买球员，notifyType: 0 不订阅 1 回本 2 盈利15%
 func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num, cost uint, dt time.Time, notifyType uint8) error {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
 
 	// 检查是否已拥有超过 2 条
-	count, err := ownRepo.CountOwned(ctx, userID, playerID, consts.OwnGoodsPlayer)
+	count, err := s.ownRepo.CountOwned(ctx, userID, playerID, consts.OwnGoodsPlayer)
 	if err != nil {
 		return fmt.Errorf("failed to count owned players: %w", err)
 	}
@@ -41,7 +50,7 @@ func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num,
 		notifyType = consts.NotifyTypeNone
 	}
 	// 插入购买记录
-	if err := ownRepo.Create(ctx, userID, playerID, num, cost, dt, notifyType, consts.OwnGoodsPlayer); err != nil {
+	if err := s.ownRepo.Create(ctx, userID, playerID, num, cost, dt, notifyType, consts.OwnGoodsPlayer); err != nil {
 		return fmt.Errorf("failed to insert player own: %w", err)
 	}
 
@@ -50,8 +59,7 @@ func (s *UserPlayerService) PlayerIn(ctx context.Context, userID, playerID, num,
 
 // PlayerOut 标记出售球员
 func (s *UserPlayerService) PlayerOut(ctx context.Context, userID, playerID, cost uint, dt time.Time) error {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	if err := ownRepo.MarkAsSold(ctx, userID, playerID, cost, dt, consts.OwnGoodsPlayer); err != nil {
+	if err := s.ownRepo.MarkAsSold(ctx, userID, playerID, cost, dt, consts.OwnGoodsPlayer); err != nil {
 		return fmt.Errorf("failed to update player own to sold: %w", err)
 	}
 	return nil
@@ -59,7 +67,6 @@ func (s *UserPlayerService) PlayerOut(ctx context.Context, userID, playerID, cos
 
 // EditPlayerOwn 修改持仓记录
 func (s *UserPlayerService) EditPlayerOwn(ctx context.Context, userID, recordId, priceIn, priceOut, num uint, dtIn, dtOut *time.Time) error {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
 	updates := map[string]interface{}{
 		"price_in":  priceIn,
 		"price_out": priceOut,
@@ -69,7 +76,7 @@ func (s *UserPlayerService) EditPlayerOwn(ctx context.Context, userID, recordId,
 	if dtOut != nil {
 		updates["dt_out"] = dtOut
 	}
-	if err := ownRepo.Update(ctx, userID, recordId, updates); err != nil {
+	if err := s.ownRepo.Update(ctx, userID, recordId, updates); err != nil {
 		return fmt.Errorf("failed to update player own: %w", err)
 	}
 	return nil
@@ -77,8 +84,7 @@ func (s *UserPlayerService) EditPlayerOwn(ctx context.Context, userID, recordId,
 
 // DeletePlayerOwn 删除持仓记录
 func (s *UserPlayerService) DeletePlayerOwn(ctx context.Context, userID, recordId uint) error {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	if err := ownRepo.Delete(ctx, userID, recordId); err != nil {
+	if err := s.ownRepo.Delete(ctx, userID, recordId); err != nil {
 		return fmt.Errorf("failed to delete player own: %w", err)
 	}
 	return nil
@@ -86,8 +92,7 @@ func (s *UserPlayerService) DeletePlayerOwn(ctx context.Context, userID, recordI
 
 // GetPlayerOwn 获取持仓记录
 func (s *UserPlayerService) GetPlayerOwn(ctx context.Context, userID, recordId uint) (*dto.UserPlayerOwn, error) {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	record, err := ownRepo.GetByRecordID(ctx, recordId, userID)
+	record, err := s.ownRepo.GetByRecordID(ctx, recordId, userID)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
@@ -99,10 +104,7 @@ func (s *UserPlayerService) GetPlayerOwn(ctx context.Context, userID, recordId u
 
 // GetUserPlayers 获取用户拥有球员列表
 func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]api.OwnedPlayer, error) {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-
-	ownedList, err := ownRepo.GetByUserID(ctx, userID, consts.OwnGoodsPlayer)
+	ownedList, err := s.ownRepo.GetByUserID(ctx, userID, consts.OwnGoodsPlayer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user owned players: %w", err)
 	}
@@ -118,7 +120,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 	}
 
 	// 查询球员详细信息
-	players, err := playerRepo.BatchGetByIDs(ctx, playerIDs)
+	players, err := s.playerRepo.BatchGetByIDs(ctx, playerIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
 	}
@@ -158,12 +160,8 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 
 // GetUserFavPlayers 获取用户收藏球员列表
 func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) ([]api.PlayerWithOwned, error) {
-	favRepo := repositories.NewFavRepository(s.db.DB)
-	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-
 	// 1. 获取用户收藏的球员ID列表
-	favIDs, err := favRepo.GetPlayerIDs(ctx, userID)
+	favIDs, err := s.favRepo.GetPlayerIDs(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fav player ids: %w", err)
 	}
@@ -173,13 +171,13 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 	}
 
 	// 2. 获取球员详细信息
-	players, err := playerRepo.List(ctx, repositories.PlayerFilter{PlayerIDs: favIDs})
+	players, err := s.playerRepo.List(ctx, repositories.PlayerFilter{PlayerIDs: favIDs})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get players: %w", err)
 	}
 
 	// 3. 获取拥有信息
-	ownRecords, err := ownRepo.GetByGoodsIDs(ctx, userID, favIDs, consts.OwnGoodsPlayer)
+	ownRecords, err := s.ownRepo.GetByGoodsIDs(ctx, userID, favIDs, consts.OwnGoodsPlayer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get owned info: %w", err)
 	}
@@ -207,10 +205,8 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 
 // FavPlayer 用户收藏球员
 func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint) error {
-	favRepo := repositories.NewFavRepository(s.db.DB)
-
 	// 检查是否已收藏
-	count, err := favRepo.Count(ctx, userID, playerID)
+	count, err := s.favRepo.Count(ctx, userID, playerID)
 	if err != nil {
 		return fmt.Errorf("failed to count fav player: %w", err)
 	}
@@ -219,7 +215,7 @@ func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint
 	}
 
 	// 检查收藏数量是否已达上限 (50)
-	totalFavs, err := favRepo.CountUserTotal(ctx, userID)
+	totalFavs, err := s.favRepo.CountUserTotal(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("failed to count user favs: %w", err)
 	}
@@ -228,7 +224,7 @@ func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint
 	}
 
 	// 插入收藏记录
-	if err := favRepo.Add(ctx, userID, playerID); err != nil {
+	if err := s.favRepo.Add(ctx, userID, playerID); err != nil {
 		return fmt.Errorf("failed to insert fav player: %w", err)
 	}
 
@@ -237,8 +233,7 @@ func (s *UserPlayerService) FavPlayer(ctx context.Context, userID, playerID uint
 
 // UnFavPlayer 用户取消收藏球员
 func (s *UserPlayerService) UnFavPlayer(ctx context.Context, userID, playerID uint) error {
-	favRepo := repositories.NewFavRepository(s.db.DB)
-	if err := favRepo.Remove(ctx, userID, playerID); err != nil {
+	if err := s.favRepo.Remove(ctx, userID, playerID); err != nil {
 		return fmt.Errorf("failed to delete fav player: %w", err)
 	}
 	return nil
@@ -249,8 +244,7 @@ func (s *UserPlayerService) SetPlayerNotify(ctx context.Context, userID, playerI
 	if notifyType > 2 {
 		return fmt.Errorf("invalid notify_type")
 	}
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	n, err := ownRepo.UpdateNotifyByUserAndGoods(ctx, userID, playerID, notifyType, consts.OwnGoodsPlayer)
+	n, err := s.ownRepo.UpdateNotifyByUserAndGoods(ctx, userID, playerID, notifyType, consts.OwnGoodsPlayer)
 	if err != nil {
 		return fmt.Errorf("failed to update notify: %w", err)
 	}
@@ -285,12 +279,8 @@ func formatTimeOrEmpty(t *time.Time) string {
 
 // GetUnifiedOwnGoods 获取统一持仓列表
 func (s *UserPlayerService) GetUnifiedOwnGoods(ctx context.Context, userID uint) ([]dto.UnifiedOwnGoods, error) {
-	ownRepo := repositories.NewOwnRepository(s.db.DB)
-	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-	itemRepo := repositories.NewItemRepository(s.db.DB)
-
 	// 1. 获取用户所有持仓记录
-	allOwns, err := ownRepo.GetByUserID(ctx, userID)
+	allOwns, err := s.ownRepo.GetByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unified owns: %w", err)
 	}
@@ -303,9 +293,10 @@ func (s *UserPlayerService) GetUnifiedOwnGoods(ctx context.Context, userID uint)
 	playerIDs := []uint{}
 	itemIDs := []uint{}
 	for _, o := range allOwns {
-		if o.OwnGoods == consts.OwnGoodsPlayer {
+		switch o.OwnGoods {
+		case consts.OwnGoodsPlayer:
 			playerIDs = append(playerIDs, o.PID)
-		} else if o.OwnGoods == consts.OwnGoodsItem {
+		case consts.OwnGoodsItem:
 			itemIDs = append(itemIDs, o.PID)
 		}
 	}
@@ -313,7 +304,7 @@ func (s *UserPlayerService) GetUnifiedOwnGoods(ctx context.Context, userID uint)
 	// 3. 批量获取详情
 	playerMap := make(map[uint]entity.Player)
 	if len(playerIDs) > 0 {
-		players, err := playerRepo.BatchGetByIDs(ctx, playerIDs)
+		players, err := s.playerRepo.BatchGetByIDs(ctx, playerIDs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to batch get players: %w", err)
 		}
@@ -324,7 +315,7 @@ func (s *UserPlayerService) GetUnifiedOwnGoods(ctx context.Context, userID uint)
 
 	itemMap := make(map[uint]entity.Item)
 	if len(itemIDs) > 0 {
-		items, err := itemRepo.BatchGetByItemIDs(ctx, itemIDs)
+		items, err := s.itemRepo.BatchGetByItemIDs(ctx, itemIDs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to batch get items: %w", err)
 		}
