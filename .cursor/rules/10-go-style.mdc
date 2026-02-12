@@ -1,0 +1,37 @@
+---
+description: Go implementation standards (formatting, errors, tests)
+globs: **/*.go
+alwaysApply: false
+---
+
+# Go standards
+
+## Formatting
+
+- Keep code `gofmt`-clean.
+- Prefer early returns; keep functions small and readable.
+
+## Errors
+
+- Wrap errors with context: `fmt.Errorf("do X: %w", err)`.
+- Avoid string comparisons on `err.Error()`; use sentinel errors or `errors.Is/As` when possible.
+
+## Context usage
+
+- Accept `context.Context` in service/repo methods that do I/O; pass it through.
+- Use `http.NewRequestWithContext` for outbound HTTP (as in `AuthService.code2Session`).
+
+## Logging
+
+- Log at edges (handlers, jobs) rather than deep helpers.
+- Avoid logging sensitive fields (tokens, secrets, raw credentials).
+
+## Build & verification
+
+- 编写或修改完成后**不强制**执行 `go build`；仅在需要验证编译通过时再执行。
+- 若为验证而执行了 `go build`，验证结束后**必须删除**构建产物（如 `o2stock-api`、`o2stock-crawler` 等可执行文件及同目录下的构建缓存），避免将二进制提交进仓库。
+
+## Tests
+
+- Prefer table-driven tests.
+- Keep tests deterministic; avoid real network calls unless explicitly intended.

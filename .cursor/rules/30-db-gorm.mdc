@@ -1,0 +1,25 @@
+---
+description: DB/Gorm repository patterns and safety
+globs: internal/db/**/*.go
+alwaysApply: false
+---
+
+# DB / Gorm conventions
+
+- Prefer repository methods in `internal/db/repositories/*` for DB access.
+- Pass `context.Context` through to DB calls where supported.
+
+## Queries & transactions
+
+- Keep queries explicit; avoid “magic” behavior that is hard to reason about.
+- Use transactions for multi-step writes that must be atomic.
+
+## Errors
+
+- Distinguish “not found” vs other failures; avoid treating `gorm.ErrRecordNotFound` as fatal.
+- Wrap errors with operation context: `fmt.Errorf("repo X: %w", err)`.
+
+## Data safety
+
+- Do not log raw SQL with secrets/PII in production paths.
+- Be careful with updates: avoid unintended zero-value overwrites (use `Select`/`Omit` as needed).

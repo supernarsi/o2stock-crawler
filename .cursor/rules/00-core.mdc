@@ -1,0 +1,27 @@
+---
+description: Core repo conventions (apply everywhere)
+alwaysApply: true
+---
+
+# Core conventions
+
+- **回复语言**：默认使用**简体中文**回复（除非用户明确要求其他语言）。
+- Prefer **small, reviewable diffs**; avoid drive-by refactors.
+- Keep **public APIs stable**: avoid renaming exported identifiers without updating all call sites.
+- If you change behavior, add or update **tests** when feasible.
+- Do not introduce new dependencies unless clearly needed.
+
+## Go module hygiene
+
+- Run `gofmt` on touched `.go` files.
+- Keep changes compatible with `go.mod` (`go 1.24.0`) and existing deps.
+
+## Config & secrets
+
+- Never commit `.env` or secrets (JWT secret, WeChat app secret, DB creds).
+- Prefer reading runtime config from env; keep sensible fallbacks if already present in code.
+
+## Logging & errors
+
+- Return errors up the stack; wrap with context using `fmt.Errorf("...: %w", err)`.
+- Avoid `log.Fatal*` outside of `cmd/*/main.go`.

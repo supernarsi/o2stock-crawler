@@ -1,0 +1,25 @@
+---
+description: 项目结构与代码组织约定
+alwaysApply: true
+---
+
+# 项目结构与规则说明
+
+## 目录结构（概览）
+
+- `cmd/`：各个可执行程序入口（如 `o2stock-api`、crawler 等），只做装配/启动，不承载复杂业务逻辑。
+- `internal/`：核心业务实现（controller/service/db/middleware/crawler 等），仅供本模块内部使用。
+- `api/`：API 层的通用结构/响应定义等（与 `internal/controller` 配合）。
+- `docs/`：需求/设计/方案/ADR 等文档统一存放处（新增文档必须放这里）。
+
+## 分层约定
+
+- `internal/controller`：HTTP 层（解析入参、校验、调用 service、返回响应），不要直接写复杂 SQL。
+- `internal/service`：业务编排与领域逻辑；依赖 repo 与外部客户端。
+- `internal/db/repositories`：数据访问层（Gorm/SQL），对上提供清晰方法；避免在 controller 里散落数据库细节。
+- `internal/middleware`：请求链路中间件（鉴权、签名、日志、CORS 等），注意顺序与性能。
+
+## 变更原则
+
+- 新增/修改接口：优先补齐对应 controller/service/repo 分层，而不是在单层堆逻辑。
+- 涉及跨层调整：先在 `docs/` 写简短设计说明，再落代码（复杂改动尤其如此）。
