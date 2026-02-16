@@ -9,6 +9,51 @@ type PlayerHistoryRes struct {
 	PlayerInfo    *PlayerWithOwned       `json:"player_info"`
 	PlayerHistory []*dto.PriceHistoryRow `json:"history"`
 	GameData      *GameData              `json:"game_data"`
+	PlayerExt     *PlayerExt             `json:"player_ext"`
+}
+
+type PlayerExt struct {
+	PlayerID       uint32        `json:"player_id"`
+	Height         uint          `json:"height"`
+	Wingspan       uint          `json:"wingspan"`
+	Weight         float64       `json:"weight"`
+	Birthday       string        `json:"birthday"`
+	Pos            string        `json:"pos"`
+	Overall        uint          `json:"overall"`
+	OverallTrained uint          `json:"overall_trained"`
+	Radar          Radar         `json:"radar"`
+	BadgesSummary  BadgesSummary `json:"badges_summary"`
+	Badges         []BadgeItem   `json:"badges"`
+}
+
+type Radar struct {
+	Ath uint `json:"ath"`
+	Brk uint `json:"brk"`
+	Ins uint `json:"ins"`
+	Bak uint `json:"bak"`
+	Mds uint `json:"mds"`
+	Tps uint `json:"tps"`
+	Plm uint `json:"plm"`
+	Dfi uint `json:"dfi"`
+	Dfo uint `json:"dfo"`
+	Stl uint `json:"stl"`
+	Reb uint `json:"reb"`
+}
+
+type BadgesSummary struct {
+	Hof     uint `json:"hof"`
+	Gold    uint `json:"gold"`
+	Silver  uint `json:"silver"`
+	Bronze  uint `json:"bronze"`
+	Trained uint `json:"trained"`
+}
+
+type BadgeItem struct {
+	BadgeID   uint   `json:"badges_id"`
+	BadgeName string `json:"badges_name"`
+	Lv        uint8  `json:"lv"`
+	Desc      string `json:"desc"`
+	Icon      string `json:"icon"`
 }
 
 // MultiPlayersHistoryRes 批量球员历史价格响应

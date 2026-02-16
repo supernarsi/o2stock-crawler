@@ -137,7 +137,19 @@ func (a *API) PlayerHistory() http.HandlerFunc {
 			Standard:       standard,
 			NbaToday:       nbaToday,
 		}
-		return api.PlayerHistoryRes{PlayerInfo: playerInfo, PlayerHistory: rows, GameData: gameData}, nil
+
+		playerExt, err := a.playersService.GetPlayerExt(ctx, uint(playerID))
+		if err != nil {
+			// 记录错误但不阻塞，类似比赛数据处理
+			// log.Printf("failed to get player ext for player %d: %v", playerID, err)
+		}
+
+		return api.PlayerHistoryRes{
+			PlayerInfo:    playerInfo,
+			PlayerHistory: rows,
+			GameData:      gameData,
+			PlayerExt:     playerExt,
+		}, nil
 	})
 }
 

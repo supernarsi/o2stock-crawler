@@ -27,6 +27,7 @@ type Player struct {
 	PriceChange1d      float64   `gorm:"column:price_change_1d"`
 	PriceChange7d      float64   `gorm:"column:price_change_7d"`
 	UpdatedAt          time.Time `gorm:"column:update_at;autoUpdateTime"`
+	DetailJSON         string    `gorm:"column:detail_json"`
 }
 
 // TableName returns the table name for GORM.

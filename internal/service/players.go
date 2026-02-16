@@ -14,6 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	jsoniter "github.com/json-iterator/go"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // PlayersService 球员服务
@@ -516,6 +520,94 @@ func (s *PlayersService) GetPlayerGameData(ctx context.Context, txPlayerID uint)
 	return standard, nbaToday, nil
 }
 
+const BadgeIconBaseURL = "https://game.gtimg.cn/images/nba2kx/nba2k2app_assets/FORMALarts/icon/badges/"
+
+// GetPlayerExt 获取球员扩展信息、评分及徽章
+func (s *PlayersService) GetPlayerExt(ctx context.Context, playerID uint) (*api.PlayerExt, error) {
+	var extra entity.PlayerExtra
+	if err := s.db.WithContext(ctx).Where("player_id = ?", playerID).First(&extra).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// 查询徽章列表
+	type badgeResult struct {
+		BadgeID   uint   `gorm:"column:badge_id"`
+		BadgeName string `gorm:"column:badge_name"`
+		Lv        uint8  `gorm:"column:lv"`
+		Desc      string `gorm:"column:desc"`
+		IconName  string `gorm:"column:icon_name"`
+	}
+	var results []badgeResult
+	err := s.db.WithContext(ctx).Table("player_badge").
+		Select("player_badge.badge_id, player_badge.lv, badges.badge_name, badges.desc, badges.icon_name").
+		Joins("LEFT JOIN badges ON player_badge.badge_id = badges.badge_id").
+		Where("player_badge.player_id = ?", playerID).
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	ext := &api.PlayerExt{
+		PlayerID:       uint32(playerID),
+		Height:         extra.Height,
+		Wingspan:       extra.Wingspan,
+		Weight:         extra.Weight,
+		Birthday:       extra.Birthday,
+		Pos:            extra.Pos,
+		Overall:        extra.Overall,
+		OverallTrained: extra.OverallTrained,
+		Radar: api.Radar{
+			Ath: extra.ScoreAth,
+			Brk: extra.ScoreBrk,
+			Ins: extra.ScoreIns,
+			Bak: extra.ScoreBak,
+			Mds: extra.ScoreMds,
+			Tps: extra.ScoreTps,
+			Plm: extra.ScorePlm,
+			Dfi: extra.ScoreDfi,
+			Dfo: extra.ScoreDfo,
+			Stl: extra.ScoreStl,
+			Reb: extra.ScoreReb,
+		},
+		BadgesSummary: api.BadgesSummary{
+			Hof:     extra.BadgesHof,
+			Gold:    extra.BadgesGold,
+			Silver:  extra.BadgesSilver,
+			Bronze:  extra.BadgesBronze,
+			Trained: extra.BadgesTrained,
+		},
+		Badges: make([]api.BadgeItem, 0, len(results)),
+	}
+
+	for _, b := range results {
+		suffix := ""
+		switch b.Lv {
+		case 1:
+			suffix = "_bronze"
+		case 2:
+			suffix = "_silver"
+		case 3:
+			suffix = "_gold"
+		case 4:
+			suffix = "_hof"
+		}
+		iconURL := fmt.Sprintf("%s%s%s.png", BadgeIconBaseURL, b.IconName, suffix)
+
+		ext.Badges = append(ext.Badges, api.BadgeItem{
+			BadgeID:   b.BadgeID,
+			BadgeName: b.BadgeName,
+			Lv:        b.Lv,
+			Desc:      b.Desc,
+			Icon:      iconURL,
+		})
+	}
+
+	return ext, nil
+}
+
 // CalculateAndSyncPower 计算并同步所有球员的战力值
 func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 	log.Printf(">>> 开始执行球员战力值计算任务 <<<")
@@ -756,4 +848,276 @@ func parseUint8(s string) uint8 {
 func parseUint16(s string) uint16 {
 	v, _ := strconv.ParseUint(s, 10, 16)
 	return uint16(v)
+}
+
+// txPlayerDetailBadge 内部解析结构
+type txPlayerDetailBadge struct {
+	BadgeId      string `json:"badgeId"`
+	BadgeName    string `json:"badgeName"`
+	BadgeLevelId int    `json:"badgeLevelId"`
+	BadgeLevel   string `json:"badgeLevel"`
+	BadgeImg     string `json:"badgeImg"`
+	QualityDesc  string `json:"qualityDesc"`
+}
+
+// txPlayerDetailData 内部解析结构
+type txPlayerDetailData struct {
+	Height              string                `json:"Height"`
+	Wingspan            string                `json:"Wingspan"`
+	Weight              string                `json:"Weight"`
+	BirthDay            string                `json:"BirthDay"`
+	Pos                 string                `json:"Pos"`
+	JerseyNumber        string                `json:"JerseyNumber"`
+	OverAll             int                   `json:"OverAll"`
+	TrainedOverall      int                   `json:"TrainedOverall"`
+	ActiveBadges        []txPlayerDetailBadge `json:"ActiveBadges"`
+	TrainedActiveBadges []txPlayerDetailBadge `json:"TrainedActiveBadges"`
+	BadgesCount         jsoniter.RawMessage   `json:"badgesCount"`
+	TrainedRadar        []struct {
+		ShowName string `json:"showName"`
+		Score    int    `json:"score"`
+	} `json:"TrainedRadar"`
+	TeamAbbr     string `json:"teamAbbr"`
+	PlayerCnName string `json:"PlayerCnName"`
+}
+
+// txBadgesCount 内部结构
+type txBadgesCount struct {
+	Bronze  uint `json:"bronze"`
+	Silver  uint `json:"silver"`
+	Gold    uint `json:"gold"`
+	Hof     uint `json:"hof"`
+	Trained uint `json:"trained"`
+}
+
+// txPlayerDetailResp 内部解析结构
+type txPlayerDetailResp struct {
+	Code int                  `json:"code"`
+	Msg  string               `json:"msg"`
+	Data []txPlayerDetailData `json:"data"`
+}
+
+// SyncPlayerExtraAndBadges 解析并同步球员徽章及扩展信息
+func (s *PlayersService) SyncPlayerExtraAndBadges(ctx context.Context, playerIDs []uint) error {
+	log.Printf(">>> 开始解析并同步球员徽章及扩展信息 <<<")
+	startTime := time.Now()
+
+	var players []entity.Player
+	query := s.db.WithContext(ctx).Where("detail_json IS NOT NULL AND detail_json != ''")
+	if len(playerIDs) > 0 {
+		query = query.Where("player_id IN ?", playerIDs)
+	}
+
+	if err := query.Find(&players).Error; err != nil {
+		return fmt.Errorf("failed to fetch players: %w", err)
+	}
+
+	total := len(players)
+	successCount := 0
+	log.Printf("找到待处理球员数量: %d", total)
+
+	for _, p := range players {
+		var resp txPlayerDetailResp
+		if err := jsoniter.Unmarshal([]byte(p.DetailJSON), &resp); err != nil {
+			log.Printf("[PlayerID: %d] 解析 detail_json 失败: %v", p.PlayerID, err)
+			continue
+		}
+
+		if len(resp.Data) == 0 {
+			continue
+		}
+
+		data := resp.Data[0]
+
+		// 解析 BadgesCount (处理 [] 或 {})
+		var count txBadgesCount
+		if len(data.BadgesCount) > 0 && data.BadgesCount[0] == '{' {
+			_ = jsoniter.Unmarshal(data.BadgesCount, &count)
+		}
+
+		// 解析基础信息
+		extra := entity.PlayerExtra{
+			PlayerID:       p.PlayerID,
+			PNameCn:        data.PlayerCnName,
+			Height:         s.parseUnitValue(data.Height),
+			Wingspan:       s.parseUnitValue(data.Wingspan),
+			Weight:         s.parseFloatUnitValue(data.Weight),
+			Birthday:       s.formatDate(data.BirthDay),
+			Pos:            data.Pos,
+			JerseyNumber:   s.parseUint(data.JerseyNumber),
+			Overall:        uint(data.OverAll),
+			OverallTrained: uint(data.TrainedOverall),
+			BadgesBronze:   count.Bronze,
+			BadgesSilver:   count.Silver,
+			BadgesGold:     count.Gold,
+			BadgesHof:      count.Hof,
+			BadgesTrained:  count.Trained,
+			Team:           convertTeamName(data.TeamAbbr), // 使用 tx_nba_service 中的映射
+		}
+
+		// 解析雷达图评分
+		for _, r := range data.TrainedRadar {
+			score := uint(r.Score)
+			switch r.ShowName {
+			case "运动":
+				extra.ScoreAth = score
+			case "突破":
+				extra.ScoreBrk = score
+			case "篮下":
+				extra.ScoreIns = score
+			case "背身":
+				extra.ScoreBak = score
+			case "中投":
+				extra.ScoreMds = score
+			case "三分":
+				extra.ScoreTps = score
+			case "组织":
+				extra.ScorePlm = score
+			case "内防":
+				extra.ScoreDfi = score
+			case "外防":
+				extra.ScoreDfo = score
+			case "抢断":
+				extra.ScoreStl = score
+			case "篮板":
+				extra.ScoreReb = score
+			}
+		}
+
+		// 收集徽章数据
+		badges := []entity.Badge{}
+		playerBadges := []entity.PlayerBadge{}
+
+		// 处理 ActiveBadges
+		for _, b := range data.ActiveBadges {
+			bid := s.parseUint(b.BadgeId)
+			if bid == 0 {
+				continue
+			}
+			badges = append(badges, entity.Badge{
+				BadgeID:   bid,
+				BadgeName: b.BadgeName,
+				Desc:      b.QualityDesc,
+				IconName:  s.extractIconName(b.BadgeImg),
+			})
+			playerBadges = append(playerBadges, entity.PlayerBadge{
+				PlayerID:  p.PlayerID,
+				BadgeID:   bid,
+				Lv:        uint8(b.BadgeLevelId),
+				IsTrained: false,
+			})
+		}
+
+		// 处理 TrainedActiveBadges (个性徽章)
+		for _, b := range data.TrainedActiveBadges {
+			bid := s.parseUint(b.BadgeId)
+			if bid == 0 {
+				continue
+			}
+			badges = append(badges, entity.Badge{
+				BadgeID:   bid,
+				BadgeName: b.BadgeName,
+				Desc:      b.QualityDesc,
+				IconName:  s.extractIconName(b.BadgeImg),
+			})
+			playerBadges = append(playerBadges, entity.PlayerBadge{
+				PlayerID:  p.PlayerID,
+				BadgeID:   bid,
+				Lv:        0, // 个性徽章等级为 0
+				IsTrained: true,
+			})
+		}
+
+		// 执行数据库事务
+		err := s.db.Transaction(func(tx *gorm.DB) error {
+			// 1. 同步 player_extra
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "player_id"}},
+				UpdateAll: true,
+			}).Create(&extra).Error; err != nil {
+				return err
+			}
+
+			// 2. 同步 badges (如果不存在)
+			if len(badges) > 0 {
+				if err := tx.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "badge_id"}},
+					DoNothing: true, // 仅在不存在时插入
+				}).Create(&badges).Error; err != nil {
+					return err
+				}
+			}
+
+			// 3. 同步 player_badge (先删后增)
+			if err := tx.Where("player_id = ?", p.PlayerID).Delete(&entity.PlayerBadge{}).Error; err != nil {
+				return err
+			}
+			if len(playerBadges) > 0 {
+				if err := tx.Create(&playerBadges).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			log.Printf("[PlayerID: %d] 同步数据失败: %v", p.PlayerID, err)
+		} else {
+			successCount++
+		}
+	}
+
+	log.Printf(">>> 徽章及扩展信息同步完成，耗时: %v, 处理总数: %d, 成功: %d <<<",
+		time.Since(startTime), total, successCount)
+	return nil
+}
+
+func (s *PlayersService) parseUnitValue(sVal string) uint {
+	val := s.parseFloatUnitValue(sVal)
+	return uint(val)
+}
+
+func (s *PlayersService) parseFloatUnitValue(sVal string) float64 {
+	sVal = strings.TrimSpace(sVal)
+	if sVal == "" {
+		return 0
+	}
+	// 去掉 cm, kg 等单位
+	for _, unit := range []string{"cm", "kg"} {
+		sVal = strings.TrimSuffix(sVal, unit)
+	}
+	val, _ := strconv.ParseFloat(sVal, 64)
+	return val
+}
+
+func (s *PlayersService) parseUint(sVal string) uint {
+	val, _ := strconv.Atoi(sVal)
+	return uint(val)
+}
+
+func (s *PlayersService) formatDate(sVal string) string {
+	if sVal == "" {
+		return ""
+	}
+	parts := strings.Split(sVal, "-")
+	if len(parts) == 3 {
+		year := parts[0]
+		month, _ := strconv.Atoi(parts[1])
+		day, _ := strconv.Atoi(parts[2])
+		return fmt.Sprintf("%s%02d%02d", year, month, day)
+	}
+	return strings.ReplaceAll(sVal, "-", "")
+}
+
+func (s *PlayersService) extractIconName(url string) string {
+	if url == "" {
+		return ""
+	}
+	parts := strings.Split(url, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	name := parts[len(parts)-1]
+	return strings.TrimSuffix(name, ".png")
 }
