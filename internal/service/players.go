@@ -941,7 +941,7 @@ func (s *PlayersService) SyncPlayerExtraAndBadges(ctx context.Context, playerIDs
 			PNameCn:        data.PlayerCnName,
 			Height:         s.parseUnitValue(data.Height),
 			Wingspan:       s.parseUnitValue(data.Wingspan),
-			Weight:         s.parseUnitValue(data.Weight),
+			Weight:         s.parseFloatUnitValue(data.Weight),
 			Birthday:       s.formatDate(data.BirthDay),
 			Pos:            data.Pos,
 			JerseyNumber:   s.parseUint(data.JerseyNumber),
@@ -1074,6 +1074,11 @@ func (s *PlayersService) SyncPlayerExtraAndBadges(ctx context.Context, playerIDs
 }
 
 func (s *PlayersService) parseUnitValue(sVal string) uint {
+	val := s.parseFloatUnitValue(sVal)
+	return uint(val)
+}
+
+func (s *PlayersService) parseFloatUnitValue(sVal string) float64 {
 	sVal = strings.TrimSpace(sVal)
 	if sVal == "" {
 		return 0
@@ -1082,8 +1087,8 @@ func (s *PlayersService) parseUnitValue(sVal string) uint {
 	for _, unit := range []string{"cm", "kg"} {
 		sVal = strings.TrimSuffix(sVal, unit)
 	}
-	val, _ := strconv.Atoi(sVal)
-	return uint(val)
+	val, _ := strconv.ParseFloat(sVal, 64)
+	return val
 }
 
 func (s *PlayersService) parseUint(sVal string) uint {

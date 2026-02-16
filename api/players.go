@@ -16,7 +16,7 @@ type PlayerExt struct {
 	PlayerID       uint32        `json:"player_id"`
 	Height         uint          `json:"height"`
 	Wingspan       uint          `json:"wingspan"`
-	Weight         uint          `json:"weight"`
+	Weight         float64       `json:"weight"`
 	Birthday       string        `json:"birthday"`
 	Pos            string        `json:"pos"`
 	Overall        uint          `json:"overall"`
