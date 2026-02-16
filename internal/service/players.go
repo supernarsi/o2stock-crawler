@@ -520,6 +520,94 @@ func (s *PlayersService) GetPlayerGameData(ctx context.Context, txPlayerID uint)
 	return standard, nbaToday, nil
 }
 
+const BadgeIconBaseURL = "https://game.gtimg.cn/images/nba2kx/nba2k2app_assets/FORMALarts/icon/badges/"
+
+// GetPlayerExt 获取球员扩展信息、评分及徽章
+func (s *PlayersService) GetPlayerExt(ctx context.Context, playerID uint) (*api.PlayerExt, error) {
+	var extra entity.PlayerExtra
+	if err := s.db.WithContext(ctx).Where("player_id = ?", playerID).First(&extra).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// 查询徽章列表
+	type badgeResult struct {
+		BadgeID   uint   `gorm:"column:badge_id"`
+		BadgeName string `gorm:"column:badge_name"`
+		Lv        uint8  `gorm:"column:lv"`
+		Desc      string `gorm:"column:desc"`
+		IconName  string `gorm:"column:icon_name"`
+	}
+	var results []badgeResult
+	err := s.db.WithContext(ctx).Table("player_badge").
+		Select("player_badge.badge_id, player_badge.lv, badges.badge_name, badges.desc, badges.icon_name").
+		Joins("LEFT JOIN badges ON player_badge.badge_id = badges.badge_id").
+		Where("player_badge.player_id = ?", playerID).
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	ext := &api.PlayerExt{
+		PlayerID:       uint32(playerID),
+		Height:         extra.Height,
+		Wingspan:       extra.Wingspan,
+		Weight:         extra.Weight,
+		Birthday:       extra.Birthday,
+		Pos:            extra.Pos,
+		Overall:        extra.Overall,
+		OverallTrained: extra.OverallTrained,
+		Radar: api.Radar{
+			Ath: extra.ScoreAth,
+			Brk: extra.ScoreBrk,
+			Ins: extra.ScoreIns,
+			Bak: extra.ScoreBak,
+			Mds: extra.ScoreMds,
+			Tps: extra.ScoreTps,
+			Plm: extra.ScorePlm,
+			Dfi: extra.ScoreDfi,
+			Dfo: extra.ScoreDfo,
+			Stl: extra.ScoreStl,
+			Reb: extra.ScoreReb,
+		},
+		BadgesSummary: api.BadgesSummary{
+			Hof:     extra.BadgesHof,
+			Gold:    extra.BadgesGold,
+			Silver:  extra.BadgesSilver,
+			Bronze:  extra.BadgesBronze,
+			Trained: extra.BadgesTrained,
+		},
+		Badges: make([]api.BadgeItem, 0, len(results)),
+	}
+
+	for _, b := range results {
+		suffix := ""
+		switch b.Lv {
+		case 1:
+			suffix = "_bronze"
+		case 2:
+			suffix = "_silver"
+		case 3:
+			suffix = "_gold"
+		case 4:
+			suffix = "_hof"
+		}
+		iconURL := fmt.Sprintf("%s%s%s.png", BadgeIconBaseURL, b.IconName, suffix)
+
+		ext.Badges = append(ext.Badges, api.BadgeItem{
+			BadgeID:   b.BadgeID,
+			BadgeName: b.BadgeName,
+			Lv:        b.Lv,
+			Desc:      b.Desc,
+			Icon:      iconURL,
+		})
+	}
+
+	return ext, nil
+}
+
 // CalculateAndSyncPower 计算并同步所有球员的战力值
 func (s *PlayersService) CalculateAndSyncPower(ctx context.Context) error {
 	log.Printf(">>> 开始执行球员战力值计算任务 <<<")
