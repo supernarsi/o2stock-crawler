@@ -545,6 +545,7 @@ func (s *PlayersService) GetPlayerExt(ctx context.Context, playerID uint) (*api.
 		Select("player_badge.badge_id, player_badge.lv, badges.badge_name, badges.desc, badges.icon_name").
 		Joins("LEFT JOIN badges ON player_badge.badge_id = badges.badge_id").
 		Where("player_badge.player_id = ?", playerID).
+		Order("player_badge.lv DESC, player_badge.badge_id ASC").
 		Scan(&results).Error
 	if err != nil {
 		return nil, err
