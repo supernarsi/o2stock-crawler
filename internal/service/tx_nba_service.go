@@ -55,6 +55,7 @@ var teamNames = map[string]string{
 	"猛龙":   "TOR",
 	"爵士":   "UTA",
 	"奇才":   "WAS",
+	"自由球员": "FA",
 }
 
 var teamIdToName = map[string]string{

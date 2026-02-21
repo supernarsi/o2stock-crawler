@@ -24,7 +24,11 @@ func ToUserDTO(u *entity.User) *dto.User {
 }
 
 // ToPlayerDTO converts a Player entity to a Players DTO
-func ToPlayerDTO(p entity.Player) dto.Players {
+func ToPlayerDTO(p entity.Player, b *dto.Badges) dto.Players {
+	badges := dto.Badges{}
+	if b != nil {
+		badges = *b
+	}
 	return dto.Players{
 		PlayerID:          p.PlayerID,
 		TxPlayerID:        p.TxPlayerID,
@@ -45,14 +49,29 @@ func ToPlayerDTO(p entity.Player) dto.Players {
 		PriceChange1d:     p.PriceChange1d,
 		PriceChange7d:     p.PriceChange7d,
 		UpdatedAt:         p.UpdatedAt.Format("2006-01-02 15:04:05"),
+		Badges:            badges,
 	}
 }
 
 // ToPlayerWithPriceChangeDTO converts a Player entity to a PlayerWithPriceChange DTO
-func ToPlayerWithPriceChangeDTO(p entity.Player) dto.PlayerWithPriceChange {
+func ToPlayerWithPriceChangeDTO(p entity.Player, b *dto.Badges) dto.PlayerWithPriceChange {
 	return dto.PlayerWithPriceChange{
-		Players:     ToPlayerDTO(p),
+		Players:     ToPlayerDTO(p, b),
 		PriceChange: p.PriceChange1d,
+	}
+}
+
+// ToBadgesDTO converts PlayerExtra entity to Badges DTO
+func ToBadgesDTO(e *entity.PlayerExtra) *dto.Badges {
+	if e == nil {
+		return &dto.Badges{}
+	}
+	return &dto.Badges{
+		Hof:     e.BadgesHof,
+		Gold:    e.BadgesGold,
+		Silver:  e.BadgesSilver,
+		Bronze:  e.BadgesBronze,
+		Trained: e.BadgesTrained,
 	}
 }
 

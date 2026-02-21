@@ -128,11 +128,32 @@ func (s *PlayersService) ListPlayersWithOwned(ctx context.Context, opts PlayerLi
 		}
 	}
 
+	var badgeMap map[uint]*dto.Badges
+	if len(players) > 0 {
+		pids := make([]uint, len(players))
+		for i, p := range players {
+			pids[i] = p.PlayerID
+		}
+		extras, err := playerRepo.GetExtraByPlayerIDs(ctx, pids)
+		if err != nil {
+			log.Printf("failed to get player extra info: %v", err)
+		} else {
+			badgeMap = make(map[uint]*dto.Badges)
+			for _, e := range extras {
+				badgeMap[e.PlayerID] = ToBadgesDTO(&e)
+			}
+		}
+	}
+
 	// 构建返回结果
 	result := make([]api.PlayerWithOwned, len(players))
 	for i, p := range players {
+		var badges *dto.Badges
+		if badgeMap != nil {
+			badges = badgeMap[p.PlayerID]
+		}
 		result[i] = api.PlayerWithOwned{
-			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p),
+			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p, badges),
 			Owned:                 []*dto.OwnInfo{},
 			IsFav:                 false,
 		}
@@ -186,19 +207,34 @@ func (s *PlayersService) GetPlayersWithOwnedByIDs(ctx context.Context, playerIDs
 		}
 	}
 
+	var badgeMap map[uint]*dto.Badges
+	extras, err := playerRepo.GetExtraByPlayerIDs(ctx, playerIDs)
+	if err != nil {
+		log.Printf("failed to get player extra info: %v", err)
+	} else {
+		badgeMap = make(map[uint]*dto.Badges)
+		for _, e := range extras {
+			badgeMap[e.PlayerID] = ToBadgesDTO(&e)
+		}
+	}
+
 	result := make([]api.PlayerWithOwned, len(playerIDs))
 	for i, pid := range playerIDs {
 		p, ok := playerMap[pid]
+		var badges *dto.Badges
+		if badgeMap != nil {
+			badges = badgeMap[pid]
+		}
 		if !ok {
 			result[i] = api.PlayerWithOwned{
-				PlayerWithPriceChange: dto.PlayerWithPriceChange{Players: dto.Players{PlayerID: pid}},
+				PlayerWithPriceChange: dto.PlayerWithPriceChange{Players: dto.Players{PlayerID: pid, Badges: *ToBadgesDTO(nil)}},
 				Owned:                 []*dto.OwnInfo{},
 				IsFav:                 false,
 			}
 			continue
 		}
 		result[i] = api.PlayerWithOwned{
-			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p),
+			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p, badges),
 			Owned:                 []*dto.OwnInfo{},
 			IsFav:                 false,
 		}
@@ -453,8 +489,14 @@ func (s *PlayersService) GetPlayerInfo(ctx context.Context, playerID uint, userI
 		}
 	}
 
+	var badges *dto.Badges
+	extras, err := playerRepo.GetExtraByPlayerIDs(ctx, []uint{playerID})
+	if err == nil && len(extras) > 0 {
+		badges = ToBadgesDTO(&extras[0])
+	}
+
 	return &api.PlayerWithOwned{
-		PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(*pp),
+		PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(*pp, badges),
 		Owned:                 owned,
 		IsFav:                 isFav,
 		Bbr:                   bbr,
@@ -1069,8 +1111,7 @@ func (s *PlayersService) SyncPlayerExtraAndBadges(ctx context.Context, playerIDs
 		}
 	}
 
-	log.Printf(">>> 徽章及扩展信息同步完成，耗时: %v, 处理总数: %d, 成功: %d <<<",
-		time.Since(startTime), total, successCount)
+	log.Printf(">>> 徽章及扩展信息同步完成，耗时: %v, 处理总数: %d, 成功: %d <<<", time.Since(startTime), total, successCount)
 	return nil
 }
 

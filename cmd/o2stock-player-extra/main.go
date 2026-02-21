@@ -39,8 +39,8 @@ func main() {
 		// 支持逗号分隔或空格分隔的 ID
 		args := os.Args[1:]
 		for _, arg := range args {
-			ids := strings.Split(arg, ",")
-			for _, idStr := range ids {
+			ids := strings.SplitSeq(arg, ",")
+			for idStr := range ids {
 				idStr = strings.TrimSpace(idStr)
 				if idStr == "" {
 					continue

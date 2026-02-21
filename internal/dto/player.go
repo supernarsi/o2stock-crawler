@@ -23,6 +23,15 @@ type Players struct {
 	PriceChange1d     float64 `json:"price_change_1d"`
 	PriceChange7d     float64 `json:"price_change_7d"`
 	UpdatedAt         string  `json:"update_at"`
+	Badges            Badges  `json:"badges"`
+}
+
+type Badges struct {
+	Hof     uint `json:"hof"`
+	Gold    uint `json:"gold"`
+	Silver  uint `json:"silver"`
+	Bronze  uint `json:"bronze"`
+	Trained uint `json:"trained"`
 }
 
 // PlayerWithPriceChange 带涨跌幅的球员DTO

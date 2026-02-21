@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"o2stock-crawler/api"
 	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/db"
@@ -125,6 +126,18 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 		return nil, fmt.Errorf("failed to get players by IDs: %w", err)
 	}
 
+	// 获取球员扩展信息
+	var badgeMap map[uint]*dto.Badges
+	extras, err := s.playerRepo.GetExtraByPlayerIDs(ctx, playerIDs)
+	if err != nil {
+		log.Printf("failed to get player extra info: %v", err)
+	} else {
+		badgeMap = make(map[uint]*dto.Badges)
+		for _, e := range extras {
+			badgeMap[e.PlayerID] = ToBadgesDTO(&e)
+		}
+	}
+
 	// 构建响应
 	playerMap := make(map[uint]entity.Player)
 	for _, p := range players {
@@ -136,6 +149,10 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 		pp, ok := playerMap[o.PID]
 		if !ok {
 			continue
+		}
+		var badges *dto.Badges
+		if badgeMap != nil {
+			badges = badgeMap[o.PID]
 		}
 		notifyType := o.NotifyType
 		if o.Sta == int(consts.OwnStaNone) {
@@ -151,7 +168,7 @@ func (s *UserPlayerService) GetUserPlayers(ctx context.Context, userID uint) ([]
 			DtIn:       o.BuyTime.Format("2006-01-02 15:04:05"),
 			DtOut:      formatTimeOrEmpty(o.SellTime),
 			NotifyType: notifyType,
-			PP:         ToPlayerDTO(pp),
+			PP:         ToPlayerDTO(pp, badges),
 		})
 	}
 
@@ -183,11 +200,27 @@ func (s *UserPlayerService) GetUserFavPlayers(ctx context.Context, userID uint) 
 	}
 	ownedMap := ToOwnInfoDTOMap(ownRecords)
 
-	// 4. 构建响应
+	// 4. 获取球员扩展信息
+	var badgeMap map[uint]*dto.Badges
+	extras, err := s.playerRepo.GetExtraByPlayerIDs(ctx, favIDs)
+	if err != nil {
+		log.Printf("failed to get player extra info: %v", err)
+	} else {
+		badgeMap = make(map[uint]*dto.Badges)
+		for _, e := range extras {
+			badgeMap[e.PlayerID] = ToBadgesDTO(&e)
+		}
+	}
+
+	// 5. 构建响应
 	result := make([]api.PlayerWithOwned, len(players))
 	for i, p := range players {
+		var badges *dto.Badges
+		if badgeMap != nil {
+			badges = badgeMap[p.PlayerID]
+		}
 		result[i] = api.PlayerWithOwned{
-			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p),
+			PlayerWithPriceChange: ToPlayerWithPriceChangeDTO(p, badges),
 			Owned:                 []*dto.OwnInfo{},
 			IsFav:                 true,
 		}

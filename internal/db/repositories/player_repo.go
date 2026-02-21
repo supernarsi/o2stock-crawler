@@ -104,6 +104,12 @@ func (r *PlayerRepository) BatchGetByIDs(ctx context.Context, playerIDs []uint) 
 	return players, err
 }
 
+func (r *PlayerRepository) GetExtraByPlayerIDs(ctx context.Context, playerIDs []uint) ([]entity.PlayerExtra, error) {
+	var extras []entity.PlayerExtra
+	err := r.ctx(ctx).Model(&entity.PlayerExtra{}).Where("player_id IN ?", playerIDs).Find(&extras).Error
+	return extras, err
+}
+
 // GetPlayersForAgeSync 获取待补充年龄的球员：若 playerIDs 为空则返回所有 tx_player_id > 0；否则按 player_id 过滤
 func (r *PlayerRepository) GetPlayersForAgeSync(ctx context.Context, playerIDs []uint) ([]entity.Player, error) {
 	query := r.ctx(ctx).Where("tx_player_id > 0")
