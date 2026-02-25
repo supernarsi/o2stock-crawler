@@ -17,6 +17,9 @@ import (
 
 func (a *API) Test() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
+		if r.URL.Path != "/" {
+			return nil, &middleware.APIError{Status: http.StatusNotFound, Code: http.StatusNotFound, Msg: "not found"}
+		}
 		return nil, nil
 	})
 }
