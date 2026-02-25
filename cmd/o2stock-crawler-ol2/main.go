@@ -7,6 +7,7 @@ import (
 	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
+	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/service"
 	"o2stock-crawler/internal/wechat"
 	"os"
@@ -186,6 +187,11 @@ func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error
 		if err := notifySvc.RunForItemIDs(ctx, itemIDs); err != nil {
 			log.Printf("道具价格订阅通知执行失败: %v", err)
 		}
+	}
+
+	taskStatusRepo := repositories.NewTaskStatusRepository(database.DB)
+	if err := taskStatusRepo.Upsert(ctx, "o2stock-crawler-ol2", time.Now()); err != nil {
+		log.Printf("更新任务状态失败: %v", err)
 	}
 
 	return nil

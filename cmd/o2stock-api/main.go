@@ -102,8 +102,9 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// 测试接口，不需要任何鉴权/签名等中间件，直接挂在 mux 上
+	// 监控与测试接口，不需要任何鉴权/签名等中间件，直接挂在 mux 上
 	mux.HandleFunc("/", apiCtl.Test())
+	mux.HandleFunc("/crawler/healthz", apiCtl.CrawlerHealthz())
 
 	router.Apply(mux)
 	authGroup.Apply(mux)

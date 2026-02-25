@@ -15,6 +15,7 @@ type API struct {
 	itemsService      *service.ItemsService
 	ipiRepo           *repositories.IPIRepository
 	playerRepo        *repositories.PlayerRepository
+	taskStatusRepo    *repositories.TaskStatusRepository
 }
 
 // NewAPI 创建新的 API 控制器实例
@@ -35,8 +36,9 @@ func NewAPI(database *db.DB) *API {
 			repositories.NewItemRepository(database.DB),
 			repositories.NewItemFavRepository(database.DB),
 		),
-		itemsService: service.NewItemsService(database),
-		ipiRepo:      repositories.NewIPIRepository(database.DB),
-		playerRepo:   repositories.NewPlayerRepository(database.DB),
+		itemsService:   service.NewItemsService(database),
+		ipiRepo:        repositories.NewIPIRepository(database.DB),
+		playerRepo:     repositories.NewPlayerRepository(database.DB),
+		taskStatusRepo: repositories.NewTaskStatusRepository(database.DB),
 	}
 }

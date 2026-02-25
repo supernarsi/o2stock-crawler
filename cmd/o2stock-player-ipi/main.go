@@ -50,6 +50,11 @@ func main() {
 		log.Fatalf("写入 player_ipi 失败: %v", err)
 	}
 
+	taskStatusRepo := repositories.NewTaskStatusRepository(database.DB)
+	if err := taskStatusRepo.Upsert(ctx, "o2stock-player-ipi", time.Now()); err != nil {
+		log.Printf("更新任务状态失败: %v", err)
+	}
+
 	log.Printf(">>> IPI 计算完成 <<< 耗时: %v, 写入条数: %d, 计算时间: %s",
 		time.Since(start), len(results), calculatedAt.Format(time.RFC3339))
 }

@@ -5,6 +5,7 @@ import (
 	"log"
 	"o2stock-crawler/internal/config"
 	"o2stock-crawler/internal/db"
+	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/service"
 	"os"
 	"strconv"
@@ -72,6 +73,11 @@ func main() {
 			if err := txService.SyncPlayerSeasonStats(ctx, pids); err != nil {
 				log.Printf("同步球员赛季统计失败: %v", err)
 			}
+		}
+
+		taskStatusRepo := repositories.NewTaskStatusRepository(database.DB)
+		if err := taskStatusRepo.Upsert(ctx, "o2stock-crawler-tx", time.Now()); err != nil {
+			log.Printf("更新任务状态失败: %v", err)
 		}
 
 	case "tx-nba-players":
