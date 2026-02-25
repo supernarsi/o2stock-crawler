@@ -52,7 +52,9 @@ func main() {
 
 	taskStatusRepo := repositories.NewTaskStatusRepository(database.DB)
 	if err := taskStatusRepo.Upsert(ctx, "o2stock-player-ipi", time.Now()); err != nil {
-		log.Printf("更新任务状态失败: %v", err)
+		log.Printf("更新 o2stock-player-ipi 任务状态失败: %v", err)
+	} else {
+		log.Printf("更新 o2stock-player-ipi 任务状态成功")
 	}
 
 	log.Printf(">>> IPI 计算完成 <<< 耗时: %v, 写入条数: %d, 计算时间: %s",

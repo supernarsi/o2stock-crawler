@@ -77,7 +77,9 @@ func main() {
 
 		taskStatusRepo := repositories.NewTaskStatusRepository(database.DB)
 		if err := taskStatusRepo.Upsert(ctx, "o2stock-crawler-tx", time.Now()); err != nil {
-			log.Printf("更新任务状态失败: %v", err)
+			log.Printf("更新 o2stock-crawler-tx 任务状态失败: %v", err)
+		} else {
+			log.Printf("更新 o2stock-crawler-tx 任务状态成功")
 		}
 
 	case "tx-nba-players":
