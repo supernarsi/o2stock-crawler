@@ -9,6 +9,7 @@ import (
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/service"
+	"o2stock-crawler/internal/utils"
 	"o2stock-crawler/internal/wechat"
 	"os"
 	"time"
@@ -92,7 +93,7 @@ func runLoop(ctx context.Context, client *crawler.Client, database *db.DB, inter
 	log.Printf("开始循环抓取，间隔: %s", interval)
 	for {
 		now := time.Now()
-		if shouldSkipCrawl(now) {
+		if utils.IsOl2CrawlerSleepTime(now) {
 			nextRun := getNextRunTime(now)
 			log.Printf("当前在禁止抓取时段，下次抓取时间: %s", nextRun.Format("15:04:05"))
 			time.Sleep(time.Until(nextRun))
@@ -107,9 +108,9 @@ func runLoop(ctx context.Context, client *crawler.Client, database *db.DB, inter
 }
 
 func runOnce(ctx context.Context, client *crawler.Client, database *db.DB) error {
-	// 如果当前时间在 03:00 ~ 08:00 之间，则不抓取球员数据
-	if time.Now().Hour() >= 3 && time.Now().Hour() < 8 {
-		log.Printf(">>> 当前时间在 03:00 ~ 08:00 之间，不抓取球员数据 <<<")
+	// 如果当前时间在禁止抓取时间段，则不抓取球员数据
+	if utils.IsOl2CrawlerSleepTime(time.Now()) {
+		log.Printf(">>> 当前时间在禁止抓取时段，不抓取数据 <<<")
 		return nil
 	}
 
@@ -262,12 +263,6 @@ func fetchTeamRoster(ctx context.Context, client *crawler.Client, snapshotServic
 	return playerIDs, nil
 }
 
-// shouldSkipCrawl 检查当前时间是否在禁止抓取的时间段（03:00~08:00）
-func shouldSkipCrawl(t time.Time) bool {
-	hour := t.Hour()
-	return hour >= 3 && hour < 8
-}
-
 // isPowerCalculationWindow 检查当前时间是否在战力计算的时间窗口（15:00 ~ 16:00）
 func isPowerCalculationWindow(t time.Time) bool {
 	hour := t.Hour()
@@ -277,11 +272,11 @@ func isPowerCalculationWindow(t time.Time) bool {
 // getNextRunTime 计算下次应该执行的时间
 // 如果当前在禁止时间段，返回 08:00；否则返回当前时间（实际不会用到）
 func getNextRunTime(now time.Time) time.Time {
-	hour := now.Hour()
-	if hour >= 3 && hour < 8 {
-		// 当前在禁止时间段，返回今天的 08:00
-		next := time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, now.Location())
-		return next
+	if utils.IsOl2CrawlerSleepTime(now) {
+		// 当前在禁止时间段，返回当天的 08:00 (北京时间)
+		cst := time.FixedZone("CST", 8*3600)
+		nowCST := now.In(cst)
+		return time.Date(nowCST.Year(), nowCST.Month(), nowCST.Day(), 8, 0, 0, 0, cst)
 	}
 	// 不在禁止时间段，返回当前时间（实际不会用到）
 	return now

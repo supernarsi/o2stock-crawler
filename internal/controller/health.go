@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"o2stock-crawler/internal/middleware"
+	"o2stock-crawler/internal/utils"
 	"time"
 )
 
@@ -42,6 +43,11 @@ func (a *API) CrawlerHealthz() http.HandlerFunc {
 
 		// o2stock-crawler-ol2 1 小时
 		if updateAt["o2stock-crawler-ol2"] > 0 && nowTs-updateAt["o2stock-crawler-ol2"] <= 3600 {
+			healthStatus["o2stock-crawler-ol2"] = true
+		}
+
+		// o2stock-crawler-ol2 在 03:00~08:00 之间不抓取数据，固定返回 true
+		if utils.IsOl2CrawlerSleepTime(time.Now()) {
 			healthStatus["o2stock-crawler-ol2"] = true
 		}
 
