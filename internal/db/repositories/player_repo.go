@@ -76,6 +76,17 @@ func (r *PlayerRepository) List(ctx context.Context, filter PlayerFilter) ([]ent
 		if filter.OrderAsc {
 			direction = "ASC"
 		}
+		// 验证排序字段，防止 SQL 注入
+		if !r.validateOrderBy(filter.OrderBy) {
+			return nil, fmt.Errorf("invalid order by field: %s", filter.OrderBy)
+		}
+		query = query.Order(fmt.Sprintf("%s %s", filter.OrderBy, direction))
+	}
+	if filter.OrderBy != "" {
+		direction := "DESC"
+		if filter.OrderAsc {
+			direction = "ASC"
+		}
 		query = query.Order(fmt.Sprintf("%s %s", filter.OrderBy, direction))
 	}
 
@@ -242,4 +253,18 @@ func (r *PlayerRepository) OVRCountMap(ctx context.Context) (map[uint]int64, err
 		out[r.OverAll] = r.Count
 	}
 	return out, nil
+}
+
+// allowedPlayerOrderBy 允许的排序字段白名单（防止 SQL 注入）
+var allowedPlayerOrderBy = map[string]bool{
+	"player_id": true, "p_name_show": true, "team_abbr": true,
+	"price_standard": true, "price_current_lowest": true,
+	"price_change_1d": true, "price_change_7d": true,
+	"power_per5": true, "power_per10": true,
+	"over_all": true, "age": true,
+}
+
+// validateOrderBy 验证排序字段是否在白名单中
+func (r *PlayerRepository) validateOrderBy(field string) bool {
+	return allowedPlayerOrderBy[field]
 }

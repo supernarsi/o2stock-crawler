@@ -22,4 +22,3 @@ func LoadWechatConfigFromEnv() WechatConfig {
 		SubscribePage:       os.Getenv("WX_SUBSCRIBE_PAGE"),
 	}
 }
-

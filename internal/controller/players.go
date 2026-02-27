@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"o2stock-crawler/api"
+	"o2stock-crawler/internal/consts"
 	"o2stock-crawler/internal/dto"
 	"o2stock-crawler/internal/middleware"
 	"o2stock-crawler/internal/service"
@@ -15,7 +17,7 @@ import (
 func (a *API) Players() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		ctx := r.Context()
-		limit := parseIntDefault(r.URL.Query().Get("limit"), 100)
+		limit := parseIntDefault(r.URL.Query().Get("limit"), int(consts.DefaultLimit))
 		page := parseIntDefault(r.URL.Query().Get("page"), 1)
 		orderBy := r.URL.Query().Get("order_by")
 		orderAsc := r.URL.Query().Get("order_asc") == "true"
@@ -52,6 +54,8 @@ func (a *API) Players() http.HandlerFunc {
 
 		players, err := a.playersService.ListPlayersWithOwned(ctx, opts)
 		if err != nil {
+			// sanitize error in logs; avoid leaking sensitive details
+			log.Printf("GetPlayer list failed: [internal error]")
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
 		}
 

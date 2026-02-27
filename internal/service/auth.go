@@ -20,7 +20,7 @@ import (
 const (
 	TokenExpiration       = 7 * 24 * time.Hour  // Token 有效期
 	TokenRefreshThreshold = 2 * 24 * time.Hour  // 剩余多少时间触发刷新
-	TokenGracePeriod      = 30 * 24 * time.Hour // 过期后多久内仍允许刷新（宽限期）
+	TokenGracePeriod      = 40 * 24 * time.Hour // 过期后多久内仍允许刷新（宽限期）
 )
 
 type AuthService struct {
@@ -196,7 +196,7 @@ func (s *AuthService) code2Session(ctx context.Context, code string) (*WechatLog
 	if err := jsoniter.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-	log.Printf("wechat login resp: %+v", result)
+	log.Printf("wechat login resp: openid=%s, unionid=%s", result.OpenID, result.UnionID)
 	if result.ErrCode != 0 {
 		return nil, fmt.Errorf("wechat api error: %d %s", result.ErrCode, result.ErrMsg)
 	}

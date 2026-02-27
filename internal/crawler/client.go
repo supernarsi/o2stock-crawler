@@ -58,17 +58,17 @@ type APIResponse struct {
 
 // 接口返回的原始数据类型（支持 overAll 与 over_all 两种字段名，兼容 API 返回格式差异）
 type RosterItem struct {
-	PlayerID    string `json:"playerId" dc:"球员ID"`
-	Grade       string `json:"grade" dc:"等级"`
-	ShowName    string `json:"showName" dc:"展示名称"`
-	PlayerEn    string `json:"PlayerEnName" dc:"球员英文名称"`
-	PlayerImg   string `json:"playerImg" dc:"球员图片"`
-	TeamAbbr    string `json:"teamAbbr" dc:"球队"`
-	CardTypeStr string `json:"cardType" dc:"系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏"`
-	VersionStr  string `json:"Version" dc:"球员年代，0 表示现役"`
-	OverAll     int    `json:"overAll" dc:"球员能力值(驼峰)"`
-	OverAllSnake int   `json:"over_all" dc:"球员能力值(蛇形，兼容)"`
-	Price       struct {
+	PlayerID     string `json:"playerId" dc:"球员ID"`
+	Grade        string `json:"grade" dc:"等级"`
+	ShowName     string `json:"showName" dc:"展示名称"`
+	PlayerEn     string `json:"PlayerEnName" dc:"球员英文名称"`
+	PlayerImg    string `json:"playerImg" dc:"球员图片"`
+	TeamAbbr     string `json:"teamAbbr" dc:"球队"`
+	CardTypeStr  string `json:"cardType" dc:"系列: 1.现役 2.复刻 3.历史 4.自建 5.收藏"`
+	VersionStr   string `json:"Version" dc:"球员年代，0 表示现役"`
+	OverAll      int    `json:"overAll" dc:"球员能力值(驼峰)"`
+	OverAllSnake int    `json:"over_all" dc:"球员能力值(蛇形，兼容)"`
+	Price        struct {
 		StandardPrice      int    `json:"standardPrice" dc:"标准价格"`
 		CurrentLowestPrice string `json:"currentLowestPrice" dc:"当前出售的最低价格"`
 		LowerPriceForSale  int    `json:"lowerPriceForSale" dc:"最低可售价"`

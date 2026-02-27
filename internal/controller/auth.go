@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 
@@ -46,7 +47,8 @@ func (c *AuthController) Login() http.HandlerFunc {
 			RegIP:  client.IP,
 		})
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			log.Printf("Login failed: [internal error]")
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "登录失败，请稍后重试"}
 		}
 
 		return map[string]any{
@@ -77,6 +79,19 @@ func (c *AuthController) Middleware(next http.HandlerFunc) http.HandlerFunc {
 			// 尝试刷新 Token (处理过期但仍在宽限期内的情况)
 			if strings.Contains(err.Error(), "expired") {
 				newToken, newUserID, refreshErr := c.authService.RefreshToken(token)
+				if refreshErr == nil {
+					// 刷新成功，下发新 Token 并继续请求
+					w.Header().Set("X-New-Token", newToken)
+					w.Header().Set("Access-Control-Expose-Headers", "X-New-Token") // 确保前端可以读取
+					userID = newUserID
+					goto SUCCESS
+				} else {
+					log.Printf("Refresh token failed: %v", refreshErr)
+				}
+			}
+			if strings.Contains(err.Error(), "expired") {
+				newToken, newUserID, refreshErr := c.authService.RefreshToken(token)
+				log.Printf("Refresh token failed: [internal error] %s", refreshErr.Error())
 				if refreshErr == nil {
 					// 刷新成功，下发新 Token 并继续请求
 					w.Header().Set("X-New-Token", newToken)

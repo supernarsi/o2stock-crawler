@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -36,7 +37,8 @@ func (a *API) IPIRank() http.HandlerFunc {
 
 		calculatedAt, ok, err := a.ipiRepo.GetLatestCalculatedAt(ctx)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			log.Printf("IPIRank GetLatestCalculatedAt failed: %v", err)
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "操作失败，请稍后重试"}
 		}
 		if !ok {
 			return api.IPIRankRes{
@@ -57,7 +59,8 @@ func (a *API) IPIRank() http.HandlerFunc {
 			CalculatedAt: calculatedAt,
 		})
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			log.Printf("IPIRank ListLatest failed: %v", err)
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "操作失败，请稍后重试"}
 		}
 
 		items := make([]api.PlayerWithIPI, len(list))
@@ -72,7 +75,8 @@ func (a *API) IPIRank() http.HandlerFunc {
 			}
 			playersWithOwned, err := a.playersService.GetPlayersWithOwnedByIDs(ctx, playerIDs, userID)
 			if err != nil {
-				return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+				log.Printf("IPI GetPlayersWithOwnedByIDs failed: %v", err)
+				return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "操作失败，请稍后重试"}
 			}
 			for i := range list {
 				items[i] = api.PlayerWithIPI{
@@ -108,7 +112,8 @@ func (a *API) IPIPlayer() http.HandlerFunc {
 
 		row, err := a.ipiRepo.GetByPlayerIDLatest(ctx, pid)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			log.Printf("IPIPlayer GetByPlayerIDLatest failed: %v", err)
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "操作失败，请稍后重试"}
 		}
 		if row == nil {
 			return nil, &middleware.APIError{Status: http.StatusNotFound, Code: http.StatusNotFound, Msg: "player ipi not found"}

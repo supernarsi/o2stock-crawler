@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -21,7 +22,7 @@ func (a *API) ItemIn() http.HandlerFunc {
 
 		var req api.ItemInReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "无效的请求体"}
 		}
 
 		if req.ItemID == 0 {
@@ -81,11 +82,17 @@ func (a *API) ItemOut() http.HandlerFunc {
 		}
 
 		if err := a.userItemService.ItemOut(ctx, userID, req.OwnID, req.ItemID, req.Cost, dt); err != nil {
-			// 业务错误按球员风格返回 code=-1
-			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "mismatch") || strings.Contains(err.Error(), "not sellable") {
-				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			log.Printf("ItemOut failed: %v", err)
+			if strings.Contains(err.Error(), "not found") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "未找到持有记录"}
 			}
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			if strings.Contains(err.Error(), "mismatch") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "数据不匹配"}
+			}
+			if strings.Contains(err.Error(), "not sellable") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "不可出售"}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		return nil, nil
 	})
@@ -130,10 +137,11 @@ func (a *API) ItemPriceNotify() http.HandlerFunc {
 
 		err := a.userItemService.SetItemNotify(ctx, userID, req.ItemID, req.NotifyType)
 		if err != nil {
+			log.Printf("ItemPriceNotify failed: [internal error]")
 			if strings.Contains(err.Error(), "未找到可修改的持仓记录") {
-				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "未找到可修改的持仓记录"}
 			}
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		return nil, nil
 	})
@@ -160,7 +168,14 @@ func (a *API) FavItem() http.HandlerFunc {
 		}
 
 		if err := a.userItemService.FavItem(ctx, userID, req.ItemID); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			log.Printf("FavItem failed: [internal error]")
+			if strings.Contains(err.Error(), "already fav this item") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "已收藏该道具"}
+			}
+			if strings.Contains(err.Error(), "fav limit exceeded") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "收藏上限已达"}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		return nil, nil
 	})
@@ -187,7 +202,11 @@ func (a *API) UnFavItem() http.HandlerFunc {
 		}
 
 		if err := a.userItemService.UnFavItem(ctx, userID, req.ItemID); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			log.Printf("UnFavItem failed: [internal error]")
+			if strings.Contains(err.Error(), "not found") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "未找到收藏记录"}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		return nil, nil
 	})
@@ -204,7 +223,11 @@ func (a *API) UserFavItems() http.HandlerFunc {
 
 		items, err := a.userItemService.GetUserFavItems(ctx, userID)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			log.Printf("UserFavItems failed: %v", err)
+			if strings.Contains(err.Error(), "not found") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "未找到记录"}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		return struct {
 			Items []dto.Item `json:"items"`

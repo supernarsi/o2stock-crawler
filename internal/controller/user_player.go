@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -21,7 +22,7 @@ func (a *API) PlayerIn() http.HandlerFunc {
 
 		var req api.PlayerInReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "无效请求体"}
 		}
 
 		// 参数校验
@@ -43,10 +44,11 @@ func (a *API) PlayerIn() http.HandlerFunc {
 		err = a.userPlayerService.PlayerIn(ctx, userID, req.PlayerID, req.Num, req.Cost, dt, notifyType)
 		if err != nil {
 			// 处理业务错误
-			if strings.Contains(err.Error(), "already owned more than 2 players") {
-				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			if strings.Contains(err.Error(), "already owned") || strings.Contains(err.Error(), "already owned more than 2") {
+				log.Printf("PlayerIn failed: %v", err)
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "已拥有该球员"}
 			}
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 
 		return nil, nil
@@ -81,9 +83,9 @@ func (a *API) UserUnFavPlayer() http.HandlerFunc {
 		if err != nil {
 			// 处理业务错误
 			if strings.Contains(err.Error(), "player not in fav list") {
-				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "未收藏该球员"}
 			}
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 
 		return nil, nil
@@ -101,7 +103,7 @@ func (a *API) PlayerOut() http.HandlerFunc {
 
 		var req api.PlayerOutReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "无效请求体"}
 		}
 
 		// 参数校验
@@ -140,7 +142,7 @@ func (a *API) PlayerOwnEdit() http.HandlerFunc {
 
 		var req api.PlayerOwnEditReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "无效请求体"}
 		}
 
 		// 参数校验
@@ -177,7 +179,11 @@ func (a *API) PlayerOwnEdit() http.HandlerFunc {
 		// 查询记录是否存在
 		record, err := a.userPlayerService.GetPlayerOwn(ctx, userID, req.RecordId)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			log.Printf("PlayerOwnEdit GetPlayerOwn failed: %v", err)
+			if strings.Contains(err.Error(), "not found") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "记录未找到"}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		if record == nil {
 			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "record not found"}
@@ -186,7 +192,11 @@ func (a *API) PlayerOwnEdit() http.HandlerFunc {
 		// 调用服务层
 		err = a.userPlayerService.EditPlayerOwn(ctx, userID, req.RecordId, req.PriceIn, req.PriceOut, req.Num, &dtInTime, dtOut)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			log.Printf("PlayerOwnEdit failed: %v", err)
+			if strings.Contains(err.Error(), "not found") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "记录未找到"}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		return nil, nil
 	})
@@ -203,7 +213,7 @@ func (a *API) PlayerOwnDel() http.HandlerFunc {
 
 		var req api.PlayerOwnDeleteReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "无效请求体"}
 		}
 
 		// 参数校验
@@ -214,7 +224,11 @@ func (a *API) PlayerOwnDel() http.HandlerFunc {
 		// 调用服务层
 		err := a.userPlayerService.DeletePlayerOwn(ctx, userID, req.RecordId)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+			log.Printf("PlayerOwnDel failed: %v", err)
+			if strings.Contains(err.Error(), "not found") {
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "记录未找到"}
+			}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 
 		return nil, nil
@@ -232,7 +246,8 @@ func (a *API) UserPlayers() http.HandlerFunc {
 
 		rosters, err := a.userPlayerService.GetUserPlayers(ctx, userID)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			log.Printf("UserPlayers failed: %v", err)
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 
 		return api.UserPlayersRes{Rosters: rosters}, nil
@@ -250,7 +265,8 @@ func (a *API) UserFavList() http.HandlerFunc {
 
 		players, err := a.userPlayerService.GetUserFavPlayers(ctx, userID)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			log.Printf("UserFavList failed: %v", err)
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 
 		return api.PlayersWithOwnedRes{Players: players}, nil
@@ -268,7 +284,7 @@ func (a *API) UserFavPlayer() http.HandlerFunc {
 
 		var req api.UserFavPlayerReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "无效请求体"}
 		}
 
 		// 参数校验
@@ -281,9 +297,9 @@ func (a *API) UserFavPlayer() http.HandlerFunc {
 		if err != nil {
 			// 处理业务错误
 			if strings.Contains(err.Error(), "already fav this player") || strings.Contains(err.Error(), "fav limit exceeded") {
-				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "已收藏该球员"}
 			}
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 
 		return nil, nil
@@ -301,7 +317,7 @@ func (a *API) PlayerPriceNotify() http.HandlerFunc {
 
 		var req api.PlayerPriceNotifyReq
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "invalid request body: " + err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "无效请求体"}
 		}
 		if req.PlayerID == 0 {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: "missing player_id"}
@@ -313,9 +329,9 @@ func (a *API) PlayerPriceNotify() http.HandlerFunc {
 		err := a.userPlayerService.SetPlayerNotify(ctx, userID, req.PlayerID, req.NotifyType)
 		if err != nil {
 			if strings.Contains(err.Error(), "未找到可修改的持仓记录") {
-				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: err.Error()}
+				return nil, &middleware.APIError{Status: http.StatusOK, Code: -1, Msg: "未找到可修改的持仓记录"}
 			}
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		return nil, nil
 	})
@@ -332,7 +348,8 @@ func (a *API) UserUnifiedOwnGoods() http.HandlerFunc {
 
 		goods, err := a.userPlayerService.GetUnifiedOwnGoods(ctx, userID)
 		if err != nil {
-			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: err.Error()}
+			log.Printf("GetUnifiedOwnGoods failed: %v", err)
+			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "通用错误消息"}
 		}
 		return struct {
 			Goods []dto.UnifiedOwnGoods `json:"goods"`

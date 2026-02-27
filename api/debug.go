@@ -5,4 +5,3 @@ type DebugSendPlayerBreakEvenNotifyReq struct {
 	UID      uint `json:"uid"`
 	PlayerID uint `json:"player_id"`
 }
-

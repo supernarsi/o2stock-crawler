@@ -342,8 +342,10 @@ func (s *IPIService) CalcIPI(sPerf, vGap, mGrowth, rRisk float64) float64 {
 
 // BatchCalcIPI 批量计算 IPI：给定球员 ID 列表；若 playerIDs 为空则对「全部参与 IPI 计算的球员」计算
 // 排除：价格 ≤ minPriceForIPI、本赛季无场均数据、能力值 over_all=0、历史价格数据少于 minHistoryDaysForIPI 天、
-//       近期比赛数据 < minRecentGamesForIPI 场的球员；计算中非有限分量（NaN/Inf）的球员跳过；
-//       归一化前对 IPI 做 99 分位截断以弱化异常高值影响。
+//
+//	近期比赛数据 < minRecentGamesForIPI 场的球员；计算中非有限分量（NaN/Inf）的球员跳过；
+//	归一化前对 IPI 做 99 分位截断以弱化异常高值影响。
+//
 // 优化：批量预加载价格历史、比赛数据、OVR 均价，避免 N+1 查询
 func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]model.IPIResult, error) {
 	playerRepo := repositories.NewPlayerRepository(s.db.DB)

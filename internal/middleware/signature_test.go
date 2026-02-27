@@ -90,7 +90,7 @@ func TestSignatureMiddleware(t *testing.T) {
 
 	t.Run("Debug Bypass", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test", nil)
-		req.Header.Set("xdebug", "42")
+		req.Header.Set("x-debug", "42")
 
 		w := httptest.NewRecorder()
 		handler(w, req)
