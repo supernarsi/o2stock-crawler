@@ -74,6 +74,7 @@ func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserI
 	}
 
 	if user == nil {
+		now := time.Now()
 		user = &entity.User{
 			WxOpenID:     wxResp.OpenID,
 			WxUnionID:    wxResp.UnionID,
@@ -84,12 +85,19 @@ func (s *AuthService) LoginWithWechat(ctx context.Context, info WechatLoginUserI
 			CTime:        time.Now(),
 			RegOS:        info.RegOS,
 			RegIP:        info.RegIP,
+			LoginTime:    &now,
 		}
 		if err := s.userRepo.Create(ctx, user); err != nil {
 			return nil, "", fmt.Errorf("create user failed: %w", err)
 		}
 	} else if user.Sta == 2 {
 		return nil, "", fmt.Errorf("user is banned")
+	} else {
+		now := time.Now()
+		user.LoginTime = &now
+		if err := s.userRepo.UpdateLoginTime(ctx, user.ID, now); err != nil {
+			log.Printf("wechat login: update login time failed for user %d: %v", user.ID, err)
+		}
 	}
 
 	token, err := s.GenerateToken(user.ID)

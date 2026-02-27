@@ -2,6 +2,8 @@ package repositories
 
 import (
 	"context"
+	"time"
+
 	"o2stock-crawler/internal/entity"
 
 	"gorm.io/gorm"
@@ -41,6 +43,10 @@ func (r *UserRepository) Create(ctx context.Context, user *entity.User) error {
 
 func (r *UserRepository) Update(ctx context.Context, user *entity.User) error {
 	return r.ctx(ctx).Save(user).Error
+}
+
+func (r *UserRepository) UpdateLoginTime(ctx context.Context, id uint, loginTime time.Time) error {
+	return r.ctx(ctx).Model(&entity.User{}).Where("id = ?", id).UpdateColumn("login_time", loginTime).Error
 }
 
 // GetByIDs 批量根据用户 ID 获取用户，返回 map[uint]*entity.User
