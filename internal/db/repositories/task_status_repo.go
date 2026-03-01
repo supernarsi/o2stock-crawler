@@ -24,11 +24,12 @@ func (r *TaskStatusRepository) Upsert(ctx context.Context, taskName string, succ
 	status := entity.TaskStatus{
 		TaskName:      taskName,
 		LastSuccessAt: successAt,
+		UpdatedAt:     time.Now(),
 	}
 	return r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "task_name"}},
-			DoUpdates: clause.AssignmentColumns([]string{"last_success_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"last_success_at", "updated_at"}),
 		}).Create(&status).Error
 }
 
