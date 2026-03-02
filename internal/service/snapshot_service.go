@@ -130,6 +130,7 @@ func (s *SnapshotService) upsertPlayer(ctx context.Context, tx *gorm.DB, item *c
 		PriceSaleUpper:     uint(priceSaleUpper),
 		OverAll:            overAll,
 		UpdatedAt:          now,
+		DetailJSON:         "{}",
 	}
 	return tx.WithContext(ctx).Create(&player).Error
 }
