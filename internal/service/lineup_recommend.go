@@ -348,21 +348,68 @@ func (s *LineupRecommendService) solveOptimalLineup(
 ) [][]PlayerCandidate {
 
 	// 预筛：过滤掉没有战力的球员
-	var valid []PlayerCandidate
+	var allValid []PlayerCandidate
 	for _, c := range candidates {
 		if c.Prediction.PredictedPower > 0 && c.Player.Salary > 0 {
-			valid = append(valid, c)
+			allValid = append(allValid, c)
 		}
 	}
 
-	// 按性价比排序，取 Top 60
-	sort.Slice(valid, func(i, j int) bool {
-		ratioI := valid[i].Prediction.PredictedPower / float64(valid[i].Player.Salary)
-		ratioJ := valid[j].Prediction.PredictedPower / float64(valid[j].Player.Salary)
-		return ratioI > ratioJ
+	// 混合预选策略：保留绝对战力 Top 80 和性价比 Top 80，合并去重
+	// 这样可以确保 Luka 这种高战力但高工资（性价比中等）的球员被选中
+	topPower := make([]PlayerCandidate, len(allValid))
+	copy(topPower, allValid)
+	sort.Slice(topPower, func(i, j int) bool {
+		return topPower[i].Prediction.PredictedPower > topPower[j].Prediction.PredictedPower
 	})
-	if len(valid) > 60 {
-		valid = valid[:60]
+
+	topRatio := make([]PlayerCandidate, len(allValid))
+	copy(topRatio, allValid)
+	sort.Slice(topRatio, func(i, j int) bool {
+		rI := topRatio[i].Prediction.PredictedPower / float64(topRatio[i].Player.Salary)
+		rJ := topRatio[j].Prediction.PredictedPower / float64(topRatio[j].Player.Salary)
+		return rI > rJ
+	})
+
+	seen := make(map[uint]bool)
+	var valid []PlayerCandidate
+
+	// 取 Top 80 战力
+	limit := 80
+	if len(topPower) < limit {
+		limit = len(topPower)
+	}
+	for i := 0; i < limit; i++ {
+		if !seen[topPower[i].Player.NBAPlayerID] {
+			valid = append(valid, topPower[i])
+			seen[topPower[i].Player.NBAPlayerID] = true
+		}
+	}
+
+	// 补充 Top 80 性价比
+	limit = 80
+	if len(topRatio) < limit {
+		limit = len(topRatio)
+	}
+	for i := 0; i < limit; i++ {
+		if !seen[topRatio[i].Player.NBAPlayerID] {
+			valid = append(valid, topRatio[i])
+			seen[topRatio[i].Player.NBAPlayerID] = true
+		}
+	}
+
+	log.Printf("混合预选完成: 绝对战力候选 + 性价比候选 -> 共 %d 名球员", len(valid))
+
+	// 调试日志：输出特定球员的预测情况
+	for _, c := range allValid {
+		if strings.Contains(c.Player.PlayerName, "东契奇") ||
+			strings.Contains(c.Player.PlayerName, "马克西") ||
+			strings.Contains(c.Player.PlayerName, "弗拉格") {
+			log.Printf("DEBUG 球员预测: %s, 战力=%.1f, 性价比=%.2f, 状态=%v",
+				c.Player.PlayerName, c.Prediction.PredictedPower,
+				c.Prediction.PredictedPower/float64(c.Player.Salary),
+				c.Prediction.AvailabilityScore)
+		}
 	}
 
 	log.Printf("DP 求解: %d 名候选球员, 工资帽 %d, 选 %d 人", len(valid), salaryCap, pickCount)

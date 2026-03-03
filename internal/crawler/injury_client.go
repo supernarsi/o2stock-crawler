@@ -3,17 +3,16 @@ package crawler
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
-	jsoniter "github.com/json-iterator/go"
+	"github.com/PuerkitoBio/goquery"
 )
 
-// InjuryClient NBA 伤病数据客户端（通过 NBA CDN 获取伤病快照）
+// InjuryClient NBA 伤病数据客户端（通过 ESPN 获取最新伤病报告）
 type InjuryClient struct {
 	client *http.Client
 }
@@ -44,39 +43,16 @@ func NewInjuryClient() *InjuryClient {
 type InjuryReport struct {
 	PlayerName  string // 球员英文名 (e.g. "LeBron James")
 	TeamName    string // 球队英文名 (e.g. "Los Angeles Lakers")
-	TeamAbbr    string // 球队缩写 (e.g. "LAL")
-	Status      string // Out / Doubtful / Questionable / Probable / Available
-	Description string // 伤病描述 (e.g. "Right Knee Soreness")
-	Date        string // 报告日期
+	Status      string // Out / Day-To-Day
+	Description string // 伤病描述
+	Date        string // 报告日期 (从 Comment 中提取)
 }
 
-// nbaInjuryResponse NBA CDN 伤病快照 JSON 结构
-type nbaInjuryResponse struct {
-	LeagueName      string `json:"LeagueName"`
-	SeasonYear      string `json:"SeasonYear"`
-	LastUpdatedTime string `json:"LastUpdatedTime"`
-	Teams           []struct {
-		TeamID   int    `json:"TeamId"`
-		TeamName string `json:"TeamName"`
-		TeamCity string `json:"TeamCity"`
-		TeamAbbr string `json:"TeamTricode"`
-		Players  []struct {
-			PlayerID    int    `json:"PlayerId"`
-			PlayerName  string `json:"PlayerName"`
-			Status      string `json:"Status"`
-			Description string `json:"Comment"`
-			Date        string `json:"Date"`
-		} `json:"Players"`
-	} `json:"Teams"`
-}
-
-// GetInjuryReports 获取当前所有球员伤病报告
-// 从 NBA 官方 CDN 伤病端点获取数据
+// GetInjuryReports 从 ESPN 获取当前所有球员伤病报告
 func (c *InjuryClient) GetInjuryReports(ctx context.Context) ([]InjuryReport, error) {
-	// NBA 官方 CDN 伤病快照端点
-	url := "https://cdn.nba.com/static/json/liveData/injuries/injuries_AllTeams.json"
+	url := "https://www.espn.com/nba/injuries"
 
-	log.Printf("获取 NBA 伤病报告: %s", url)
+	log.Printf("由 ESPN 获取 NBA 伤病报告: %s", url)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -84,8 +60,7 @@ func (c *InjuryClient) GetInjuryReports(ctx context.Context) ([]InjuryReport, er
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Referer", "https://www.nba.com/")
+	req.Header.Set("Accept", "text/html")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -94,86 +69,124 @@ func (c *InjuryClient) GetInjuryReports(ctx context.Context) ([]InjuryReport, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("NBA CDN 返回状态 %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+		return nil, fmt.Errorf("ESPN 返回状态 %d", resp.StatusCode)
 	}
 
-	var nbaResp nbaInjuryResponse
-	if err := jsoniter.NewDecoder(resp.Body).Decode(&nbaResp); err != nil {
-		return nil, fmt.Errorf("解析伤病数据失败: %w", err)
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("解析 HTML 失败: %w", err)
 	}
 
 	var reports []InjuryReport
-	for _, team := range nbaResp.Teams {
-		teamFullName := fmt.Sprintf("%s %s", team.TeamCity, team.TeamName)
-		for _, player := range team.Players {
-			reports = append(reports, InjuryReport{
-				PlayerName:  player.PlayerName,
-				TeamName:    teamFullName,
-				TeamAbbr:    team.TeamAbbr,
-				Status:      player.Status,
-				Description: player.Description,
-				Date:        player.Date,
-			})
-		}
-	}
 
-	log.Printf("获取到 %d 条伤病报告", len(reports))
+	// ESPN 的结构：多个 .ResponsiveTable，每个包含一个 team
+	doc.Find(".ResponsiveTable").Each(func(i int, s *goquery.Selection) {
+		teamName := strings.TrimSpace(s.Find(".Table__Title").Text())
+
+		s.Find("tr.Table__TR").Each(func(j int, tr *goquery.Selection) {
+			// 跳过表头和子标题
+			if tr.HasClass("Table__TR--subhead") || tr.Find("th").Length() > 0 {
+				return
+			}
+
+			// 获取列
+			tds := tr.Find("td")
+			if tds.Length() < 5 {
+				return
+			}
+
+			playerName := strings.TrimSpace(tds.Eq(0).Find("a").Text())
+			if playerName == "" {
+				playerName = strings.TrimSpace(tds.Eq(0).Text())
+			}
+
+			status := strings.TrimSpace(tds.Eq(3).Text())
+			comment := strings.TrimSpace(tds.Eq(4).Text())
+
+			// 从 Comment 中提取日期 (例如 "Mar 2: ...")
+			reportDate := ""
+			if idx := strings.Index(comment, ":"); idx != -1 {
+				reportDate = strings.TrimSpace(comment[:idx])
+			}
+
+			reports = append(reports, InjuryReport{
+				PlayerName:  playerName,
+				TeamName:    teamName,
+				Status:      status,
+				Description: comment,
+				Date:        reportDate,
+			})
+		})
+	})
+
+	log.Printf("从 ESPN 获取到 %d 条伤病报告", len(reports))
 	return reports, nil
 }
 
 // StatusToAvailabilityScore 将伤病状态转换为出场可用性分数
 func StatusToAvailabilityScore(status string) float64 {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "available", "active", "probable":
-		return 1.0
-	case "questionable":
-		return 0.5
-	case "doubtful":
-		return 0.15
-	case "out", "injured", "not with team", "rest", "suspended", "traded":
+	s := strings.ToLower(strings.TrimSpace(status))
+
+	// ESPN 常见状态：Out, Day-To-Day
+	// 针对 "Day-To-Day" (每日观察)，通常对应 Questionable/Probable
+	if s == "out" {
 		return 0.0
-	default:
-		return 1.0 // 未知状态默认可用
 	}
+	if s == "day-to-day" {
+		return 0.5 // 默认为存疑
+	}
+
+	// 其他关键字
+	if strings.Contains(s, "out") || strings.Contains(s, "injured") || strings.Contains(s, "suspended") {
+		return 0.0
+	}
+	if strings.Contains(s, "questionable") {
+		return 0.5
+	}
+	if strings.Contains(s, "doubtful") {
+		return 0.15
+	}
+	if strings.Contains(s, "probable") || strings.Contains(s, "available") {
+		return 1.0
+	}
+
+	return 1.0 // 默认为健康
 }
 
-// MatchInjuryToPlayer 尝试将伤病报告匹配到球员英文名
-// 先精确匹配，失败后按 LastName 匹配
+// MatchInjuryToPlayer 强化匹配逻辑
 func MatchInjuryToPlayer(injuryName string, playerEnName string) bool {
-	// 统一转小写比较
-	injuryLower := strings.ToLower(strings.TrimSpace(injuryName))
-	playerLower := strings.ToLower(strings.TrimSpace(playerEnName))
+	// 1. 标准化：转小写，移除点(.)，多余空格
+	clean := func(s string) string {
+		s = strings.ToLower(s)
+		s = strings.ReplaceAll(s, ".", " ")
+		s = strings.Join(strings.Fields(s), " ")
+		return s
+	}
 
-	if injuryLower == "" || playerLower == "" {
+	inj := clean(injuryName)
+	pl := clean(playerEnName)
+
+	if inj == "" || pl == "" {
 		return false
 	}
 
-	// 1. 精确匹配
-	if injuryLower == playerLower {
+	// 2. 精确匹配
+	if inj == pl {
 		return true
 	}
 
-	// 2. 尝试 Last, First 格式匹配 "James, LeBron" -> "LeBron James"
-	if strings.Contains(injuryLower, ",") {
-		parts := strings.SplitN(injuryLower, ",", 2)
-		if len(parts) == 2 {
-			reversed := strings.TrimSpace(parts[1]) + " " + strings.TrimSpace(parts[0])
-			if reversed == playerLower {
-				return true
-			}
-		}
+	// 3. 包含匹配 (例如 "Luka Doncic" vs "Luka Doncic (calf)")
+	if strings.Contains(inj, pl) || strings.Contains(pl, inj) {
+		return true
 	}
 
-	// 3. LastName 匹配（如果名字有多个部分，取最后一个单词）
-	injuryParts := strings.Fields(injuryLower)
-	playerParts := strings.Fields(playerLower)
-	if len(injuryParts) > 0 && len(playerParts) > 0 {
-		injuryLast := injuryParts[len(injuryParts)-1]
-		playerLast := playerParts[len(playerParts)-1]
-		if injuryLast == playerLast && len(injuryParts) > 1 && len(playerParts) > 1 {
-			// LastName 相同且首字母相同
-			if injuryParts[0][0] == playerParts[0][0] {
+	// 4. LastName + FirstName 首字母匹配 (如 "L. Doncic")
+	injParts := strings.Fields(inj)
+	plParts := strings.Fields(pl)
+	if len(injParts) >= 1 && len(plParts) >= 2 {
+		// 检查 "L. Doncic" 格式
+		if len(injParts[0]) == 1 || (len(injParts[0]) == 2 && injParts[0][1] == '.') {
+			if injParts[0][0] == plParts[0][0] && injParts[len(injParts)-1] == plParts[len(plParts)-1] {
 				return true
 			}
 		}
