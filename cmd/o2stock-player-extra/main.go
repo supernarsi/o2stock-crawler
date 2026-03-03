@@ -33,6 +33,23 @@ func main() {
 	defer database.Close()
 
 	ctx := context.Background()
+	playersService := service.NewPlayersService(database)
+
+	if len(os.Args) >= 2 && os.Args[1] == "import-detail-json" {
+		dataDir := "data"
+		if len(os.Args) >= 3 && strings.TrimSpace(os.Args[2]) != "" {
+			dataDir = strings.TrimSpace(os.Args[2])
+		}
+
+		start := time.Now()
+		log.Printf(">>> 开始导入球员 detail_json，目录: %s <<<", dataDir)
+		stats, err := playersService.ImportPlayerDetailJSONFromDir(ctx, dataDir)
+		if err != nil {
+			log.Fatalf("导入 detail_json 失败: %v", err)
+		}
+		log.Printf(">>> detail_json 导入完成 <<< updated=%d not_found=%d invalid=%d 耗时=%v", stats.Updated, stats.NotFound, stats.Invalid, time.Since(start))
+		return
+	}
 
 	playerIDs := []uint{}
 	if len(os.Args) >= 2 {
@@ -52,8 +69,6 @@ func main() {
 			}
 		}
 	}
-
-	playersService := service.NewPlayersService(database)
 
 	log.Printf(">>> 开始执行球员扩展信息及徽章同步任务 <<<")
 	start := time.Now()

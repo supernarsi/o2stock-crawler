@@ -157,6 +157,13 @@ func (r *PlayerRepository) UpdatePriceChanges(ctx context.Context, playerID uint
 		}).Error
 }
 
+func (r *PlayerRepository) UpdateDetailJSON(ctx context.Context, playerID uint, detailJSON string) (int64, error) {
+	result := r.model(ctx).
+		Where("player_id = ?", playerID).
+		Update("detail_json", detailJSON)
+	return result.RowsAffected, result.Error
+}
+
 // GetAllTxPlayers 返回参与 IPI 计算的球员：tx_player_id > 0 且非自由球员（用于排名、批量 IPI 等）
 func (r *PlayerRepository) GetAllTxPlayers(ctx context.Context) ([]entity.Player, error) {
 	var players []entity.Player
