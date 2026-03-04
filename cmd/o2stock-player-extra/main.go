@@ -43,7 +43,7 @@ func main() {
 			printUsage()
 			return
 		case "import-detail-json":
-			dataDir := "data"
+			dataDir := "docs/data/player_detail_json"
 			if len(args) >= 2 && strings.TrimSpace(args[1]) != "" {
 				dataDir = strings.TrimSpace(args[1])
 			}
