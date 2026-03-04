@@ -616,6 +616,7 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[IPI] 预加载完成: %d 个球员", len(playerIDs))
 
 	// 排除近期比赛数据 < minRecentGamesForIPI 场的球员（样本太少，近期战力/趋势不可靠）
 	prevCount = len(players)
@@ -665,6 +666,7 @@ func (s *IPIService) preloadBatchData(ctx context.Context, playerIDs, txPlayerID
 	if err != nil {
 		return nil, fmt.Errorf("preload price history: %w", err)
 	}
+	log.Printf("[IPI] 预加载价格历史: %d 条", len(priceHistory))
 	preload.priceHistory = priceHistory
 
 	// 2. 批量获取近 N 场比赛数据（用于 M_growth 上场时间趋势）
@@ -676,6 +678,7 @@ func (s *IPIService) preloadBatchData(ctx context.Context, playerIDs, txPlayerID
 	if err != nil {
 		return nil, fmt.Errorf("preload game stats: %w", err)
 	}
+	log.Printf("[IPI] 预加载比赛数据: %d 条", len(gameStats))
 	preload.recentGameStats = gameStats
 
 	// 3. 预加载 OVR 均价 map（用于 V_gap 计算）
@@ -683,6 +686,7 @@ func (s *IPIService) preloadBatchData(ctx context.Context, playerIDs, txPlayerID
 	if err != nil {
 		return nil, fmt.Errorf("preload OVR avg: %w", err)
 	}
+	log.Printf("[IPI] 预加载 OVR 均价: %d 条", len(ovrAvg))
 	preload.ovrAvgPrice = ovrAvg
 
 	// 4. 预加载 OVR 数量 map
@@ -690,6 +694,7 @@ func (s *IPIService) preloadBatchData(ctx context.Context, playerIDs, txPlayerID
 	if err != nil {
 		return nil, fmt.Errorf("preload OVR count: %w", err)
 	}
+	log.Printf("[IPI] 预加载 OVR 数量: %d 条", len(ovrCount))
 	preload.ovrCount = ovrCount
 
 	// 5. 全表均价（用于 V_gap 回退）
@@ -697,6 +702,7 @@ func (s *IPIService) preloadBatchData(ctx context.Context, playerIDs, txPlayerID
 	if err != nil {
 		return nil, fmt.Errorf("preload global avg: %w", err)
 	}
+	log.Printf("[IPI] 预加载全表均价: %f", globalAvg)
 	preload.globalAvgPrice = globalAvg
 
 	return preload, nil

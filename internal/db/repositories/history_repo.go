@@ -299,40 +299,82 @@ func (r *HistoryRepository) Create(ctx context.Context, history *entity.PlayerPr
 	return r.ctx(ctx).Create(history).Error
 }
 
-// BatchGetDays 批量获取多球员近 days 天的价格历史（每日一条），用于 IPI 批量计算
-// 优化：在 DB 层用 ROW_NUMBER 按 (player_id, at_date) 取每日一条（当日 at_date_hour 最大的一条），
-// 避免拉取全量小时级数据（60 万+ 行）导致慢查询，结果行数约为 player 数 × days。
-// 建议索引：CREATE INDEX idx_pid_at_hour ON p_p_history(player_id, at_date_hour);
+const batchGetDaysChunkSize = 200
+
+// BatchGetDays 批量获取多球员近 days 天的价格历史（每日一条），用于 IPI 批量计算。
+// 实现优化点：
+// 1. 先按 (player_id, at_date) 做 MAX(at_date_hour) 聚合，再回表取完整行，避免窗口函数带来的临时表开销；
+// 2. 对 playerIDs 分片查询，避免超大 IN 语句导致执行计划退化。
+// 建议索引：CREATE INDEX idx_pid_date_hour ON p_p_history(player_id, at_date, at_date_hour);
 func (r *HistoryRepository) BatchGetDays(ctx context.Context, playerIDs []uint, days int) (map[uint][]entity.PlayerPriceHistory, error) {
 	out := make(map[uint][]entity.PlayerPriceHistory)
 	if len(playerIDs) == 0 || days <= 0 {
 		return out, nil
 	}
 
+	playerIDs = uniqueUintIDs(playerIDs)
 	now := time.Now()
 	startDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -(days - 1))
 	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, 1)
 	startStr := startDate.Format("200601021504")
 	endStr := endDate.Format("200601021504")
 
-	// 子查询：按 (player_id, at_date) 分区，取当日 at_date_hour 最大的一条（每日一条）
-	subQuery := r.model(ctx).
-		Select("*, ROW_NUMBER() OVER (PARTITION BY player_id, at_date ORDER BY at_date_hour DESC) AS rn").
-		Where("player_id IN ? AND at_date_hour >= ? AND at_date_hour < ?", playerIDs, startStr, endStr)
+	chunks := chunkUintIDs(playerIDs, batchGetDaysChunkSize)
+	for _, chunk := range chunks {
+		// 子查询：每个球员每天取 at_date_hour 最大值（即当日最新一条）
+		subQuery := r.model(ctx).
+			Select("player_id, at_date, MAX(at_date_hour) AS max_hour").
+			Where("player_id IN ? AND at_date_hour >= ? AND at_date_hour < ?", chunk, startStr, endStr).
+			Group("player_id, at_date")
 
-	var results []entity.PlayerPriceHistory
-	err := r.ctx(ctx).
-		Table("(?) AS t", subQuery).
-		Where("t.rn = 1").
-		Select("t.id, t.player_id, t.at_date, t.at_date_hour, t.at_year, t.at_month, t.at_day, t.at_hour, t.at_minute, t.price_standard, t.price_current_sale, t.price_lower, t.price_upper, t.c_time").
-		Order("t.player_id ASC, t.at_date ASC").
-		Find(&results).Error
-	if err != nil {
-		return nil, err
-	}
+		var rows []entity.PlayerPriceHistory
+		err := r.ctx(ctx).
+			Table("p_p_history AS h").
+			Joins("INNER JOIN (?) AS m ON h.player_id = m.player_id AND h.at_date = m.at_date AND h.at_date_hour = m.max_hour", subQuery).
+			Select("h.id, h.player_id, h.at_date, h.at_date_hour, h.at_year, h.at_month, h.at_day, h.at_hour, h.at_minute, h.price_standard, h.price_current_sale, h.price_lower, h.price_upper, h.c_time").
+			Order("h.player_id ASC, h.at_date ASC").
+			Find(&rows).Error
+		if err != nil {
+			return nil, err
+		}
 
-	for _, h := range results {
-		out[h.PlayerID] = append(out[h.PlayerID], h)
+		for _, h := range rows {
+			out[h.PlayerID] = append(out[h.PlayerID], h)
+		}
 	}
 	return out, nil
+}
+
+func uniqueUintIDs(ids []uint) []uint {
+	if len(ids) <= 1 {
+		return ids
+	}
+	seen := make(map[uint]struct{}, len(ids))
+	out := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func chunkUintIDs(ids []uint, chunkSize int) [][]uint {
+	if len(ids) == 0 {
+		return nil
+	}
+	if chunkSize <= 0 {
+		chunkSize = len(ids)
+	}
+	chunks := make([][]uint, 0, (len(ids)+chunkSize-1)/chunkSize)
+	for start := 0; start < len(ids); start += chunkSize {
+		end := start + chunkSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunks = append(chunks, ids[start:end])
+	}
+	return chunks
 }
