@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"o2stock-crawler/internal/entity"
+	"sort"
 
 	"gorm.io/gorm"
 )
@@ -41,4 +42,32 @@ func (r *LineupRecommendationRepository) GetByDate(ctx context.Context, gameDate
 		Order("`rank` ASC").
 		Find(&recs).Error
 	return recs, err
+}
+
+// BatchUpdateActualPower 批量更新推荐阵容的实际总战力（按 game_date + rank）
+func (r *LineupRecommendationRepository) BatchUpdateActualPower(
+	ctx context.Context,
+	gameDate string,
+	rankPowerMap map[uint]float64,
+) error {
+	if len(rankPowerMap) == 0 {
+		return nil
+	}
+
+	ranks := make([]uint, 0, len(rankPowerMap))
+	for rank := range rankPowerMap {
+		ranks = append(ranks, rank)
+	}
+	sort.Slice(ranks, func(i, j int) bool { return ranks[i] < ranks[j] })
+
+	return r.ctx(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, rank := range ranks {
+			if err := tx.Model(&entity.LineupRecommendation{}).
+				Where("game_date = ? AND `rank` = ?", gameDate, rank).
+				Update("total_actual_power", rankPowerMap[rank]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

@@ -37,6 +37,19 @@ func (r *NBAGamePlayerRepository) BatchUpsert(ctx context.Context, players []ent
 		CreateInBatches(players, 100).Error
 }
 
+// ReplaceByGameDate 全量替换某日候选球员数据（先删后插）
+func (r *NBAGamePlayerRepository) ReplaceByGameDate(ctx context.Context, gameDate string, players []entity.NBAGamePlayer) error {
+	return r.ctx(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("game_date = ?", gameDate).Delete(&entity.NBAGamePlayer{}).Error; err != nil {
+			return err
+		}
+		if len(players) == 0 {
+			return nil
+		}
+		return tx.CreateInBatches(players, 100).Error
+	})
+}
+
 // GetByGameDate 获取指定日期所有候选球员
 func (r *NBAGamePlayerRepository) GetByGameDate(ctx context.Context, gameDate string) ([]entity.NBAGamePlayer, error) {
 	var players []entity.NBAGamePlayer

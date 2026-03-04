@@ -23,6 +23,12 @@ type LineupRecommendService struct {
 	injuryClient *crawler.InjuryClient
 }
 
+const (
+	defaultSalaryCap = 150
+	defaultPickCount = 5
+	defaultTopN      = 3
+)
+
 // NewLineupRecommendService 创建推荐引擎服务
 func NewLineupRecommendService(database *db.DB) *LineupRecommendService {
 	return &LineupRecommendService{
@@ -54,6 +60,27 @@ type PlayerSalary struct {
 	ISalary       string `json:"iSalary"`
 }
 
+// ActualFeedbackItem 真实战力反馈项（仅支持阵容 list 格式）
+type ActualFeedbackItem struct {
+	Rank        uint     `json:"-"`
+	NBAPlayerID uint     `json:"nba_player_id"`
+	Salary      *uint    `json:"salary"`
+	ActualPower *float64 `json:"actual_power"`
+	Source      string   `json:"source"`
+}
+
+// ActualFeedbackLineupPayload 阵容反馈 JSON 结构（list -> players）
+type ActualFeedbackLineupPayload struct {
+	GameDate string                 `json:"game_date"`
+	Source   string                 `json:"source"`
+	List     []ActualFeedbackLineup `json:"list"`
+}
+
+type ActualFeedbackLineup struct {
+	Rank    uint                 `json:"rank"`
+	Players []ActualFeedbackItem `json:"players"`
+}
+
 // PlayerPrediction 预测结果及各因子明细
 type PlayerPrediction struct {
 	PredictedPower    float64
@@ -63,6 +90,10 @@ type PlayerPrediction struct {
 	MatchupFactor     float64
 	HomeAwayFactor    float64
 	TeamContextFactor float64
+	MinutesFactor     float64
+	UsageFactor       float64
+	StabilityFactor   float64
+	FatigueFactor     float64
 	GameRiskFactor    float64
 }
 
@@ -87,6 +118,10 @@ type DetailPlayer struct {
 		MatchupFactor     float64 `json:"matchup_factor"`
 		HomeAwayFactor    float64 `json:"home_away_factor"`
 		TeamContextFactor float64 `json:"team_context_factor"`
+		MinutesFactor     float64 `json:"minutes_factor"`
+		UsageFactor       float64 `json:"usage_factor"`
+		StabilityFactor   float64 `json:"stability_factor"`
+		FatigueFactor     float64 `json:"fatigue_factor"`
 		GameRiskFactor    float64 `json:"game_risk_factor"`
 		DbPowerPer5       float64 `json:"db_power_per5,omitempty"`
 		DbPowerPer10      float64 `json:"db_power_per10,omitempty"`
@@ -125,15 +160,19 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 
 	// 4. 构建 teamId → matchId 映射 和 match 信息映射
 	teamToMatch := make(map[string]*MatchData)
-	for i := range matches {
-		teamToMatch[matches[i].IHomeTeamId] = &matches[i]
-		teamToMatch[matches[i].IAwayTeamId] = &matches[i]
-	}
-
-	// 确定比赛日期（取第一场的日期）
 	gameDate := ""
-	if len(matches) > 0 {
-		gameDate = matches[0].DtDate
+	for i := range matches {
+		match := &matches[i]
+		teamToMatch[match.IHomeTeamId] = match
+		teamToMatch[match.IAwayTeamId] = match
+
+		if gameDate == "" {
+			gameDate = match.DtDate
+			continue
+		}
+		if match.DtDate != gameDate {
+			return fmt.Errorf("match_data.json 包含多个比赛日期: %s / %s", gameDate, match.DtDate)
+		}
 	}
 	if gameDate == "" {
 		return fmt.Errorf("无法确定比赛日期")
@@ -141,7 +180,9 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 	log.Printf("比赛日期: %s", gameDate)
 
 	// 5. 遍历球员列表，构建 NBAGamePlayer 对象
-	var players []entity.NBAGamePlayer
+	playerMap := make(map[uint]entity.NBAGamePlayer)
+	invalidCount := 0
+
 	for _, ps := range playerSalaries {
 		match, ok := teamToMatch[ps.ITeamId]
 		if !ok {
@@ -149,15 +190,41 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 			continue
 		}
 
-		nbaPlayerID, _ := strconv.ParseUint(ps.IPlayerId, 10, 32)
-		salary, _ := strconv.ParseUint(ps.ISalary, 10, 32)
-		combatPower, _ := strconv.ParseFloat(ps.FCombatPower, 64)
-		position, _ := strconv.ParseUint(ps.IPosition, 10, 8)
+		nbaPlayerID, err := strconv.ParseUint(strings.TrimSpace(ps.IPlayerId), 10, 32)
+		if err != nil || nbaPlayerID == 0 {
+			invalidCount++
+			log.Printf("警告: 跳过非法 iPlayerId=%q (name=%s)", ps.IPlayerId, ps.SPlayerName)
+			continue
+		}
+
+		salary, err := strconv.ParseUint(strings.TrimSpace(ps.ISalary), 10, 32)
+		if err != nil {
+			invalidCount++
+			log.Printf("警告: 跳过非法 iSalary=%q (name=%s)", ps.ISalary, ps.SPlayerName)
+			continue
+		}
+
+		combatPower, err := strconv.ParseFloat(strings.TrimSpace(ps.FCombatPower), 64)
+		if err != nil {
+			invalidCount++
+			log.Printf("警告: 跳过非法 fCombatPower=%q (name=%s)", ps.FCombatPower, ps.SPlayerName)
+			continue
+		}
+
+		position, err := strconv.ParseUint(strings.TrimSpace(ps.IPosition), 10, 8)
+		if err != nil {
+			invalidCount++
+			log.Printf("警告: 跳过非法 iPosition=%q (name=%s)", ps.IPosition, ps.SPlayerName)
+			continue
+		}
 
 		isHome := ps.ITeamId == match.IHomeTeamId
 		teamName := teamIDMap[ps.ITeamId]
+		if teamName == "" {
+			teamName = ps.ITeamId
+		}
 
-		players = append(players, entity.NBAGamePlayer{
+		playerMap[uint(nbaPlayerID)] = entity.NBAGamePlayer{
 			GameDate:     gameDate,
 			MatchID:      match.IMatchId,
 			NBAPlayerID:  uint(nbaPlayerID),
@@ -169,16 +236,215 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 			Salary:       uint(salary),
 			CombatPower:  combatPower,
 			Position:     uint(position),
-		})
+		}
 	}
 
-	// 6. 批量 Upsert
+	players := make([]entity.NBAGamePlayer, 0, len(playerMap))
+	for _, p := range playerMap {
+		players = append(players, p)
+	}
+	sort.Slice(players, func(i, j int) bool {
+		return players[i].NBAPlayerID < players[j].NBAPlayerID
+	})
+	if len(players) == 0 {
+		return fmt.Errorf("没有可导入的候选球员")
+	}
+
+	// 6. 按日期全量替换，避免旧候选残留
 	repo := repositories.NewNBAGamePlayerRepository(s.db.DB)
-	if err := repo.BatchUpsert(ctx, players); err != nil {
+	if err := repo.ReplaceByGameDate(ctx, gameDate, players); err != nil {
 		return fmt.Errorf("导入球员数据失败: %w", err)
 	}
 
-	log.Printf("成功导入 %d 名球员到 nba_game_player 表 (日期: %s)", len(players), gameDate)
+	log.Printf("成功导入 %d 名球员到 nba_game_player 表 (日期: %s, 非法记录: %d)", len(players), gameDate, invalidCount)
+	return nil
+}
+
+// ImportActualFeedback 导入赛后真实战力反馈（按比赛日全量替换）
+func (s *LineupRecommendService) ImportActualFeedback(ctx context.Context, gameDate string, feedbackFile string) error {
+	raw, err := os.ReadFile(feedbackFile)
+	if err != nil {
+		return fmt.Errorf("读取反馈文件失败: %w", err)
+	}
+
+	resolvedDate, items, err := resolveActualFeedbackItems(raw)
+	if err != nil {
+		return fmt.Errorf("解析反馈文件失败: %w", err)
+	}
+	if gameDate == "" {
+		gameDate = resolvedDate
+	}
+	if gameDate == "" {
+		return fmt.Errorf("缺少比赛日期，请传入参数或在 JSON 中提供 game_date")
+	}
+	if resolvedDate != "" && resolvedDate != gameDate {
+		return fmt.Errorf("反馈日期不一致: 参数=%s, JSON=%s", gameDate, resolvedDate)
+	}
+	if len(items) == 0 {
+		return fmt.Errorf("反馈文件中无有效球员数据")
+	}
+
+	salaryMap := make(map[uint]uint)
+	gamePlayerRepo := repositories.NewNBAGamePlayerRepository(s.db.DB)
+	gamePlayers, err := gamePlayerRepo.GetByGameDate(ctx, gameDate)
+	if err != nil {
+		log.Printf("加载候选球员工资失败，将仅使用反馈中的 salary: %v", err)
+	} else {
+		for _, p := range gamePlayers {
+			salaryMap[p.NBAPlayerID] = p.Salary
+		}
+	}
+
+	defaultSource := "manual_json"
+	dedup := make(map[string]entity.NBAGamePlayerActual)
+	for _, item := range items {
+		if item.Rank == 0 || item.NBAPlayerID == 0 || item.ActualPower == nil {
+			continue
+		}
+
+		source := strings.TrimSpace(item.Source)
+		if source == "" {
+			source = defaultSource
+		}
+
+		salary := salaryMap[item.NBAPlayerID]
+		if item.Salary != nil {
+			salary = *item.Salary
+		}
+
+		key := fmt.Sprintf("%d:%d", item.Rank, item.NBAPlayerID)
+		dedup[key] = entity.NBAGamePlayerActual{
+			GameDate:    gameDate,
+			Rank:        item.Rank,
+			NBAPlayerID: item.NBAPlayerID,
+			Salary:      salary,
+			ActualPower: roundTo(*item.ActualPower, 1),
+			Source:      source,
+		}
+	}
+	if len(dedup) == 0 {
+		return fmt.Errorf("反馈文件中没有可导入的有效 actual_power")
+	}
+
+	rows := make([]entity.NBAGamePlayerActual, 0, len(dedup))
+	for _, row := range dedup {
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Rank != rows[j].Rank {
+			return rows[i].Rank < rows[j].Rank
+		}
+		return rows[i].NBAPlayerID < rows[j].NBAPlayerID
+	})
+
+	actualRepo := repositories.NewNBAGamePlayerActualRepository(s.db.DB)
+	if err := actualRepo.ReplaceByGameDate(ctx, gameDate, rows); err != nil {
+		return fmt.Errorf("写入反馈失败: %w", err)
+	}
+
+	log.Printf("已导入真实战力反馈: %d 名球员 (日期: %s)", len(rows), gameDate)
+	return nil
+}
+
+// RunBacktest 基于反馈数据回测推荐结果，并给出真实最优 TopN
+func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate string, topN int) error {
+	if topN <= 0 {
+		topN = defaultTopN
+	}
+
+	lineupRepo := repositories.NewLineupRecommendationRepository(s.db.DB)
+	recs, err := lineupRepo.GetByDate(ctx, gameDate)
+	if err != nil {
+		return fmt.Errorf("查询推荐阵容失败: %w", err)
+	}
+	if len(recs) == 0 {
+		return fmt.Errorf("无推荐阵容数据，请先执行 recommend: %s", gameDate)
+	}
+
+	actualRepo := repositories.NewNBAGamePlayerActualRepository(s.db.DB)
+	actualRows, err := actualRepo.GetByGameDate(ctx, gameDate)
+	if err != nil {
+		return fmt.Errorf("查询真实战力反馈失败: %w", err)
+	}
+	if len(actualRows) == 0 {
+		return fmt.Errorf("无真实战力反馈数据，请先执行 import-actual/feedback: %s", gameDate)
+	}
+	actualMap := make(map[uint]float64, len(actualRows))
+	for _, row := range actualRows {
+		if _, exists := actualMap[row.NBAPlayerID]; exists {
+			continue
+		}
+		actualMap[row.NBAPlayerID] = row.ActualPower
+	}
+
+	gamePlayerRepo := repositories.NewNBAGamePlayerRepository(s.db.DB)
+	gamePlayers, err := gamePlayerRepo.GetByGameDate(ctx, gameDate)
+	if err != nil {
+		return fmt.Errorf("查询候选球员失败: %w", err)
+	}
+	if len(gamePlayers) == 0 {
+		return fmt.Errorf("无候选球员数据: %s", gameDate)
+	}
+	playerMap := make(map[uint]entity.NBAGamePlayer, len(gamePlayers))
+	for _, p := range gamePlayers {
+		playerMap[p.NBAPlayerID] = p
+	}
+
+	// A. 推荐结果的实际得分（写回 lineup_recommendation.total_actual_power）
+	recRows := make([]entity.LineupBacktestResult, 0, min(topN, len(recs)))
+	rankPowerMap := make(map[uint]float64, len(recs))
+	for _, rec := range recs {
+		actualTotal := calcLineupActualTotal(pickLineupPlayerIDs(rec), actualMap)
+		rankPowerMap[rec.Rank] = actualTotal
+
+		if int(rec.Rank) <= topN {
+			row, ok := s.buildBacktestRowFromRecommendation(gameDate, rec, actualTotal, playerMap)
+			if ok {
+				recRows = append(recRows, row)
+			}
+		}
+	}
+	if err := lineupRepo.BatchUpdateActualPower(ctx, gameDate, rankPowerMap); err != nil {
+		return fmt.Errorf("回写推荐阵容实际战力失败: %w", err)
+	}
+
+	// B. 以真实战力为目标值，重新求解真实最优 TopN
+	actualCandidates := make([]PlayerCandidate, 0, len(gamePlayers))
+	for _, p := range gamePlayers {
+		actualCandidates = append(actualCandidates, PlayerCandidate{
+			Player: p,
+			Prediction: PlayerPrediction{
+				PredictedPower: actualMap[p.NBAPlayerID],
+			},
+		})
+	}
+	bestActualLineups := s.solveOptimalLineupAllowZero(actualCandidates, defaultSalaryCap, defaultPickCount, topN)
+	if len(bestActualLineups) == 0 {
+		return fmt.Errorf("未找到可行真实最优阵容（工资帽=%d）", defaultSalaryCap)
+	}
+
+	optRows := make([]entity.LineupBacktestResult, 0, len(bestActualLineups))
+	for i, lineup := range bestActualLineups {
+		optRows = append(optRows, s.buildBacktestRowFromCandidates(
+			gameDate,
+			uint(i+1),
+			entity.LineupBacktestResultTypeActualOptimal,
+			lineup,
+			"",
+			0,
+		))
+	}
+
+	backtestRepo := repositories.NewLineupBacktestResultRepository(s.db.DB)
+	if err := backtestRepo.ReplaceByGameDateAndType(ctx, gameDate, entity.LineupBacktestResultTypeRecommendedActual, recRows); err != nil {
+		return fmt.Errorf("保存推荐实得回测结果失败: %w", err)
+	}
+	if err := backtestRepo.ReplaceByGameDateAndType(ctx, gameDate, entity.LineupBacktestResultTypeActualOptimal, optRows); err != nil {
+		return fmt.Errorf("保存真实最优回测结果失败: %w", err)
+	}
+
+	s.printBacktestSummary(gameDate, recRows, optRows)
+	log.Printf(">>> 回测完成，结果已保存到 lineup_backtest_result 表 <<<")
 	return nil
 }
 
@@ -205,25 +471,33 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	log.Printf("伤病报告: 匹配到 %d 名球员", len(injuryMap))
 
 	// 3. 获取 DB 球员数据（用于增强预测）
-	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-	dbPlayerMap := s.loadDBPlayerMap(ctx, playerRepo, allPlayers)
+	dbPlayerMap := s.loadDBPlayerMap(ctx, allPlayers)
 	log.Printf("DB 球员匹配: %d / %d", len(dbPlayerMap), len(allPlayers))
 
 	// 4. 加载历史战绩数据
 	statsRepo := repositories.NewStatsRepository(s.db.DB)
 	gameStatsMap := s.loadGameStatsMap(ctx, statsRepo, dbPlayerMap)
 	log.Printf("历史战绩数据: %d 名球员有记录", len(gameStatsMap))
+	seasonStatsMap := s.loadSeasonStatsMap(ctx, statsRepo, dbPlayerMap, gameDate)
+	log.Printf("赛季场均数据: %d 名球员有记录", len(seasonStatsMap))
 
 	// 5. 对每位球员预测战力
 	var candidates []PlayerCandidate
 	effectiveCount := 0
 	for i := range allPlayers {
-		pred := s.predictPower(allPlayers[i], allPlayers, injuryMap, dbPlayerMap, gameStatsMap)
+		pred := s.predictPower(allPlayers[i], allPlayers, injuryMap, dbPlayerMap, gameStatsMap, seasonStatsMap)
 
-		// 更新 DB 中的预测值
+		// 始终覆盖预测值，避免旧值残留
+		writePower := pred.PredictedPower
+		if writePower < 0 {
+			writePower = 0
+		}
+		if err := gamePlayerRepo.UpdatePredictedPower(ctx, allPlayers[i].ID, writePower); err != nil {
+			log.Printf("更新 predicted_power 失败: player_id=%d err=%v", allPlayers[i].NBAPlayerID, err)
+		}
+
 		if pred.PredictedPower > 0 {
 			effectiveCount++
-			_ = gamePlayerRepo.UpdatePredictedPower(ctx, allPlayers[i].ID, pred.PredictedPower)
 		}
 
 		candidates = append(candidates, PlayerCandidate{
@@ -234,7 +508,7 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	log.Printf("有效球员: %d 人 (战力 > 0)", effectiveCount)
 
 	// 6. DP 求解最优阵容
-	topLineups := s.solveOptimalLineup(candidates, 150, 5, 3)
+	topLineups := s.solveOptimalLineup(candidates, defaultSalaryCap, defaultPickCount, defaultTopN)
 	if len(topLineups) == 0 {
 		log.Println("未找到可行阵容")
 		return nil
@@ -259,7 +533,7 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	return nil
 }
 
-// --- 球员战力预测（7 维评分） ---
+// --- 球员战力预测（11 维评分） ---
 
 func (s *LineupRecommendService) predictPower(
 	player entity.NBAGamePlayer,
@@ -267,6 +541,7 @@ func (s *LineupRecommendService) predictPower(
 	injuryMap map[uint]crawler.InjuryReport,
 	dbPlayerMap map[uint]*entity.Player,
 	gameStatsMap map[uint][]entity.PlayerGameStats,
+	seasonStatsMap map[uint]*entity.PlayerSeasonStats,
 ) PlayerPrediction {
 
 	// Step 1: 因素1 — 球员出场可用性 (AvailabilityScore)
@@ -309,22 +584,37 @@ func (s *LineupRecommendService) predictPower(
 		stats := gameStatsMap[txPlayerID]
 		if len(stats) >= 3 {
 			// 计算该球员历史对阵情况
-			opponentTeam := s.getOpponentTeamName(player, allPlayers)
+			opponentTeam := s.getOpponentTeamCode(player, allPlayers)
 			matchupFactor = s.calcMatchupFactor(stats, opponentTeam, baseValue)
 		}
 	}
 
 	// Step 5: 因素5 — 球队阵容上下文 (TeamContextFactor)
-	teamContextFactor := s.calcTeamContextFactor(player, allPlayers, dbPlayer)
+	teamContextFactor := s.calcTeamContextFactor(player, allPlayers)
 
 	// Step 6: 因素6 — 主客场因子 (HomeAwayFactor)
 	homeAwayFactor := s.calcHomeAwayFactor(player, txPlayerID, gameStatsMap)
 
-	// Step 7: 因素2 — 比赛取消风险 (GameRiskFactor)
+	// Step 7: 额外因子 — 上场时间趋势、使用率趋势、稳定性、赛程疲劳
+	minutesFactor := 1.0
+	usageFactor := 1.0
+	stabilityFactor := 1.0
+	fatigueFactor := 1.0
+	if txPlayerID > 0 {
+		stats := gameStatsMap[txPlayerID]
+		minutesFactor = s.calcMinutesFactor(stats, seasonStatsMap[txPlayerID])
+		usageFactor = s.calcUsageFactor(stats)
+		stabilityFactor = s.calcStabilityFactor(stats)
+		fatigueFactor = s.calcFatigueFactor(stats, player.GameDate)
+	}
+
+	// Step 8: 因素2 — 比赛取消风险 (GameRiskFactor)
 	gameRiskFactor := 1.0 // NBA 室内运动，默认无风险
 
-	// Step 8: 综合计算
-	predictedPower := baseValue * availabilityScore * statusTrend * matchupFactor * homeAwayFactor * teamContextFactor * gameRiskFactor
+	// Step 9: 综合计算
+	predictedPower := baseValue * availabilityScore * statusTrend * matchupFactor *
+		homeAwayFactor * teamContextFactor * minutesFactor * usageFactor *
+		stabilityFactor * fatigueFactor * gameRiskFactor
 
 	return PlayerPrediction{
 		PredictedPower:    roundTo(predictedPower, 1),
@@ -334,6 +624,10 @@ func (s *LineupRecommendService) predictPower(
 		MatchupFactor:     roundTo(matchupFactor, 2),
 		HomeAwayFactor:    roundTo(homeAwayFactor, 2),
 		TeamContextFactor: roundTo(teamContextFactor, 2),
+		MinutesFactor:     roundTo(minutesFactor, 2),
+		UsageFactor:       roundTo(usageFactor, 2),
+		StabilityFactor:   roundTo(stabilityFactor, 2),
+		FatigueFactor:     roundTo(fatigueFactor, 2),
 		GameRiskFactor:    roundTo(gameRiskFactor, 2),
 	}
 }
@@ -346,245 +640,179 @@ func (s *LineupRecommendService) solveOptimalLineup(
 	pickCount int,
 	topN int,
 ) [][]PlayerCandidate {
-
-	// 预筛：过滤掉没有战力的球员
-	var allValid []PlayerCandidate
-	for _, c := range candidates {
-		if c.Prediction.PredictedPower > 0 && c.Player.Salary > 0 {
-			allValid = append(allValid, c)
-		}
-	}
-
-	// 混合预选策略：保留绝对战力 Top 80 和性价比 Top 80，合并去重
-	// 这样可以确保 Luka 这种高战力但高工资（性价比中等）的球员被选中
-	topPower := make([]PlayerCandidate, len(allValid))
-	copy(topPower, allValid)
-	sort.Slice(topPower, func(i, j int) bool {
-		return topPower[i].Prediction.PredictedPower > topPower[j].Prediction.PredictedPower
-	})
-
-	topRatio := make([]PlayerCandidate, len(allValid))
-	copy(topRatio, allValid)
-	sort.Slice(topRatio, func(i, j int) bool {
-		rI := topRatio[i].Prediction.PredictedPower / float64(topRatio[i].Player.Salary)
-		rJ := topRatio[j].Prediction.PredictedPower / float64(topRatio[j].Player.Salary)
-		return rI > rJ
-	})
-
-	seen := make(map[uint]bool)
-	var valid []PlayerCandidate
-
-	// 取 Top 80 战力
-	limit := 80
-	if len(topPower) < limit {
-		limit = len(topPower)
-	}
-	for i := 0; i < limit; i++ {
-		if !seen[topPower[i].Player.NBAPlayerID] {
-			valid = append(valid, topPower[i])
-			seen[topPower[i].Player.NBAPlayerID] = true
-		}
-	}
-
-	// 补充 Top 80 性价比
-	limit = 80
-	if len(topRatio) < limit {
-		limit = len(topRatio)
-	}
-	for i := 0; i < limit; i++ {
-		if !seen[topRatio[i].Player.NBAPlayerID] {
-			valid = append(valid, topRatio[i])
-			seen[topRatio[i].Player.NBAPlayerID] = true
-		}
-	}
-
-	log.Printf("混合预选完成: 绝对战力候选 + 性价比候选 -> 共 %d 名球员", len(valid))
-
-	// 调试日志：输出特定球员的预测情况
-	for _, c := range allValid {
-		if strings.Contains(c.Player.PlayerName, "东契奇") ||
-			strings.Contains(c.Player.PlayerName, "马克西") ||
-			strings.Contains(c.Player.PlayerName, "弗拉格") {
-			log.Printf("DEBUG 球员预测: %s, 战力=%.1f, 性价比=%.2f, 状态=%v",
-				c.Player.PlayerName, c.Prediction.PredictedPower,
-				c.Prediction.PredictedPower/float64(c.Player.Salary),
-				c.Prediction.AvailabilityScore)
-		}
-	}
-
-	log.Printf("DP 求解: %d 名候选球员, 工资帽 %d, 选 %d 人", len(valid), salaryCap, pickCount)
-
-	var results [][]PlayerCandidate
-	excluded := make(map[uint]bool)
-
-	for t := 0; t < topN; t++ {
-		// 构建本轮可用球员（排除已选过的组合中的部分球员不适用 — 这里改用完整排除重复组合的方式）
-		var available []PlayerCandidate
-		for _, c := range valid {
-			if !excluded[c.Player.NBAPlayerID] {
-				available = append(available, c)
-			}
-		}
-
-		lineup := s.dpSolve(available, salaryCap, pickCount)
-		if lineup == nil {
-			break
-		}
-
-		results = append(results, lineup)
-
-		// 排除最优组合中性价比最低的球员，强制下一轮选不同组合
-		if len(lineup) > 0 {
-			worstIdx := 0
-			worstRatio := math.MaxFloat64
-			for i, c := range lineup {
-				ratio := c.Prediction.PredictedPower / float64(c.Player.Salary)
-				if ratio < worstRatio {
-					worstRatio = ratio
-					worstIdx = i
-				}
-			}
-			excluded[lineup[worstIdx].Player.NBAPlayerID] = true
-		}
-	}
-
-	return results
+	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, false)
 }
 
-// dpSolve 使用 DP 求解单次最优阵容
-func (s *LineupRecommendService) dpSolve(
+func (s *LineupRecommendService) solveOptimalLineupAllowZero(
 	candidates []PlayerCandidate,
 	salaryCap int,
 	pickCount int,
-) []PlayerCandidate {
-	n := len(candidates)
-	if n < pickCount {
-		return nil
-	}
-
-	// dp[j][k] = 选 j 人、总工资 ≤ k 时的最大战力值
-	dp := make([][]float64, pickCount+1)
-	// track[j][k] = 最后选择的球员索引（用于回溯）
-	track := make([][]int, pickCount+1)
-	for j := 0; j <= pickCount; j++ {
-		dp[j] = make([]float64, salaryCap+1)
-		track[j] = make([]int, salaryCap+1)
-		for k := range track[j] {
-			track[j][k] = -1
-		}
-	}
-
-	// 初始化 prev[j][k] 用于回溯完整路径
-	type choice struct {
-		playerIdx int
-		prevK     int
-	}
-	history := make([][][]choice, n)
-
-	for i := 0; i < n; i++ {
-		salary := int(candidates[i].Player.Salary)
-		power := candidates[i].Prediction.PredictedPower
-
-		history[i] = make([][]choice, pickCount+1)
-		for j := 0; j <= pickCount; j++ {
-			history[i][j] = make([]choice, salaryCap+1)
-		}
-
-		// 从后往前遍历，避免重复选择
-		for j := min(pickCount, i+1); j >= 1; j-- {
-			for k := salaryCap; k >= salary; k-- {
-				newPower := dp[j-1][k-salary] + power
-				if newPower > dp[j][k] {
-					dp[j][k] = newPower
-					track[j][k] = i
-				}
-			}
-		}
-	}
-
-	// 找到最优解的工资值
-	bestK := 0
-	for k := 0; k <= salaryCap; k++ {
-		if dp[pickCount][k] > dp[pickCount][bestK] {
-			bestK = k
-		}
-	}
-
-	if dp[pickCount][bestK] <= 0 {
-		return nil
-	}
-
-	// 回溯获取具体球员组合
-	result := s.backtrack(candidates, dp, pickCount, bestK)
-	if len(result) != pickCount {
-		return nil
-	}
-
-	return result
+	topN int,
+) [][]PlayerCandidate {
+	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, true)
 }
 
-// backtrack 通过重新扫描回溯获取具体球员组合
-func (s *LineupRecommendService) backtrack(
+func (s *LineupRecommendService) solveOptimalLineupInternal(
 	candidates []PlayerCandidate,
-	dp [][]float64,
-	targetJ int,
-	targetK int,
-) []PlayerCandidate {
-	n := len(candidates)
-	var result []PlayerCandidate
-
-	// 从最大索引开始检查每个球员是否被选择
-	j := targetJ
-	k := targetK
-	selected := make([]bool, n)
-
-	// 重新运行 DP 并记录选择路径
-	dpCopy := make([][]float64, j+1)
-	for jj := 0; jj <= j; jj++ {
-		dpCopy[jj] = make([]float64, k+1)
+	salaryCap int,
+	pickCount int,
+	topN int,
+	allowNonPositive bool,
+) [][]PlayerCandidate {
+	if salaryCap <= 0 || pickCount <= 0 || topN <= 0 {
+		return nil
 	}
 
-	type decision struct {
-		chosen bool
+	// 过滤：推荐场景只保留 >0，回测场景允许 0/负分
+	var allValid []PlayerCandidate
+	for _, c := range candidates {
+		if c.Player.Salary == 0 {
+			continue
+		}
+		if allowNonPositive || c.Prediction.PredictedPower > 0 {
+			allValid = append(allValid, c)
+		}
 	}
-	decisions := make([][][]decision, n)
+	if len(allValid) < pickCount {
+		return nil
+	}
 
-	for i := 0; i < n; i++ {
-		salary := int(candidates[i].Player.Salary)
-		power := candidates[i].Prediction.PredictedPower
-		decisions[i] = make([][]decision, j+1)
-		for jj := 0; jj <= j; jj++ {
-			decisions[i][jj] = make([]decision, k+1)
+	valid := allValid
+
+	log.Printf("DP 求解: 候选球员 %d 人, 工资帽 %d, 选 %d 人, 输出 Top %d", len(valid), salaryCap, pickCount, topN)
+
+	// dp[j][k] = 选 j 人，工资恰好为 k 时的 TopN 阵容
+	dp := make([][][]lineupState, pickCount+1)
+	for j := 0; j <= pickCount; j++ {
+		dp[j] = make([][]lineupState, salaryCap+1)
+	}
+	dp[0][0] = []lineupState{{score: 0, salary: 0, indices: []int{}}}
+
+	for i, c := range valid {
+		salary := int(c.Player.Salary)
+		power := c.Prediction.PredictedPower
+		if salary > salaryCap {
+			continue
 		}
 
-		for jj := min(j, i+1); jj >= 1; jj-- {
-			for kk := k; kk >= salary; kk-- {
-				newPower := dpCopy[jj-1][kk-salary] + power
-				if newPower > dpCopy[jj][kk] {
-					dpCopy[jj][kk] = newPower
-					decisions[i][jj][kk] = decision{chosen: true}
+		for j := pickCount; j >= 1; j-- {
+			for k := salaryCap; k >= salary; k-- {
+				prevStates := dp[j-1][k-salary]
+				if len(prevStates) == 0 {
+					continue
 				}
+
+				nextStates := dp[j][k]
+				for _, prev := range prevStates {
+					nextIdx := append([]int{}, prev.indices...)
+					nextIdx = append(nextIdx, i)
+					nextStates = insertLineupState(nextStates, lineupState{
+						score:   prev.score + power,
+						salary:  k,
+						indices: nextIdx,
+					}, topN)
+				}
+				dp[j][k] = nextStates
 			}
 		}
 	}
 
-	// 从后往前回溯
-	remJ, remK := j, k
-	for i := n - 1; i >= 0 && remJ > 0; i-- {
-		if decisions[i][remJ][remK].chosen {
-			selected[i] = true
-			remK -= int(candidates[i].Player.Salary)
-			remJ--
+	bestStates := make([]lineupState, 0, topN)
+	for k := 0; k <= salaryCap; k++ {
+		for _, st := range dp[pickCount][k] {
+			bestStates = insertLineupState(bestStates, st, topN)
+		}
+	}
+	if len(bestStates) == 0 {
+		return nil
+	}
+
+	results := make([][]PlayerCandidate, 0, len(bestStates))
+	for _, st := range bestStates {
+		lineup := make([]PlayerCandidate, 0, len(st.indices))
+		for _, idx := range st.indices {
+			lineup = append(lineup, valid[idx])
+		}
+		sort.Slice(lineup, func(i, j int) bool {
+			if lineup[i].Prediction.PredictedPower == lineup[j].Prediction.PredictedPower {
+				if lineup[i].Player.Salary == lineup[j].Player.Salary {
+					return lineup[i].Player.NBAPlayerID < lineup[j].Player.NBAPlayerID
+				}
+				return lineup[i].Player.Salary < lineup[j].Player.Salary
+			}
+			return lineup[i].Prediction.PredictedPower > lineup[j].Prediction.PredictedPower
+		})
+		results = append(results, lineup)
+	}
+	return results
+}
+
+type lineupState struct {
+	score   float64
+	salary  int
+	indices []int
+}
+
+func insertLineupState(states []lineupState, candidate lineupState, limit int) []lineupState {
+	for i := range states {
+		if sameLineupIndices(states[i].indices, candidate.indices) {
+			if lineupStateLess(candidate, states[i]) {
+				states[i] = candidate
+			}
+			sort.Slice(states, func(a, b int) bool {
+				return lineupStateLess(states[a], states[b])
+			})
+			if len(states) > limit {
+				states = states[:limit]
+			}
+			return states
 		}
 	}
 
-	for i, sel := range selected {
-		if sel {
-			result = append(result, candidates[i])
+	states = append(states, candidate)
+	sort.Slice(states, func(i, j int) bool {
+		return lineupStateLess(states[i], states[j])
+	})
+	if len(states) > limit {
+		states = states[:limit]
+	}
+	return states
+}
+
+func lineupStateLess(a, b lineupState) bool {
+	if math.Abs(a.score-b.score) > 1e-9 {
+		return a.score > b.score
+	}
+	if a.salary != b.salary {
+		return a.salary < b.salary
+	}
+	return lexicographicallyLess(a.indices, b.indices)
+}
+
+func sameLineupIndices(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
 	}
+	return true
+}
 
-	return result
+func lexicographicallyLess(a, b []int) bool {
+	limit := len(a)
+	if len(b) < limit {
+		limit = len(b)
+	}
+	for i := 0; i < limit; i++ {
+		if a[i] == b[i] {
+			continue
+		}
+		return a[i] < b[i]
+	}
+	return len(a) < len(b)
 }
 
 // --- 辅助函数 ---
@@ -598,30 +826,93 @@ func (s *LineupRecommendService) fetchInjuryMap(ctx context.Context, players []e
 		return result
 	}
 
-	for _, report := range reports {
-		for _, player := range players {
-			if crawler.MatchInjuryToPlayer(report.PlayerName, player.PlayerEnName) {
-				result[player.NBAPlayerID] = report
-				break
-			}
+	exactNameMap := make(map[string][]entity.NBAGamePlayer)
+	for _, p := range players {
+		key := normalizePlayerName(p.PlayerEnName)
+		if key == "" {
+			continue
 		}
+		exactNameMap[key] = append(exactNameMap[key], p)
+	}
+
+	for _, report := range reports {
+		nbaPlayerID, ok := pickInjuryMatchedPlayer(report, players, exactNameMap)
+		if !ok {
+			continue
+		}
+		result[nbaPlayerID] = report
 	}
 
 	return result
 }
 
-func (s *LineupRecommendService) loadDBPlayerMap(ctx context.Context, repo *repositories.PlayerRepository, gamePlayers []entity.NBAGamePlayer) map[uint]*entity.Player {
+func pickInjuryMatchedPlayer(
+	report crawler.InjuryReport,
+	players []entity.NBAGamePlayer,
+	exactNameMap map[string][]entity.NBAGamePlayer,
+) (uint, bool) {
+	reportTeamCode := normalizeTeamCode(report.TeamName)
+	reportName := normalizePlayerName(report.PlayerName)
+
+	if reportName != "" {
+		if exactMatches := exactNameMap[reportName]; len(exactMatches) > 0 {
+			if id, ok := selectPlayerByTeamCode(exactMatches, reportTeamCode); ok {
+				return id, true
+			}
+			return exactMatches[0].NBAPlayerID, true
+		}
+	}
+
+	var fuzzyMatches []entity.NBAGamePlayer
+	for _, p := range players {
+		if crawler.MatchInjuryToPlayer(report.PlayerName, p.PlayerEnName) {
+			fuzzyMatches = append(fuzzyMatches, p)
+		}
+	}
+	if len(fuzzyMatches) == 0 {
+		return 0, false
+	}
+	if id, ok := selectPlayerByTeamCode(fuzzyMatches, reportTeamCode); ok {
+		return id, true
+	}
+	return fuzzyMatches[0].NBAPlayerID, true
+}
+
+func selectPlayerByTeamCode(players []entity.NBAGamePlayer, teamCode string) (uint, bool) {
+	if teamCode == "" {
+		return 0, false
+	}
+	for _, p := range players {
+		if normalizeTeamCode(p.TeamName) == teamCode {
+			return p.NBAPlayerID, true
+		}
+	}
+	return 0, false
+}
+
+func (s *LineupRecommendService) loadDBPlayerMap(ctx context.Context, gamePlayers []entity.NBAGamePlayer) map[uint]*entity.Player {
 	result := make(map[uint]*entity.Player)
 
 	// 收集所有 NBAPlayerID
+	seenNBAIDs := make(map[uint]struct{})
 	var nbaIDs []uint
 	for _, p := range gamePlayers {
+		if p.NBAPlayerID == 0 {
+			continue
+		}
+		if _, ok := seenNBAIDs[p.NBAPlayerID]; ok {
+			continue
+		}
+		seenNBAIDs[p.NBAPlayerID] = struct{}{}
 		nbaIDs = append(nbaIDs, p.NBAPlayerID)
+	}
+	if len(nbaIDs) == 0 {
+		return result
 	}
 
 	// 从 players 表批量查询
 	var dbPlayers []entity.Player
-	if err := s.db.Where("nba_player_id IN ?", nbaIDs).Find(&dbPlayers).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("nba_player_id IN ?", nbaIDs).Find(&dbPlayers).Error; err != nil {
 		log.Printf("查询 DB 球员失败: %v", err)
 		return result
 	}
@@ -637,9 +928,14 @@ func (s *LineupRecommendService) loadGameStatsMap(ctx context.Context, repo *rep
 	result := make(map[uint][]entity.PlayerGameStats)
 
 	// 收集所有有 tx_player_id 的球员
+	seenTxIDs := make(map[uint]struct{})
 	var txPlayerIDs []uint
 	for _, p := range dbPlayerMap {
 		if p.TxPlayerID > 0 {
+			if _, ok := seenTxIDs[p.TxPlayerID]; ok {
+				continue
+			}
+			seenTxIDs[p.TxPlayerID] = struct{}{}
 			txPlayerIDs = append(txPlayerIDs, p.TxPlayerID)
 		}
 	}
@@ -655,13 +951,52 @@ func (s *LineupRecommendService) loadGameStatsMap(ctx context.Context, repo *rep
 		return result
 	}
 
+	for txPlayerID := range statsMap {
+		sort.Slice(statsMap[txPlayerID], func(i, j int) bool {
+			return statsMap[txPlayerID][i].GameDate.After(statsMap[txPlayerID][j].GameDate)
+		})
+	}
+
 	return statsMap
 }
 
-func (s *LineupRecommendService) getOpponentTeamName(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer) string {
+func (s *LineupRecommendService) loadSeasonStatsMap(
+	ctx context.Context,
+	repo *repositories.StatsRepository,
+	dbPlayerMap map[uint]*entity.Player,
+	gameDate string,
+) map[uint]*entity.PlayerSeasonStats {
+	result := make(map[uint]*entity.PlayerSeasonStats)
+
+	seenTxIDs := make(map[uint]struct{})
+	var txPlayerIDs []uint
+	for _, p := range dbPlayerMap {
+		if p.TxPlayerID == 0 {
+			continue
+		}
+		if _, ok := seenTxIDs[p.TxPlayerID]; ok {
+			continue
+		}
+		seenTxIDs[p.TxPlayerID] = struct{}{}
+		txPlayerIDs = append(txPlayerIDs, p.TxPlayerID)
+	}
+	if len(txPlayerIDs) == 0 {
+		return result
+	}
+
+	season := inferSeasonByGameDate(gameDate)
+	seasonStatsMap, err := repo.GetSeasonStatsByTxPlayerIDs(ctx, txPlayerIDs, season, 1)
+	if err != nil {
+		log.Printf("批量获取赛季数据失败: %v", err)
+		return result
+	}
+	return seasonStatsMap
+}
+
+func (s *LineupRecommendService) getOpponentTeamCode(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer) string {
 	for _, p := range allPlayers {
 		if p.MatchID == player.MatchID && p.NBATeamID != player.NBATeamID {
-			return p.TeamName
+			return normalizeTeamCode(p.TeamName)
 		}
 	}
 	return ""
@@ -675,13 +1010,18 @@ func (s *LineupRecommendService) calcMatchupFactor(stats []entity.PlayerGameStat
 	// 计算对手场均失分（使用近期数据粗略估算）
 	// 这里简化为：如果有该球员对阵该对手的历史数据，计算平均战力
 	var vsGames []entity.PlayerGameStats
+	targetTeam := normalizeTeamCode(opponentTeam)
+	if targetTeam == "" {
+		return 1.0
+	}
+
 	for _, g := range stats {
-		if g.VsTeamName == opponentTeam {
+		if normalizeTeamCode(g.VsTeamName) == targetTeam {
 			vsGames = append(vsGames, g)
 		}
 	}
 
-	if len(vsGames) >= 2 {
+	if len(vsGames) >= 3 {
 		totalPower := 0.0
 		for _, g := range vsGames {
 			totalPower += calcPowerFromStats(g)
@@ -693,7 +1033,7 @@ func (s *LineupRecommendService) calcMatchupFactor(stats []entity.PlayerGameStat
 	return 1.0
 }
 
-func (s *LineupRecommendService) calcTeamContextFactor(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer, dbPlayer *entity.Player) float64 {
+func (s *LineupRecommendService) calcTeamContextFactor(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer) float64 {
 	// 统计同队球员中 CombatPower=0 的工资占比
 	var totalTeamSalary, absentSalary float64
 	for _, p := range allPlayers {
@@ -760,6 +1100,143 @@ func (s *LineupRecommendService) calcHomeAwayFactor(player entity.NBAGamePlayer,
 	return defaultFactor
 }
 
+func (s *LineupRecommendService) calcMinutesFactor(stats []entity.PlayerGameStats, seasonStats *entity.PlayerSeasonStats) float64 {
+	if len(stats) == 0 {
+		return 1.0
+	}
+
+	recentCount := min(3, len(stats))
+	recentMinutes := 0.0
+	for i := 0; i < recentCount; i++ {
+		recentMinutes += float64(stats[i].Minutes)
+	}
+	recentAvg := recentMinutes / float64(recentCount)
+	if recentAvg <= 0 {
+		return 0.90
+	}
+
+	baseline := 0.0
+	if seasonStats != nil && seasonStats.Minutes > 0 {
+		baseline = seasonStats.Minutes
+	} else {
+		baselineCount := min(10, len(stats))
+		total := 0.0
+		for i := 0; i < baselineCount; i++ {
+			total += float64(stats[i].Minutes)
+		}
+		if baselineCount > 0 {
+			baseline = total / float64(baselineCount)
+		}
+	}
+	if baseline <= 0 {
+		return 1.0
+	}
+
+	return clamp(recentAvg/baseline, 0.90, 1.10)
+}
+
+func (s *LineupRecommendService) calcUsageFactor(stats []entity.PlayerGameStats) float64 {
+	if len(stats) < 3 {
+		return 1.0
+	}
+
+	recentCount := min(3, len(stats))
+	totalCount := min(10, len(stats))
+
+	recentUsage := 0.0
+	for i := 0; i < recentCount; i++ {
+		recentUsage += calcUsageProxyFromStats(stats[i])
+	}
+	totalUsage := 0.0
+	for i := 0; i < totalCount; i++ {
+		totalUsage += calcUsageProxyFromStats(stats[i])
+	}
+
+	recentAvg := recentUsage / float64(recentCount)
+	totalAvg := totalUsage / float64(totalCount)
+	if totalAvg <= 0 {
+		return 1.0
+	}
+
+	return clamp(recentAvg/totalAvg, 0.92, 1.10)
+}
+
+func (s *LineupRecommendService) calcStabilityFactor(stats []entity.PlayerGameStats) float64 {
+	window := min(5, len(stats))
+	if window < 3 {
+		return 1.0
+	}
+
+	powers := make([]float64, 0, window)
+	sum := 0.0
+	for i := 0; i < window; i++ {
+		power := calcPowerFromStats(stats[i])
+		powers = append(powers, power)
+		sum += power
+	}
+	mean := sum / float64(window)
+	if mean <= 0 {
+		return 1.0
+	}
+
+	variance := 0.0
+	for _, p := range powers {
+		diff := p - mean
+		variance += diff * diff
+	}
+	stdDev := math.Sqrt(variance / float64(window))
+	cv := stdDev / mean
+
+	switch {
+	case cv <= 0.18:
+		return 1.03
+	case cv >= 0.45:
+		return 0.92
+	default:
+		ratio := (cv - 0.18) / (0.45 - 0.18)
+		return 1.03 - ratio*(1.03-0.92)
+	}
+}
+
+func (s *LineupRecommendService) calcFatigueFactor(stats []entity.PlayerGameStats, gameDate string) float64 {
+	if len(stats) == 0 {
+		return 1.0
+	}
+
+	targetDate, ok := parseISODate(gameDate)
+	if !ok {
+		return 1.0
+	}
+
+	lastGameDate := normalizeDateOnly(stats[0].GameDate)
+	daysRest := int(targetDate.Sub(lastGameDate).Hours() / 24)
+
+	factor := 1.0
+	switch {
+	case daysRest <= 0:
+		factor = 1.0
+	case daysRest == 1:
+		factor = 0.94
+	case daysRest == 2:
+		factor = 0.98
+	default:
+		factor = 1.0
+	}
+
+	gamesIn4Days := 0
+	for _, g := range stats {
+		daysDiff := int(targetDate.Sub(normalizeDateOnly(g.GameDate)).Hours() / 24)
+		if daysDiff > 0 && daysDiff <= 4 {
+			gamesIn4Days++
+		}
+	}
+	if gamesIn4Days >= 3 {
+		factor -= 0.03
+	}
+
+	return clamp(factor, 0.88, 1.00)
+}
+
 func (s *LineupRecommendService) buildRecommendation(
 	gameDate string,
 	rank uint,
@@ -792,6 +1269,10 @@ func (s *LineupRecommendService) buildRecommendation(
 		dp.Factors.MatchupFactor = c.Prediction.MatchupFactor
 		dp.Factors.HomeAwayFactor = c.Prediction.HomeAwayFactor
 		dp.Factors.TeamContextFactor = c.Prediction.TeamContextFactor
+		dp.Factors.MinutesFactor = c.Prediction.MinutesFactor
+		dp.Factors.UsageFactor = c.Prediction.UsageFactor
+		dp.Factors.StabilityFactor = c.Prediction.StabilityFactor
+		dp.Factors.FatigueFactor = c.Prediction.FatigueFactor
 		dp.Factors.GameRiskFactor = c.Prediction.GameRiskFactor
 
 		if dbP, ok := dbPlayerMap[c.Player.NBAPlayerID]; ok {
@@ -831,7 +1312,10 @@ func (s *LineupRecommendService) printRecommendations(gameDate string, lineups [
 			totalSalary += c.Player.Salary
 		}
 
-		medal := medals[i]
+		medal := fmt.Sprintf("#%d", i+1)
+		if i < len(medals) {
+			medal = medals[i]
+		}
 		fmt.Printf("%s 推荐阵容 #%d (总预测战力: %.1f, 总工资: %d)\n", medal, i+1, totalPower, totalSalary)
 		fmt.Println("┌──────────────────────┬──────┬──────┬───────┬──────────┐")
 		fmt.Println("│ 球员                 │ 球队 │ 工资 │ 预测  │ 可用性   │")
@@ -845,6 +1329,171 @@ func (s *LineupRecommendService) printRecommendations(gameDate string, lineups [
 		fmt.Println("└──────────────────────┴──────┴──────┴───────┴──────────┘")
 		fmt.Println()
 	}
+}
+
+func resolveActualFeedbackItems(raw []byte) (string, []ActualFeedbackItem, error) {
+	var lineupPayload ActualFeedbackLineupPayload
+	if err := json.Unmarshal(raw, &lineupPayload); err != nil {
+		return "", nil, fmt.Errorf("反馈 JSON 解析失败: %w", err)
+	}
+	if len(lineupPayload.List) == 0 {
+		return "", nil, fmt.Errorf("仅支持 list 阵容格式，且 list 不能为空")
+	}
+
+	date := strings.TrimSpace(lineupPayload.GameDate)
+	source := strings.TrimSpace(lineupPayload.Source)
+	items := make([]ActualFeedbackItem, 0)
+	for _, lineup := range lineupPayload.List {
+		if lineup.Rank == 0 {
+			return "", nil, fmt.Errorf("list.rank 不能为空")
+		}
+		if lineup.Rank > 3 {
+			return "", nil, fmt.Errorf("list.rank 超出范围: %d（最多 3）", lineup.Rank)
+		}
+		for _, player := range lineup.Players {
+			if player.NBAPlayerID == 0 {
+				return "", nil, fmt.Errorf("list.rank=%d 存在空 nba_player_id", lineup.Rank)
+			}
+			if player.ActualPower == nil {
+				return "", nil, fmt.Errorf("list.rank=%d player=%d 缺少 actual_power", lineup.Rank, player.NBAPlayerID)
+			}
+			player.Rank = lineup.Rank
+			if source != "" && strings.TrimSpace(player.Source) == "" {
+				player.Source = source
+			}
+			items = append(items, player)
+		}
+	}
+	if len(items) == 0 {
+		return "", nil, fmt.Errorf("list.players 不能为空")
+	}
+	return date, items, nil
+}
+
+func pickLineupPlayerIDs(rec entity.LineupRecommendation) [5]uint {
+	return [5]uint{
+		rec.Player1ID,
+		rec.Player2ID,
+		rec.Player3ID,
+		rec.Player4ID,
+		rec.Player5ID,
+	}
+}
+
+func calcLineupActualTotal(playerIDs [5]uint, actualMap map[uint]float64) float64 {
+	total := 0.0
+	for _, id := range playerIDs {
+		total += actualMap[id]
+	}
+	return roundTo(total, 1)
+}
+
+func (s *LineupRecommendService) buildBacktestRowFromRecommendation(
+	gameDate string,
+	rec entity.LineupRecommendation,
+	actualTotal float64,
+	playerMap map[uint]entity.NBAGamePlayer,
+) (entity.LineupBacktestResult, bool) {
+	ids := pickLineupPlayerIDs(rec)
+	totalSalary := rec.TotalSalary
+	if totalSalary == 0 {
+		for _, id := range ids {
+			totalSalary += playerMap[id].Salary
+		}
+	}
+
+	detail, _ := json.Marshal(map[string]any{
+		"result_type":           "recommended_actual",
+		"predicted_total_power": rec.TotalPredictedPower,
+		"actual_total_power":    actualTotal,
+		"delta_actual_predict":  roundTo(actualTotal-rec.TotalPredictedPower, 1),
+	})
+
+	return entity.LineupBacktestResult{
+		GameDate:         gameDate,
+		ResultType:       entity.LineupBacktestResultTypeRecommendedActual,
+		Rank:             rec.Rank,
+		TotalActualPower: actualTotal,
+		TotalSalary:      totalSalary,
+		Player1ID:        ids[0],
+		Player2ID:        ids[1],
+		Player3ID:        ids[2],
+		Player4ID:        ids[3],
+		Player5ID:        ids[4],
+		DetailJSON:       string(detail),
+	}, true
+}
+
+func (s *LineupRecommendService) buildBacktestRowFromCandidates(
+	gameDate string,
+	rank uint,
+	resultType uint8,
+	lineup []PlayerCandidate,
+	note string,
+	predictedTotal float64,
+) entity.LineupBacktestResult {
+	var totalActual float64
+	var totalSalary uint
+	var playerIDs [5]uint
+
+	for i, c := range lineup {
+		totalActual += c.Prediction.PredictedPower
+		totalSalary += c.Player.Salary
+		if i < len(playerIDs) {
+			playerIDs[i] = c.Player.NBAPlayerID
+		}
+	}
+
+	detailData := map[string]any{
+		"result_type": "actual_optimal",
+	}
+	if note != "" {
+		detailData["note"] = note
+	}
+	if predictedTotal > 0 {
+		detailData["predicted_total_power"] = roundTo(predictedTotal, 1)
+	}
+	detail, _ := json.Marshal(detailData)
+
+	return entity.LineupBacktestResult{
+		GameDate:         gameDate,
+		ResultType:       resultType,
+		Rank:             rank,
+		TotalActualPower: roundTo(totalActual, 1),
+		TotalSalary:      totalSalary,
+		Player1ID:        playerIDs[0],
+		Player2ID:        playerIDs[1],
+		Player3ID:        playerIDs[2],
+		Player4ID:        playerIDs[3],
+		Player5ID:        playerIDs[4],
+		DetailJSON:       string(detail),
+	}
+}
+
+func (s *LineupRecommendService) printBacktestSummary(
+	gameDate string,
+	recRows []entity.LineupBacktestResult,
+	optRows []entity.LineupBacktestResult,
+) {
+	fmt.Printf("\n>>> 今日NBA回测结果 — %s <<<\n\n", gameDate)
+
+	limit := min(len(recRows), len(optRows))
+	if limit == 0 {
+		fmt.Println("无可对比结果")
+		return
+	}
+
+	sort.Slice(recRows, func(i, j int) bool { return recRows[i].Rank < recRows[j].Rank })
+	sort.Slice(optRows, func(i, j int) bool { return optRows[i].Rank < optRows[j].Rank })
+
+	for i := 0; i < limit; i++ {
+		rec := recRows[i]
+		opt := optRows[i]
+		gap := roundTo(opt.TotalActualPower-rec.TotalActualPower, 1)
+		fmt.Printf("#%d 推荐实得 %.1f vs 真实最优 %.1f (差距 %.1f)\n",
+			i+1, rec.TotalActualPower, opt.TotalActualPower, gap)
+	}
+	fmt.Println()
 }
 
 // --- 文件读取 ---
@@ -892,9 +1541,155 @@ func (s *LineupRecommendService) loadPlayerSalary(path string) ([]PlayerSalary, 
 
 // --- 通用工具函数 ---
 
+type teamAlias struct {
+	alias string
+	code  string
+}
+
+var englishTeamAliases = []teamAlias{
+	{alias: "los angeles lakers", code: "LAL"},
+	{alias: "los angeles clippers", code: "LAC"},
+	{alias: "oklahoma city thunder", code: "OKC"},
+	{alias: "new orleans pelicans", code: "NOP"},
+	{alias: "san antonio spurs", code: "SAS"},
+	{alias: "golden state warriors", code: "GSW"},
+	{alias: "minnesota timberwolves", code: "MIN"},
+	{alias: "portland trail blazers", code: "POR"},
+	{alias: "philadelphia 76ers", code: "PHI"},
+	{alias: "indiana pacers", code: "IND"},
+	{alias: "washington wizards", code: "WAS"},
+	{alias: "orlando magic", code: "ORL"},
+	{alias: "new york knicks", code: "NYK"},
+	{alias: "brooklyn nets", code: "BKN"},
+	{alias: "charlotte hornets", code: "CHA"},
+	{alias: "cleveland cavaliers", code: "CLE"},
+	{alias: "dallas mavericks", code: "DAL"},
+	{alias: "denver nuggets", code: "DEN"},
+	{alias: "detroit pistons", code: "DET"},
+	{alias: "houston rockets", code: "HOU"},
+	{alias: "memphis grizzlies", code: "MEM"},
+	{alias: "miami heat", code: "MIA"},
+	{alias: "milwaukee bucks", code: "MIL"},
+	{alias: "phoenix suns", code: "PHX"},
+	{alias: "sacramento kings", code: "SAC"},
+	{alias: "toronto raptors", code: "TOR"},
+	{alias: "utah jazz", code: "UTA"},
+	{alias: "atlanta hawks", code: "ATL"},
+	{alias: "boston celtics", code: "BOS"},
+	{alias: "chicago bulls", code: "CHI"},
+	{alias: "trail blazers", code: "POR"},
+	{alias: "thunder", code: "OKC"},
+	{alias: "lakers", code: "LAL"},
+	{alias: "clippers", code: "LAC"},
+	{alias: "hawks", code: "ATL"},
+	{alias: "nets", code: "BKN"},
+	{alias: "celtics", code: "BOS"},
+	{alias: "hornets", code: "CHA"},
+	{alias: "bulls", code: "CHI"},
+	{alias: "cavaliers", code: "CLE"},
+	{alias: "cavs", code: "CLE"},
+	{alias: "mavericks", code: "DAL"},
+	{alias: "nuggets", code: "DEN"},
+	{alias: "pistons", code: "DET"},
+	{alias: "warriors", code: "GSW"},
+	{alias: "rockets", code: "HOU"},
+	{alias: "pacers", code: "IND"},
+	{alias: "grizzlies", code: "MEM"},
+	{alias: "heat", code: "MIA"},
+	{alias: "bucks", code: "MIL"},
+	{alias: "timberwolves", code: "MIN"},
+	{alias: "wolves", code: "MIN"},
+	{alias: "pelicans", code: "NOP"},
+	{alias: "knicks", code: "NYK"},
+	{alias: "magic", code: "ORL"},
+	{alias: "sixers", code: "PHI"},
+	{alias: "76ers", code: "PHI"},
+	{alias: "suns", code: "PHX"},
+	{alias: "blazers", code: "POR"},
+	{alias: "kings", code: "SAC"},
+	{alias: "spurs", code: "SAS"},
+	{alias: "raptors", code: "TOR"},
+	{alias: "jazz", code: "UTA"},
+	{alias: "wizards", code: "WAS"},
+}
+
+func normalizeTeamCode(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ""
+	}
+
+	// 中国队名 -> 英文缩写
+	if abbr := convertTeamName(trimmed); abbr != trimmed {
+		return strings.ToUpper(strings.TrimSpace(abbr))
+	}
+
+	upper := strings.ToUpper(trimmed)
+	if len(upper) >= 2 && len(upper) <= 4 {
+		return upper
+	}
+
+	lower := strings.ToLower(trimmed)
+	for _, item := range englishTeamAliases {
+		if strings.Contains(lower, item.alias) {
+			return item.code
+		}
+	}
+
+	return upper
+}
+
+func normalizePlayerName(name string) string {
+	replacer := strings.NewReplacer(
+		".", " ",
+		"-", " ",
+		",", " ",
+		"'", "",
+		"’", "",
+		"(", " ",
+		")", " ",
+	)
+	clean := replacer.Replace(strings.ToLower(strings.TrimSpace(name)))
+	return strings.Join(strings.Fields(clean), " ")
+}
+
 func calcPowerFromStats(g entity.PlayerGameStats) float64 {
 	return float64(g.Points) + 1.2*float64(g.Rebounds) + 1.5*float64(g.Assists) +
 		3*float64(g.Steals) + 3*float64(g.Blocks) - float64(g.Turnovers)
+}
+
+func calcUsageProxyFromStats(g entity.PlayerGameStats) float64 {
+	proxy := float64(g.FieldGoalsAttempted) + 0.44*float64(g.FreeThrowsAttempted) + float64(g.Turnovers)
+	if proxy > 0 {
+		return proxy
+	}
+	// 没有命中/出手字段时回退到基础持球代理
+	return float64(g.Points) + 0.7*float64(g.Assists) + 0.4*float64(g.Turnovers)
+}
+
+func inferSeasonByGameDate(gameDate string) string {
+	dt, ok := parseISODate(gameDate)
+	if !ok {
+		return ""
+	}
+	startYear := dt.Year()
+	if dt.Month() < 10 {
+		startYear--
+	}
+	return fmt.Sprintf("%d-%02d", startYear, (startYear+1)%100)
+}
+
+func parseISODate(value string) (time.Time, bool) {
+	dt, err := time.Parse("2006-01-02", strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return normalizeDateOnly(dt), true
+}
+
+func normalizeDateOnly(dt time.Time) time.Time {
+	y, m, d := dt.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 func clamp(val, minVal, maxVal float64) float64 {
@@ -927,8 +1722,4 @@ func padRight(s string, length int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", length-width)
-}
-
-func tomorrow() string {
-	return time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 }
