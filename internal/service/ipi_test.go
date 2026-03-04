@@ -7,6 +7,7 @@ import (
 
 	"o2stock-crawler/internal/config"
 	"o2stock-crawler/internal/entity"
+	"o2stock-crawler/internal/model"
 )
 
 func almostEqual(got, want float64) bool {
@@ -176,5 +177,83 @@ func TestRiskFromPriceHistoryAddsVolatilityPenalty(t *testing.T) {
 	volatileRisk := svc.riskFromPriceHistory(50, volatileHistory)
 	if !(volatileRisk > stableRisk) {
 		t.Fatalf("volatile risk should be higher: stable=%v volatile=%v", stableRisk, volatileRisk)
+	}
+}
+
+func TestRiskFromPriceHistorySmallSampleReducesVolatilityWeight(t *testing.T) {
+	svc := &IPIService{config: config.DefaultIPIConfig()}
+
+	shortHistory := []entity.PlayerPriceHistory{
+		{PriceStandard: 50},
+		{PriceStandard: 150},
+		{PriceStandard: 50},
+	}
+	longHistory := []entity.PlayerPriceHistory{
+		{PriceStandard: 50},
+		{PriceStandard: 150},
+		{PriceStandard: 50},
+		{PriceStandard: 150},
+		{PriceStandard: 50},
+		{PriceStandard: 150},
+		{PriceStandard: 50},
+	}
+
+	shortRisk := svc.riskFromPriceHistory(50, shortHistory)
+	longRisk := svc.riskFromPriceHistory(50, longHistory)
+	if !(longRisk > shortRisk) {
+		t.Fatalf("expected longer sample to have stronger volatility penalty: short=%v long=%v", shortRisk, longRisk)
+	}
+}
+
+func TestNormalizeAndExplainKeepsRawComponents(t *testing.T) {
+	svc := &IPIService{config: config.DefaultIPIConfig()}
+	raw := []model.IPIResult{
+		{
+			PlayerID: 1,
+			IPI:      2.1,
+			SPerf:    0.8,
+			VGap:     1.2,
+			MGrowth:  1.05,
+		},
+		{
+			PlayerID: 2,
+			IPI:      1.3,
+			SPerf:    0.4,
+			VGap:     0.9,
+			MGrowth:  0.95,
+		},
+		{
+			PlayerID: 3,
+			IPI:      6.5,
+			SPerf:    3.5,
+			VGap:     2.8,
+			MGrowth:  1.8,
+		},
+	}
+
+	out := svc.normalizeAndExplain(raw)
+	if len(out) != len(raw) {
+		t.Fatalf("unexpected output len: got=%d want=%d", len(out), len(raw))
+	}
+
+	for i := range raw {
+		if !almostEqual(out[i].SPerf, raw[i].SPerf) {
+			t.Fatalf("SPerf changed at i=%d: got=%v want=%v", i, out[i].SPerf, raw[i].SPerf)
+		}
+		if !almostEqual(out[i].VGap, raw[i].VGap) {
+			t.Fatalf("VGap changed at i=%d: got=%v want=%v", i, out[i].VGap, raw[i].VGap)
+		}
+		if !almostEqual(out[i].MGrowth, raw[i].MGrowth) {
+			t.Fatalf("MGrowth changed at i=%d: got=%v want=%v", i, out[i].MGrowth, raw[i].MGrowth)
+		}
+		if out[i].SPerfNorm < 0 || out[i].SPerfNorm > 1 {
+			t.Fatalf("invalid SPerfNorm at i=%d: %v", i, out[i].SPerfNorm)
+		}
+		if out[i].VGapNorm < 0 || out[i].VGapNorm > 1 {
+			t.Fatalf("invalid VGapNorm at i=%d: %v", i, out[i].VGapNorm)
+		}
+		if out[i].MGrowthNorm < 0 || out[i].MGrowthNorm > 1 {
+			t.Fatalf("invalid MGrowthNorm at i=%d: %v", i, out[i].MGrowthNorm)
+		}
 	}
 }

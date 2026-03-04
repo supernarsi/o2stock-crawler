@@ -278,11 +278,18 @@ func (r *HistoryRepository) GetPlayerIDsWithAtLeastDays(ctx context.Context, wit
 	if minDays <= 0 {
 		return out, nil
 	}
-	startDate := time.Now().AddDate(0, 0, -withinDays)
+
+	if withinDays <= 0 {
+		withinDays = 90
+	}
+	now := time.Now()
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startDate := dayStart.AddDate(0, 0, -(withinDays - 1))
+	endDate := dayStart.AddDate(0, 0, 1)
 	var ids []uint
 	err := r.model(ctx).
 		Select("player_id").
-		Where("at_date >= ?", startDate).
+		Where("at_date >= ? AND at_date < ?", startDate, endDate).
 		Group("player_id").
 		Having("COUNT(DISTINCT at_date) >= ?", minDays).
 		Pluck("player_id", &ids).Error

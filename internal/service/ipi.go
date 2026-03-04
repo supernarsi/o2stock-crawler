@@ -191,7 +191,7 @@ func (s *IPIService) buildRankDataFromPlayers(players []entity.Player) *ipiRankD
 	// 排名基准只保留有有效 OVR 与近期战力的球员，避免噪声样本干扰倒挂指数
 	rankPlayers := make([]entity.Player, 0, len(players))
 	for i := range players {
-		if players[i].OverAll > 0 && players[i].PowerPer5 > 0 {
+		if players[i].OverAll > 0 && players[i].PowerPer5 > 0 && players[i].PriceStandard > minPriceForIPI {
 			rankPlayers = append(rankPlayers, players[i])
 		}
 	}
@@ -273,6 +273,13 @@ func (s *IPIService) CalcVGap(ctx context.Context, player *entity.Player) (vGap 
 		avg, err = playerRepo.AvgPriceGlobal(ctx)
 		if err != nil {
 			return 0, 0, err
+		}
+	} else if count > 1 {
+		// 对齐批量路径：排除球员自身，减少自引用偏差
+		sumExSelf := avg*float64(count) - float64(player.PriceStandard)
+		cntExSelf := count - 1
+		if cntExSelf > 0 && sumExSelf > 0 {
+			avg = sumExSelf / float64(cntExSelf)
 		}
 	}
 	priceOVRAvg = avg
@@ -456,6 +463,10 @@ func (s *IPIService) riskFromPriceHistory(currentPrice uint, history []entity.Pl
 	}
 	volWeight := cfg.VolatilityWeight
 	if volWeight > 0 {
+		// 历史样本过少时弱化波动率惩罚，避免 3~5 天数据过度放大噪声
+		if len(prices) < 7 {
+			volWeight *= float64(len(prices)) / 7.0
+		}
 		volatilityRisk = clampValue(priceVolatilityCV(prices)/volBase, 0, 1) * volWeight
 	}
 
@@ -616,7 +627,7 @@ func (s *IPIService) BatchCalcIPI(ctx context.Context, playerIDs []uint) ([]mode
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("[IPI] 预加载完成: %d 个球员", len(playerIDs))
+	log.Printf("[IPI] 预加载完成: %d 个球员", len(playerIDsToLoad))
 
 	// 排除近期比赛数据 < minRecentGamesForIPI 场的球员（样本太少，近期战力/趋势不可靠）
 	prevCount = len(players)
@@ -857,7 +868,8 @@ func (s *IPIService) normalizeAndExplain(rawResults []model.IPIResult) []model.I
 		}
 	}
 
-	// 对分项同样做分位数截断，避免单一异常值挤压 Min-Max 区间
+	// 对分项同样做分位数截断，避免单一异常值挤压 Min-Max 区间。
+	// 注意：仅用于归一化与解释，不改写原始分项值（保持输出分项与计算时口径一致）
 	sPerfValues := make([]float64, len(rawResults))
 	vGapValues := make([]float64, len(rawResults))
 	mGrowthValues := make([]float64, len(rawResults))
@@ -877,10 +889,13 @@ func (s *IPIService) normalizeAndExplain(rawResults []model.IPIResult) []model.I
 	mGrowthLow := percentileAtFloat64(mGrowthValues, componentWinsorizeLowerPercentile)
 	mGrowthHigh := percentileAtFloat64(mGrowthValues, componentWinsorizeUpperPercentile)
 
+	sPerfClipped := make([]float64, len(rawResults))
+	vGapClipped := make([]float64, len(rawResults))
+	mGrowthClipped := make([]float64, len(rawResults))
 	for i := range rawResults {
-		rawResults[i].SPerf = clampValue(rawResults[i].SPerf, sPerfLow, sPerfHigh)
-		rawResults[i].VGap = clampValue(rawResults[i].VGap, vGapLow, vGapHigh)
-		rawResults[i].MGrowth = clampValue(rawResults[i].MGrowth, mGrowthLow, mGrowthHigh)
+		sPerfClipped[i] = clampValue(rawResults[i].SPerf, sPerfLow, sPerfHigh)
+		vGapClipped[i] = clampValue(rawResults[i].VGap, vGapLow, vGapHigh)
+		mGrowthClipped[i] = clampValue(rawResults[i].MGrowth, mGrowthLow, mGrowthHigh)
 	}
 
 	// 计算各维度的 min/max
@@ -893,34 +908,34 @@ func (s *IPIService) normalizeAndExplain(rawResults []model.IPIResult) []model.I
 		MGrowthMax: -math.MaxFloat64,
 	}
 
-	for _, r := range rawResults {
-		if r.SPerf < stats.SPerfMin {
-			stats.SPerfMin = r.SPerf
+	for i := range rawResults {
+		if sPerfClipped[i] < stats.SPerfMin {
+			stats.SPerfMin = sPerfClipped[i]
 		}
-		if r.SPerf > stats.SPerfMax {
-			stats.SPerfMax = r.SPerf
+		if sPerfClipped[i] > stats.SPerfMax {
+			stats.SPerfMax = sPerfClipped[i]
 		}
-		if r.VGap < stats.VGapMin {
-			stats.VGapMin = r.VGap
+		if vGapClipped[i] < stats.VGapMin {
+			stats.VGapMin = vGapClipped[i]
 		}
-		if r.VGap > stats.VGapMax {
-			stats.VGapMax = r.VGap
+		if vGapClipped[i] > stats.VGapMax {
+			stats.VGapMax = vGapClipped[i]
 		}
-		if r.MGrowth < stats.MGrowthMin {
-			stats.MGrowthMin = r.MGrowth
+		if mGrowthClipped[i] < stats.MGrowthMin {
+			stats.MGrowthMin = mGrowthClipped[i]
 		}
-		if r.MGrowth > stats.MGrowthMax {
-			stats.MGrowthMax = r.MGrowth
+		if mGrowthClipped[i] > stats.MGrowthMax {
+			stats.MGrowthMax = mGrowthClipped[i]
 		}
 	}
 
 	// 归一化 + 生成说明
 	results := make([]model.IPIResult, len(rawResults))
-	for i, r := range rawResults {
-		results[i] = r
-		results[i].SPerfNorm = minMaxNorm(r.SPerf, stats.SPerfMin, stats.SPerfMax)
-		results[i].VGapNorm = minMaxNorm(r.VGap, stats.VGapMin, stats.VGapMax)
-		results[i].MGrowthNorm = minMaxNorm(r.MGrowth, stats.MGrowthMin, stats.MGrowthMax)
+	for i := range rawResults {
+		results[i] = rawResults[i]
+		results[i].SPerfNorm = minMaxNorm(sPerfClipped[i], stats.SPerfMin, stats.SPerfMax)
+		results[i].VGapNorm = minMaxNorm(vGapClipped[i], stats.VGapMin, stats.VGapMax)
+		results[i].MGrowthNorm = minMaxNorm(mGrowthClipped[i], stats.MGrowthMin, stats.MGrowthMax)
 		results[i].MainFactors = s.generateExplanation(&results[i])
 	}
 
