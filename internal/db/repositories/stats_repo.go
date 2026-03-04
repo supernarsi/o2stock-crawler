@@ -91,3 +91,30 @@ func (r *StatsRepository) BatchGetRecentGameStats(ctx context.Context, txPlayerI
 	}
 	return out, nil
 }
+
+// BatchGetGameStatsByDate 批量获取指定日期的单场数据（tx_player_id -> game_stats）
+func (r *StatsRepository) BatchGetGameStatsByDate(ctx context.Context, txPlayerIDs []uint, gameDate string) (map[uint]entity.PlayerGameStats, error) {
+	out := make(map[uint]entity.PlayerGameStats)
+	if len(txPlayerIDs) == 0 || gameDate == "" {
+		return out, nil
+	}
+
+	var rows []entity.PlayerGameStats
+	err := r.ctx(ctx).
+		Model(&entity.PlayerGameStats{}).
+		Where("tx_player_id IN ? AND DATE(game_date) = ?", txPlayerIDs, gameDate).
+		Order("game_date DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// 同一球员若出现多条记录，保留按 game_date DESC 排序后的第一条。
+	for _, row := range rows {
+		if _, exists := out[row.TxPlayerID]; exists {
+			continue
+		}
+		out[row.TxPlayerID] = row
+	}
+	return out, nil
+}

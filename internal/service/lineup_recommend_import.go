@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,30 +15,68 @@ import (
 	"o2stock-crawler/internal/entity"
 )
 
-// ImportGameData 导入游戏数据 JSON 到数据库。
-func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir string) error {
-	// 1. 读取 team_id.json → 构建 teamId → teamName 映射
-	teamIDMap, err := s.loadTeamIDMap(dataDir + "/team_id.json")
-	if err != nil {
-		return fmt.Errorf("读取 team_id.json 失败: %w", err)
-	}
-	log.Printf("加载球队映射: %d 支球队", len(teamIDMap))
+const todayNBATotalPrepareFileName = "today_nba_total_prepare.json"
 
-	// 2. 读取 match_data.json → 获取比赛列表
-	matches, err := s.loadMatchData(dataDir + "/match_data.json")
+// nbaTeamIDToName 内置 NBA 官方 team_id 到中文队名映射。
+// 数据源固定后不再依赖 team_id.json 文件。
+var nbaTeamIDToName = map[string]string{
+	"1610612737": "老鹰",
+	"1610612738": "凯尔特人",
+	"1610612739": "骑士",
+	"1610612740": "鹈鹕",
+	"1610612741": "公牛",
+	"1610612742": "独行侠",
+	"1610612743": "掘金",
+	"1610612744": "勇士",
+	"1610612745": "火箭",
+	"1610612746": "快船",
+	"1610612747": "湖人",
+	"1610612748": "热火",
+	"1610612749": "雄鹿",
+	"1610612750": "森林狼",
+	"1610612751": "篮网",
+	"1610612752": "尼克斯",
+	"1610612753": "魔术",
+	"1610612754": "步行者",
+	"1610612755": "76人",
+	"1610612756": "太阳",
+	"1610612757": "开拓者",
+	"1610612758": "国王",
+	"1610612759": "马刺",
+	"1610612760": "雷霆",
+	"1610612761": "猛龙",
+	"1610612762": "爵士",
+	"1610612763": "灰熊",
+	"1610612764": "奇才",
+	"1610612765": "活塞",
+	"1610612766": "黄蜂",
+}
+
+type todayNBATotalPreparePayload struct {
+	JData struct {
+		PlayerData struct {
+			MatchData     []MatchData    `json:"sMatchData"`
+			ContestPlayer []PlayerSalary `json:"sContestPlayer"`
+		} `json:"playerData"`
+	} `json:"jData"`
+}
+
+// ImportGameData 从 today_nba_total_prepare.json 导入候选球员数据。
+func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir string) error {
+	preparePath := filepath.Join(strings.TrimSpace(dataDir), todayNBATotalPrepareFileName)
+	raw, err := os.ReadFile(preparePath)
 	if err != nil {
-		return fmt.Errorf("读取 match_data.json 失败: %w", err)
+		return fmt.Errorf("读取 %s 失败: %w", todayNBATotalPrepareFileName, err)
+	}
+
+	matches, playerSalaries, err := parseTodayNBATotalPrepare(raw)
+	if err != nil {
+		return fmt.Errorf("解析 %s 失败: %w", todayNBATotalPrepareFileName, err)
 	}
 	log.Printf("加载比赛数据: %d 场比赛", len(matches))
-
-	// 3. 读取 player_salary.json → 获取球员列表
-	playerSalaries, err := s.loadPlayerSalary(dataDir + "/player_salary.json")
-	if err != nil {
-		return fmt.Errorf("读取 player_salary.json 失败: %w", err)
-	}
 	log.Printf("加载球员工资: %d 名球员", len(playerSalaries))
 
-	// 4. 构建 teamId → matchId 映射 和 match 信息映射
+	// 构建 teamId -> match 映射，并校验仅包含单日数据
 	teamToMatch := make(map[string]*MatchData)
 	gameDate := ""
 	for i := range matches {
@@ -50,7 +89,7 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 			continue
 		}
 		if match.DtDate != gameDate {
-			return fmt.Errorf("match_data.json 包含多个比赛日期: %s / %s", gameDate, match.DtDate)
+			return fmt.Errorf("today_nba_total_prepare.json 包含多个比赛日期: %s / %s", gameDate, match.DtDate)
 		}
 	}
 	if gameDate == "" {
@@ -58,7 +97,7 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 	}
 	log.Printf("比赛日期: %s", gameDate)
 
-	// 5. 遍历球员列表，构建 NBAGamePlayer 对象
+	// 构建候选球员，按 nba_player_id 去重
 	playerMap := make(map[uint]entity.NBAGamePlayer)
 	invalidCount := 0
 
@@ -98,10 +137,7 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 		}
 
 		isHome := ps.ITeamId == match.IHomeTeamId
-		teamName := teamIDMap[ps.ITeamId]
-		if teamName == "" {
-			teamName = ps.ITeamId
-		}
+		teamName := teamNameByID(ps.ITeamId)
 
 		playerMap[uint(nbaPlayerID)] = entity.NBAGamePlayer{
 			GameDate:     gameDate,
@@ -129,7 +165,6 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 		return fmt.Errorf("没有可导入的候选球员")
 	}
 
-	// 6. 按日期全量替换，避免旧候选残留
 	repo := repositories.NewNBAGamePlayerRepository(s.db.DB)
 	if err := repo.ReplaceByGameDate(ctx, gameDate, players); err != nil {
 		return fmt.Errorf("导入球员数据失败: %w", err)
@@ -139,46 +174,26 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 	return nil
 }
 
-// loadTeamIDMap 读取 team_id.json 并构建 teamID -> teamName 映射。
-func (s *LineupRecommendService) loadTeamIDMap(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+func parseTodayNBATotalPrepare(raw []byte) ([]MatchData, []PlayerSalary, error) {
+	var payload todayNBATotalPreparePayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, nil, err
 	}
-	var raw map[string]string
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
+
+	matches := payload.JData.PlayerData.MatchData
+	players := payload.JData.PlayerData.ContestPlayer
+	if len(matches) == 0 {
+		return nil, nil, fmt.Errorf("sMatchData 为空")
 	}
-	// 反转：teamName → teamId 变成 teamId → teamName
-	result := make(map[string]string)
-	for name, id := range raw {
-		result[id] = name
+	if len(players) == 0 {
+		return nil, nil, fmt.Errorf("sContestPlayer 为空")
 	}
-	return result, nil
+	return matches, players, nil
 }
 
-func (s *LineupRecommendService) loadMatchData(path string) ([]MatchData, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+func teamNameByID(teamID string) string {
+	if name, ok := nbaTeamIDToName[strings.TrimSpace(teamID)]; ok && name != "" {
+		return name
 	}
-	var matches []MatchData
-	if err := json.Unmarshal(data, &matches); err != nil {
-		return nil, err
-	}
-	return matches, nil
+	return teamID
 }
-
-func (s *LineupRecommendService) loadPlayerSalary(path string) ([]PlayerSalary, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var players []PlayerSalary
-	if err := json.Unmarshal(data, &players); err != nil {
-		return nil, err
-	}
-	return players, nil
-}
-
-// --- 通用工具函数 ---

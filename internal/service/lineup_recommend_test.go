@@ -171,6 +171,45 @@ func TestInferSeasonByGameDate(t *testing.T) {
 	}
 }
 
+func TestParseTodayNBATotalPrepare(t *testing.T) {
+	raw := []byte(`{
+		"jData": {
+			"playerData": {
+				"sMatchData": [
+					{"iMatchId":"1","iHomeTeamId":"1610612747","iAwayTeamId":"1610612738","dtDate":"2026-03-05","dtTime":"08:00:00"}
+				],
+				"sContestPlayer": [
+					{"id":"2544","iPlayerId":"2544","iTeamId":"1610612747","sPlayerName":"勒布朗.詹姆斯","sPlayerEnName":"LeBron.James","iPosition":"0","fCombatPower":"40.3","iSalary":"45"}
+				]
+			}
+		}
+	}`)
+
+	matches, players, err := parseTodayNBATotalPrepare(raw)
+	if err != nil {
+		t.Fatalf("parseTodayNBATotalPrepare() err=%v", err)
+	}
+	if len(matches) != 1 || len(players) != 1 {
+		t.Fatalf("unexpected parse result: matches=%d players=%d", len(matches), len(players))
+	}
+}
+
+func TestParseTodayNBATotalPrepareMissingSections(t *testing.T) {
+	raw := []byte(`{"jData":{"playerData":{"sMatchData":[],"sContestPlayer":[]}}}`)
+	if _, _, err := parseTodayNBATotalPrepare(raw); err == nil {
+		t.Fatalf("expected parseTodayNBATotalPrepare() to fail for empty sections")
+	}
+}
+
+func TestTeamNameByID(t *testing.T) {
+	if got := teamNameByID("1610612747"); got != "湖人" {
+		t.Fatalf("teamNameByID(1610612747)=%s, want 湖人", got)
+	}
+	if got := teamNameByID("9999"); got != "9999" {
+		t.Fatalf("teamNameByID(9999)=%s, want 9999", got)
+	}
+}
+
 func TestResolveActualFeedbackItemsOnlySupportsLineupList(t *testing.T) {
 	lineupJSON := []byte(`{
 		"game_date":"2026-03-04",
@@ -230,6 +269,76 @@ func TestSolveOptimalLineupAllowZero(t *testing.T) {
 	got := svc.solveOptimalLineupAllowZero(candidates, 50, 5, 1)
 	if len(got) != 1 || len(got[0]) != 5 {
 		t.Fatalf("allow-zero lineup result invalid: %+v", got)
+	}
+}
+
+func TestBuildNBAToTxPlayerIDMap(t *testing.T) {
+	players := []entity.Player{
+		{NBAPlayerID: 2544, TxPlayerID: 1001},
+		{NBAPlayerID: 2544, TxPlayerID: 1001},
+		{NBAPlayerID: 2544, TxPlayerID: 2002},
+		{NBAPlayerID: 201939, TxPlayerID: 3003},
+		{NBAPlayerID: 0, TxPlayerID: 4004},
+	}
+
+	got, conflictCount := buildNBAToTxPlayerIDMap(players)
+	if conflictCount != 1 {
+		t.Fatalf("conflictCount=%d, want 1", conflictCount)
+	}
+	if len(got) != 2 {
+		t.Fatalf("map len=%d, want 2", len(got))
+	}
+	if got[2544] != 1001 {
+		t.Fatalf("mapping[2544]=%d, want 1001", got[2544])
+	}
+	if got[201939] != 3003 {
+		t.Fatalf("mapping[201939]=%d, want 3003", got[201939])
+	}
+}
+
+func TestDedupeFeedbackActualMap(t *testing.T) {
+	rows := []entity.NBAGamePlayerActual{
+		{Rank: 1, NBAPlayerID: 2544, ActualPower: 43.16},
+		{Rank: 2, NBAPlayerID: 2544, ActualPower: 41.8},
+		{Rank: 1, NBAPlayerID: 201939, ActualPower: 39.92},
+	}
+
+	got, dupCount := dedupeFeedbackActualMap(rows)
+	if dupCount != 1 {
+		t.Fatalf("dupCount=%d, want 1", dupCount)
+	}
+	if len(got) != 2 {
+		t.Fatalf("map len=%d, want 2", len(got))
+	}
+	if got[2544] != 43.2 {
+		t.Fatalf("actual[2544]=%.1f, want 43.2", got[2544])
+	}
+	if got[201939] != 39.9 {
+		t.Fatalf("actual[201939]=%.1f, want 39.9", got[201939])
+	}
+}
+
+func TestCollectCandidateNBAPlayerIDs(t *testing.T) {
+	players := []entity.NBAGamePlayer{
+		{NBAPlayerID: 2544},
+		{NBAPlayerID: 201939},
+		{NBAPlayerID: 2544},
+		{NBAPlayerID: 0},
+	}
+
+	got := collectCandidateNBAPlayerIDs(players)
+	if len(got) != 2 {
+		t.Fatalf("candidate ids len=%d, want 2", len(got))
+	}
+	set := map[uint]struct{}{}
+	for _, id := range got {
+		set[id] = struct{}{}
+	}
+	if _, ok := set[2544]; !ok {
+		t.Fatalf("expected 2544 in candidate ids")
+	}
+	if _, ok := set[201939]; !ok {
+		t.Fatalf("expected 201939 in candidate ids")
 	}
 }
 
