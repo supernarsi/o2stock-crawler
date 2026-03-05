@@ -101,8 +101,10 @@ type PlayerPrediction struct {
 
 // PlayerCandidate 候选球员（含预测值）。
 type PlayerCandidate struct {
-	Player     entity.NBAGamePlayer
-	Prediction PlayerPrediction
+	Player             entity.NBAGamePlayer
+	Prediction         PlayerPrediction
+	BacktestTxPlayerID uint
+	BacktestName       string
 }
 
 // DetailPlayer detail_json 中的球员信息。

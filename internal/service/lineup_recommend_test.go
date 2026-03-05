@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
@@ -661,6 +662,33 @@ func TestBuildNBAToTxPlayerIDMap(t *testing.T) {
 	}
 }
 
+func TestApplyManualNBATxPlayerIDOverrides(t *testing.T) {
+	origin := manualNBATxPlayerIDOverrides
+	manualNBATxPlayerIDOverrides = map[uint]uint{
+		1631157: 196154,
+	}
+	defer func() { manualNBATxPlayerIDOverrides = origin }()
+
+	nbaToTx := map[uint]uint{
+		1631097: 196122,
+	}
+	candidateSet := map[uint]struct{}{
+		1631157: {},
+		1631097: {},
+	}
+
+	applied := applyManualNBATxPlayerIDOverrides(nbaToTx, candidateSet)
+	if applied != 1 {
+		t.Fatalf("applied=%d, want 1", applied)
+	}
+	if got := nbaToTx[1631157]; got != 196154 {
+		t.Fatalf("nbaToTx[1631157]=%d, want 196154", got)
+	}
+	if got := nbaToTx[1631097]; got != 196122 {
+		t.Fatalf("existing mapping should not be overridden, got %d", got)
+	}
+}
+
 func TestDedupeFeedbackActualMap(t *testing.T) {
 	rows := []entity.NBAGamePlayerActual{
 		{Rank: 1, NBAPlayerID: 2544, ActualPower: 43.16},
@@ -704,6 +732,111 @@ func TestCollectCandidateNBAPlayerIDs(t *testing.T) {
 	}
 	if _, ok := set[201939]; !ok {
 		t.Fatalf("expected 201939 in candidate ids")
+	}
+}
+
+func TestFormatBacktestPlayers(t *testing.T) {
+	ids := [5]uint{201950, 1631157, 203924, 0, 1630168}
+	playerMap := map[uint]entity.NBAGamePlayer{
+		201950:  {NBAPlayerID: 201950, PlayerName: "朱.霍勒迪"},
+		203924:  {NBAPlayerID: 203924, PlayerName: "杰拉米.格兰特"},
+		1630168: {NBAPlayerID: 1630168, PlayerName: "奥孔古"},
+	}
+
+	got := formatBacktestPlayers(ids, playerMap)
+	want := "201950:朱.霍勒迪, 1631157:-, 203924:杰拉米.格兰特, 1630168:奥孔古"
+	if got != want {
+		t.Fatalf("formatBacktestPlayers()=%q, want %q", got, want)
+	}
+}
+
+func TestFormatBacktestPlayersFromRowWithTxOnlySlot(t *testing.T) {
+	payload := backtestDetailPayload{
+		ResultType: "actual_optimal",
+		Lineup: []backtestLineupSlot{
+			{Slot: 1, TxPlayerID: 88618, NBAPlayerID: 201950, PlayerName: "朱.霍勒迪", Salary: 33, ActualPower: 55.3, IDSource: "nba_mapped"},
+			{Slot: 2, TxPlayerID: 196154, NBAPlayerID: 0, PlayerName: "-", Salary: 5, ActualPower: 48.6, IDSource: "tx_only"},
+		},
+		LineupTxPlayerIDs:  []uint{88618, 196154},
+		LineupNBAPlayerIDs: []uint{201950, 0},
+	}
+	detailBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal detail payload err=%v", err)
+	}
+
+	row := entity.LineupBacktestResult{
+		Player1ID:  201950,
+		Player2ID:  0,
+		DetailJSON: string(detailBytes),
+	}
+	playerMap := map[uint]entity.NBAGamePlayer{
+		201950: {NBAPlayerID: 201950, PlayerName: "朱.霍勒迪"},
+	}
+
+	got := formatBacktestPlayersFromRow(row, playerMap)
+	want := "201950:朱.霍勒迪, 196154(tx):-"
+	if got != want {
+		t.Fatalf("formatBacktestPlayersFromRow()=%q, want %q", got, want)
+	}
+}
+
+func TestBuildBacktestRowFromCandidatesTxOnlyPersistsDetail(t *testing.T) {
+	svc := &LineupRecommendService{}
+	lineup := []PlayerCandidate{
+		{
+			Player:             entity.NBAGamePlayer{NBAPlayerID: 201950, Salary: 33},
+			Prediction:         PlayerPrediction{PredictedPower: 55.3},
+			BacktestTxPlayerID: 88618,
+			BacktestName:       "朱.霍勒迪",
+		},
+		{
+			Player:             entity.NBAGamePlayer{NBAPlayerID: 0, Salary: 5},
+			Prediction:         PlayerPrediction{PredictedPower: 48.6},
+			BacktestTxPlayerID: 196154,
+			BacktestName:       "-",
+		},
+		{
+			Player:             entity.NBAGamePlayer{NBAPlayerID: 203924, Salary: 24},
+			Prediction:         PlayerPrediction{PredictedPower: 47.2},
+			BacktestTxPlayerID: 225228,
+			BacktestName:       "杰拉米.格兰特",
+		},
+		{
+			Player:             entity.NBAGamePlayer{NBAPlayerID: 1630178, Salary: 45},
+			Prediction:         PlayerPrediction{PredictedPower: 52.4},
+			BacktestTxPlayerID: 175316,
+			BacktestName:       "泰雷塞.马克西",
+		},
+		{
+			Player:             entity.NBAGamePlayer{NBAPlayerID: 1630168, Salary: 40},
+			Prediction:         PlayerPrediction{PredictedPower: 51.7},
+			BacktestTxPlayerID: 175345,
+			BacktestName:       "奥耶卡.奥孔古",
+		},
+	}
+
+	row := svc.buildBacktestRowFromCandidates(
+		"2026-03-05",
+		1,
+		entity.LineupBacktestResultTypeActualOptimal,
+		lineup,
+		"",
+		0,
+	)
+	if row.Player2ID != 0 {
+		t.Fatalf("row.Player2ID=%d, want 0 for tx-only candidate", row.Player2ID)
+	}
+
+	var detail backtestDetailPayload
+	if err := json.Unmarshal([]byte(row.DetailJSON), &detail); err != nil {
+		t.Fatalf("unmarshal detail_json err=%v", err)
+	}
+	if len(detail.Lineup) != 5 {
+		t.Fatalf("detail lineup len=%d, want 5", len(detail.Lineup))
+	}
+	if detail.Lineup[1].TxPlayerID != 196154 || detail.Lineup[1].NBAPlayerID != 0 {
+		t.Fatalf("detail slot2 ids mismatch: %+v", detail.Lineup[1])
 	}
 }
 

@@ -104,6 +104,35 @@ func (r *StatsRepository) BatchGetRecentGameStats(ctx context.Context, txPlayerI
 	return out, nil
 }
 
+// GetGameStatsByDate 获取指定日期的全部单场数据（按 tx_player_id 去重，保留最新一条）。
+func (r *StatsRepository) GetGameStatsByDate(ctx context.Context, gameDate string) (map[uint]entity.PlayerGameStats, error) {
+	out := make(map[uint]entity.PlayerGameStats)
+	if gameDate == "" {
+		return out, nil
+	}
+
+	var rows []entity.PlayerGameStats
+	err := r.ctx(ctx).
+		Model(&entity.PlayerGameStats{}).
+		Where("DATE(game_date) = ?", gameDate).
+		Order("game_date DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		if row.TxPlayerID == 0 {
+			continue
+		}
+		if _, exists := out[row.TxPlayerID]; exists {
+			continue
+		}
+		out[row.TxPlayerID] = row
+	}
+	return out, nil
+}
+
 // BatchGetGameStatsByDate 批量获取指定日期的单场数据（tx_player_id -> game_stats）
 func (r *StatsRepository) BatchGetGameStatsByDate(ctx context.Context, txPlayerIDs []uint, gameDate string) (map[uint]entity.PlayerGameStats, error) {
 	out := make(map[uint]entity.PlayerGameStats)
