@@ -5,11 +5,30 @@ import (
 	"log"
 	"math"
 	"sort"
+	"time"
 
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/entity"
 )
+
+const (
+	matchupLookbackDays    = 120
+	teamMetricMaxGames     = 24
+	teamMetricMinGames     = 6
+	dvpMetricMinSampleSize = 8
+)
+
+type teamMatchupMetric struct {
+	DefRatingFactor float64
+	PaceFactor      float64
+	SampleCount     int
+}
+
+type positionDVPMetric struct {
+	Factor      float64
+	SampleCount int
+}
 
 // predictPower 计算单个候选球员的预测战力及因子明细。
 func (s *LineupRecommendService) predictPower(
@@ -19,6 +38,8 @@ func (s *LineupRecommendService) predictPower(
 	dbPlayerMap map[uint]*entity.Player,
 	gameStatsMap map[uint][]entity.PlayerGameStats,
 	seasonStatsMap map[uint]*entity.PlayerSeasonStats,
+	teamMatchupMap map[string]teamMatchupMetric,
+	dvpFactorMap map[string]map[uint]positionDVPMetric,
 ) PlayerPrediction {
 
 	// Step 1: 因素1 — 球员出场可用性 (AvailabilityScore)
@@ -53,18 +74,27 @@ func (s *LineupRecommendService) predictPower(
 
 	// Step 4: 因素4 — 对手实力匹配 (MatchupFactor)
 	matchupFactor := 1.0
+	defRatingFactor := 1.0
+	paceFactor := 1.0
+	dvpFactor := 1.0
+	historyFactor := 1.0
 	txPlayerID := uint(0)
 	if dbPlayer != nil {
 		txPlayerID = dbPlayer.TxPlayerID
 	}
+	var stats []entity.PlayerGameStats
 	if txPlayerID > 0 {
-		stats := gameStatsMap[txPlayerID]
-		if len(stats) >= 3 {
-			// 计算该球员历史对阵情况
-			opponentTeam := s.getOpponentTeamCode(player, allPlayers)
-			matchupFactor = s.calcMatchupFactor(stats, opponentTeam, baseValue)
-		}
+		stats = gameStatsMap[txPlayerID]
 	}
+	opponentTeam := s.getOpponentTeamCode(player, allPlayers)
+	matchupFactor, defRatingFactor, paceFactor, dvpFactor, historyFactor = s.calcMatchupFactorWithContext(
+		stats,
+		opponentTeam,
+		baseValue,
+		player.Position,
+		teamMatchupMap,
+		dvpFactorMap,
+	)
 
 	// Step 5: 因素5 — 球队阵容上下文 (TeamContextFactor)
 	teamContextFactor := s.calcTeamContextFactor(player, allPlayers)
@@ -99,6 +129,10 @@ func (s *LineupRecommendService) predictPower(
 		AvailabilityScore: availabilityScore,
 		StatusTrend:       roundTo(statusTrend, 2),
 		MatchupFactor:     roundTo(matchupFactor, 2),
+		DefRatingFactor:   roundTo(defRatingFactor, 2),
+		PaceFactor:        roundTo(paceFactor, 2),
+		DvPFactor:         roundTo(dvpFactor, 2),
+		HistoryFactor:     roundTo(historyFactor, 2),
 		HomeAwayFactor:    roundTo(homeAwayFactor, 2),
 		TeamContextFactor: roundTo(teamContextFactor, 2),
 		MinutesFactor:     roundTo(minutesFactor, 2),
@@ -288,6 +322,188 @@ func (s *LineupRecommendService) loadSeasonStatsMap(
 	return seasonStatsMap
 }
 
+func (s *LineupRecommendService) loadTeamMatchupMetrics(
+	ctx context.Context,
+	repo *repositories.StatsRepository,
+) map[string]teamMatchupMetric {
+	rows, err := repo.GetRecentTeamGameAggregates(ctx, matchupLookbackDays)
+	if err != nil {
+		log.Printf("加载对手 DefRating/Pace 数据失败: %v", err)
+		return map[string]teamMatchupMetric{}
+	}
+	return buildTeamMatchupMetricsFromAggregates(rows)
+}
+
+func buildTeamMatchupMetricsFromAggregates(rows []repositories.TeamGameAggregate) map[string]teamMatchupMetric {
+	type teamGameSample struct {
+		Date          time.Time
+		PointsAllowed float64
+		GameTotal     float64
+	}
+
+	gameTotalMap := make(map[string]float64)
+	for _, row := range rows {
+		offenseTeam := normalizeTeamCode(row.PlayerTeamName)
+		defenseTeam := normalizeTeamCode(row.VsTeamName)
+		if offenseTeam == "" || defenseTeam == "" {
+			continue
+		}
+		gameTotalMap[row.TxGameID] += row.TeamPoints
+	}
+
+	teamSampleMap := make(map[string][]teamGameSample)
+	for _, row := range rows {
+		offenseTeam := normalizeTeamCode(row.PlayerTeamName)
+		defenseTeam := normalizeTeamCode(row.VsTeamName)
+		if offenseTeam == "" || defenseTeam == "" {
+			continue
+		}
+
+		gameTotal := gameTotalMap[row.TxGameID]
+		if gameTotal <= 0 {
+			continue
+		}
+
+		teamSampleMap[defenseTeam] = append(teamSampleMap[defenseTeam], teamGameSample{
+			Date:          row.GameDate,
+			PointsAllowed: row.TeamPoints,
+			GameTotal:     gameTotal,
+		})
+	}
+	if len(teamSampleMap) == 0 {
+		return map[string]teamMatchupMetric{}
+	}
+
+	trimmedByTeam := make(map[string][]teamGameSample, len(teamSampleMap))
+	leagueAllowedTotal := 0.0
+	leagueTotalPoints := 0.0
+	leagueSampleCount := 0
+	for team, samples := range teamSampleMap {
+		sort.Slice(samples, func(i, j int) bool {
+			return samples[i].Date.After(samples[j].Date)
+		})
+		if len(samples) > teamMetricMaxGames {
+			samples = samples[:teamMetricMaxGames]
+		}
+		trimmedByTeam[team] = samples
+		for _, sample := range samples {
+			leagueAllowedTotal += sample.PointsAllowed
+			leagueTotalPoints += sample.GameTotal
+			leagueSampleCount++
+		}
+	}
+
+	if leagueSampleCount == 0 {
+		return map[string]teamMatchupMetric{}
+	}
+	leagueAvgAllowed := leagueAllowedTotal / float64(leagueSampleCount)
+	leagueAvgTotal := leagueTotalPoints / float64(leagueSampleCount)
+	if leagueAvgAllowed <= 0 {
+		leagueAvgAllowed = 112.0
+	}
+	if leagueAvgTotal <= 0 {
+		leagueAvgTotal = 224.0
+	}
+
+	result := make(map[string]teamMatchupMetric, len(trimmedByTeam))
+	for team, samples := range trimmedByTeam {
+		metric := teamMatchupMetric{
+			DefRatingFactor: 1.0,
+			PaceFactor:      1.0,
+			SampleCount:     len(samples),
+		}
+		if len(samples) < teamMetricMinGames {
+			result[team] = metric
+			continue
+		}
+
+		teamAllowed := 0.0
+		teamTotal := 0.0
+		for _, sample := range samples {
+			teamAllowed += sample.PointsAllowed
+			teamTotal += sample.GameTotal
+		}
+		avgAllowed := teamAllowed / float64(len(samples))
+		avgTotal := teamTotal / float64(len(samples))
+		metric.DefRatingFactor = clamp(avgAllowed/leagueAvgAllowed, 0.90, 1.15)
+		metric.PaceFactor = clamp(avgTotal/leagueAvgTotal, 0.95, 1.10)
+		result[team] = metric
+	}
+	return result
+}
+
+func (s *LineupRecommendService) buildDVPFactorMap(
+	allPlayers []entity.NBAGamePlayer,
+	dbPlayerMap map[uint]*entity.Player,
+	gameStatsMap map[uint][]entity.PlayerGameStats,
+) map[string]map[uint]positionDVPMetric {
+	opponentPositionPowers := make(map[string]map[uint][]float64)
+	leaguePositionPowers := make(map[uint][]float64)
+
+	for _, player := range allPlayers {
+		dbPlayer := dbPlayerMap[player.NBAPlayerID]
+		if dbPlayer == nil || dbPlayer.TxPlayerID == 0 {
+			continue
+		}
+		stats := gameStatsMap[dbPlayer.TxPlayerID]
+		if len(stats) == 0 {
+			continue
+		}
+		position := normalizePositionGroup(player.Position)
+		for _, g := range stats {
+			opponent := normalizeTeamCode(g.VsTeamName)
+			if opponent == "" {
+				continue
+			}
+			power := calcPowerFromStats(g)
+			if power <= 0 {
+				continue
+			}
+			if _, ok := opponentPositionPowers[opponent]; !ok {
+				opponentPositionPowers[opponent] = make(map[uint][]float64)
+			}
+			opponentPositionPowers[opponent][position] = append(opponentPositionPowers[opponent][position], power)
+			leaguePositionPowers[position] = append(leaguePositionPowers[position], power)
+		}
+	}
+
+	leagueAvgByPosition := make(map[uint]float64)
+	for position, powers := range leaguePositionPowers {
+		if len(powers) == 0 {
+			continue
+		}
+		total := 0.0
+		for _, power := range powers {
+			total += power
+		}
+		leagueAvgByPosition[position] = total / float64(len(powers))
+	}
+
+	result := make(map[string]map[uint]positionDVPMetric)
+	for opponent, byPosition := range opponentPositionPowers {
+		result[opponent] = make(map[uint]positionDVPMetric)
+		for position, powers := range byPosition {
+			metric := positionDVPMetric{
+				Factor:      1.0,
+				SampleCount: len(powers),
+			}
+			leagueAvg := leagueAvgByPosition[position]
+			if len(powers) < dvpMetricMinSampleSize || leagueAvg <= 0 {
+				result[opponent][position] = metric
+				continue
+			}
+			total := 0.0
+			for _, power := range powers {
+				total += power
+			}
+			avgPower := total / float64(len(powers))
+			metric.Factor = clamp(avgPower/leagueAvg, 0.92, 1.10)
+			result[opponent][position] = metric
+		}
+	}
+	return result
+}
+
 func (s *LineupRecommendService) getOpponentTeamCode(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer) string {
 	for _, p := range allPlayers {
 		if p.MatchID == player.MatchID && p.NBATeamID != player.NBATeamID {
@@ -298,12 +514,56 @@ func (s *LineupRecommendService) getOpponentTeamCode(player entity.NBAGamePlayer
 }
 
 func (s *LineupRecommendService) calcMatchupFactor(stats []entity.PlayerGameStats, opponentTeam string, baseValue float64) float64 {
+	return s.calcHistoryFactor(stats, opponentTeam, baseValue)
+}
+
+func (s *LineupRecommendService) calcMatchupFactorWithContext(
+	stats []entity.PlayerGameStats,
+	opponentTeam string,
+	baseValue float64,
+	position uint,
+	teamMatchupMap map[string]teamMatchupMetric,
+	dvpFactorMap map[string]map[uint]positionDVPMetric,
+) (float64, float64, float64, float64, float64) {
+	targetTeam := normalizeTeamCode(opponentTeam)
+	if targetTeam == "" {
+		return 1.0, 1.0, 1.0, 1.0, 1.0
+	}
+
+	historyFactor := s.calcHistoryFactor(stats, targetTeam, baseValue)
+	defRatingFactor := 1.0
+	paceFactor := 1.0
+	if metric, ok := teamMatchupMap[targetTeam]; ok {
+		defRatingFactor = metric.DefRatingFactor
+		paceFactor = metric.PaceFactor
+	}
+
+	dvpFactor := 1.0
+	positionGroup := normalizePositionGroup(position)
+	if byPosition, ok := dvpFactorMap[targetTeam]; ok {
+		if metric, ok := byPosition[positionGroup]; ok {
+			dvpFactor = metric.Factor
+		}
+	}
+
+	baseMatchup := 0.5*defRatingFactor + 0.3*paceFactor + 0.2*historyFactor
+	matchupFactor := clamp(baseMatchup*dvpFactor, 0.88, 1.18)
+	return matchupFactor, defRatingFactor, paceFactor, dvpFactor, historyFactor
+}
+
+func normalizePositionGroup(position uint) uint {
+	if position == 1 {
+		return 1
+	}
+	return 0
+}
+
+func (s *LineupRecommendService) calcHistoryFactor(stats []entity.PlayerGameStats, opponentTeam string, baseValue float64) float64 {
 	if len(stats) == 0 || baseValue <= 0 {
 		return 1.0
 	}
 
-	// 计算对手场均失分（使用近期数据粗略估算）
-	// 这里简化为：如果有该球员对阵该对手的历史数据，计算平均战力
+	// 历史对阵因子：该球员对阵该对手的历史战力均值 / 基础战力。
 	var vsGames []entity.PlayerGameStats
 	targetTeam := normalizeTeamCode(opponentTeam)
 	if targetTeam == "" {

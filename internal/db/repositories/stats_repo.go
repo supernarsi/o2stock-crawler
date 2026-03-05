@@ -3,12 +3,22 @@ package repositories
 import (
 	"context"
 	"o2stock-crawler/internal/entity"
+	"time"
 
 	"gorm.io/gorm"
 )
 
 type StatsRepository struct {
 	baseRepository[entity.PlayerSeasonStats]
+}
+
+// TeamGameAggregate 球队单场聚合统计（按 tx_game_id + player_team_name 聚合）。
+type TeamGameAggregate struct {
+	TxGameID       string    `gorm:"column:tx_game_id"`
+	PlayerTeamName string    `gorm:"column:player_team_name"`
+	VsTeamName     string    `gorm:"column:vs_team_name"`
+	GameDate       time.Time `gorm:"column:game_date"`
+	TeamPoints     float64   `gorm:"column:team_points"`
 }
 
 func NewStatsRepository(db *gorm.DB) *StatsRepository {
@@ -117,4 +127,25 @@ func (r *StatsRepository) BatchGetGameStatsByDate(ctx context.Context, txPlayerI
 		out[row.TxPlayerID] = row
 	}
 	return out, nil
+}
+
+// GetRecentTeamGameAggregates 获取最近 N 天球队单场聚合得分数据，用于估算 DefRating/Pace。
+func (r *StatsRepository) GetRecentTeamGameAggregates(ctx context.Context, lookbackDays int) ([]TeamGameAggregate, error) {
+	var rows []TeamGameAggregate
+	if lookbackDays <= 0 {
+		lookbackDays = 120
+	}
+	startDate := time.Now().AddDate(0, 0, -lookbackDays)
+
+	err := r.ctx(ctx).
+		Model(&entity.PlayerGameStats{}).
+		Select("tx_game_id, player_team_name, vs_team_name, MAX(game_date) AS game_date, SUM(points) AS team_points").
+		Where("game_date >= ?", startDate).
+		Group("tx_game_id, player_team_name, vs_team_name").
+		Order("game_date DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

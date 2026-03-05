@@ -40,12 +40,25 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	log.Printf("历史战绩数据: %d 名球员有记录", len(gameStatsMap))
 	seasonStatsMap := s.loadSeasonStatsMap(ctx, statsRepo, dbPlayerMap, gameDate)
 	log.Printf("赛季场均数据: %d 名球员有记录", len(seasonStatsMap))
+	teamMatchupMap := s.loadTeamMatchupMetrics(ctx, statsRepo)
+	log.Printf("对手 DefRating/Pace 数据: %d 支球队", len(teamMatchupMap))
+	dvpFactorMap := s.buildDVPFactorMap(allPlayers, dbPlayerMap, gameStatsMap)
+	log.Printf("对手 DvP 数据: %d 支球队", len(dvpFactorMap))
 
 	// 5. 对每位球员预测战力
 	var candidates []PlayerCandidate
 	effectiveCount := 0
 	for i := range allPlayers {
-		pred := s.predictPower(allPlayers[i], allPlayers, injuryMap, dbPlayerMap, gameStatsMap, seasonStatsMap)
+		pred := s.predictPower(
+			allPlayers[i],
+			allPlayers,
+			injuryMap,
+			dbPlayerMap,
+			gameStatsMap,
+			seasonStatsMap,
+			teamMatchupMap,
+			dvpFactorMap,
+		)
 
 		// 始终覆盖预测值，避免旧值残留
 		writePower := pred.PredictedPower
@@ -126,6 +139,10 @@ func (s *LineupRecommendService) buildRecommendation(
 		dp.Factors.AvailabilityScore = c.Prediction.AvailabilityScore
 		dp.Factors.StatusTrend = c.Prediction.StatusTrend
 		dp.Factors.MatchupFactor = c.Prediction.MatchupFactor
+		dp.Factors.DefRatingFactor = c.Prediction.DefRatingFactor
+		dp.Factors.PaceFactor = c.Prediction.PaceFactor
+		dp.Factors.DvPFactor = c.Prediction.DvPFactor
+		dp.Factors.HistoryFactor = c.Prediction.HistoryFactor
 		dp.Factors.HomeAwayFactor = c.Prediction.HomeAwayFactor
 		dp.Factors.TeamContextFactor = c.Prediction.TeamContextFactor
 		dp.Factors.MinutesFactor = c.Prediction.MinutesFactor

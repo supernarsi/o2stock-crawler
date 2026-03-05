@@ -78,6 +78,10 @@ type PlayerPrediction struct {
 	AvailabilityScore float64
 	StatusTrend       float64
 	MatchupFactor     float64
+	DefRatingFactor   float64
+	PaceFactor        float64
+	DvPFactor         float64
+	HistoryFactor     float64
 	HomeAwayFactor    float64
 	TeamContextFactor float64
 	MinutesFactor     float64
@@ -106,6 +110,10 @@ type DetailPlayer struct {
 		AvailabilityScore float64 `json:"availability_score"`
 		StatusTrend       float64 `json:"status_trend"`
 		MatchupFactor     float64 `json:"matchup_factor"`
+		DefRatingFactor   float64 `json:"def_rating_factor,omitempty"`
+		PaceFactor        float64 `json:"pace_factor,omitempty"`
+		DvPFactor         float64 `json:"dvp_factor,omitempty"`
+		HistoryFactor     float64 `json:"history_factor,omitempty"`
 		HomeAwayFactor    float64 `json:"home_away_factor"`
 		TeamContextFactor float64 `json:"team_context_factor"`
 		MinutesFactor     float64 `json:"minutes_factor"`

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/entity"
 )
 
@@ -88,6 +89,123 @@ func TestCalcMatchupFactorRequiresEnoughHistory(t *testing.T) {
 	got := svc.calcMatchupFactor(stats, "湖人", 20)
 	if got != 1.0 {
 		t.Fatalf("matchupFactor=%.2f, want 1.0 when history < 3", got)
+	}
+}
+
+func TestCalcMatchupFactorWithContext(t *testing.T) {
+	svc := &LineupRecommendService{}
+	stats := []entity.PlayerGameStats{
+		{VsTeamName: "LAL", Points: 22},
+		{VsTeamName: "湖人", Points: 22},
+		{VsTeamName: "Los Angeles Lakers", Points: 22},
+	}
+
+	teamMap := map[string]teamMatchupMetric{
+		"LAL": {DefRatingFactor: 1.12, PaceFactor: 1.08, SampleCount: 10},
+	}
+	dvpMap := map[string]map[uint]positionDVPMetric{
+		"LAL": {1: {Factor: 1.06, SampleCount: 20}},
+	}
+
+	matchup, defFactor, paceFactor, dvpFactor, historyFactor := svc.calcMatchupFactorWithContext(
+		stats,
+		"湖人",
+		20,
+		1,
+		teamMap,
+		dvpMap,
+	)
+
+	if math.Abs(defFactor-1.12) > 1e-9 {
+		t.Fatalf("defFactor=%.3f, want 1.12", defFactor)
+	}
+	if math.Abs(paceFactor-1.08) > 1e-9 {
+		t.Fatalf("paceFactor=%.3f, want 1.08", paceFactor)
+	}
+	if math.Abs(dvpFactor-1.06) > 1e-9 {
+		t.Fatalf("dvpFactor=%.3f, want 1.06", dvpFactor)
+	}
+	if math.Abs(historyFactor-1.10) > 1e-9 {
+		t.Fatalf("historyFactor=%.3f, want 1.10", historyFactor)
+	}
+	if math.Abs(matchup-1.17024) > 1e-6 {
+		t.Fatalf("matchupFactor=%.5f, want 1.17024", matchup)
+	}
+}
+
+func TestBuildTeamMatchupMetricsFromAggregates(t *testing.T) {
+	rows := make([]repositories.TeamGameAggregate, 0, 12)
+	for i := 0; i < 6; i++ {
+		gameID := fmt.Sprintf("g%d", i+1)
+		dt := time.Date(2026, 3, 1+i, 0, 0, 0, 0, time.UTC)
+		rows = append(rows, repositories.TeamGameAggregate{
+			TxGameID:       gameID,
+			PlayerTeamName: "LAL",
+			VsTeamName:     "BOS",
+			GameDate:       dt,
+			TeamPoints:     120,
+		})
+		rows = append(rows, repositories.TeamGameAggregate{
+			TxGameID:       gameID,
+			PlayerTeamName: "BOS",
+			VsTeamName:     "LAL",
+			GameDate:       dt,
+			TeamPoints:     100,
+		})
+	}
+
+	metrics := buildTeamMatchupMetricsFromAggregates(rows)
+	if metrics["BOS"].SampleCount != 6 {
+		t.Fatalf("BOS sample=%d, want 6", metrics["BOS"].SampleCount)
+	}
+	if !(metrics["BOS"].DefRatingFactor > 1.0) {
+		t.Fatalf("BOS defRatingFactor=%.3f, want > 1.0", metrics["BOS"].DefRatingFactor)
+	}
+	if !(metrics["LAL"].DefRatingFactor < 1.0) {
+		t.Fatalf("LAL defRatingFactor=%.3f, want < 1.0", metrics["LAL"].DefRatingFactor)
+	}
+}
+
+func TestBuildDVPFactorMap(t *testing.T) {
+	svc := &LineupRecommendService{}
+
+	allPlayers := []entity.NBAGamePlayer{
+		{NBAPlayerID: 1, Position: 1},
+		{NBAPlayerID: 2, Position: 1},
+	}
+	dbPlayerMap := map[uint]*entity.Player{
+		1: {NBAPlayerID: 1, TxPlayerID: 101},
+		2: {NBAPlayerID: 2, TxPlayerID: 102},
+	}
+	gameStatsMap := map[uint][]entity.PlayerGameStats{
+		101: {
+			{VsTeamName: "LAL", Points: 30},
+			{VsTeamName: "LAL", Points: 30},
+			{VsTeamName: "LAL", Points: 30},
+			{VsTeamName: "LAL", Points: 30},
+			{VsTeamName: "LAL", Points: 30},
+			{VsTeamName: "LAL", Points: 30},
+			{VsTeamName: "LAL", Points: 30},
+			{VsTeamName: "LAL", Points: 30},
+		},
+		102: {
+			{VsTeamName: "BOS", Points: 10},
+			{VsTeamName: "BOS", Points: 10},
+			{VsTeamName: "BOS", Points: 10},
+			{VsTeamName: "BOS", Points: 10},
+			{VsTeamName: "BOS", Points: 10},
+			{VsTeamName: "BOS", Points: 10},
+			{VsTeamName: "BOS", Points: 10},
+			{VsTeamName: "BOS", Points: 10},
+		},
+	}
+
+	dvpMap := svc.buildDVPFactorMap(allPlayers, dbPlayerMap, gameStatsMap)
+	if got := dvpMap["LAL"][1].Factor; math.Abs(got-1.10) > 1e-9 {
+		t.Fatalf("LAL dvpFactor=%.2f, want 1.10", got)
+	}
+	if got := dvpMap["BOS"][1].Factor; math.Abs(got-0.92) > 1e-9 {
+		t.Fatalf("BOS dvpFactor=%.2f, want 0.92", got)
 	}
 }
 
