@@ -16,18 +16,34 @@ const (
 	matchupLookbackDays    = 120
 	teamMetricMaxGames     = 24
 	teamMetricMinGames     = 6
+	teamTrendRecentGames   = 6
 	dvpMetricMinSampleSize = 8
+	recentBaseMinGames     = 3
 )
 
 type teamMatchupMetric struct {
-	DefRatingFactor float64
-	PaceFactor      float64
-	SampleCount     int
+	DefRatingFactor       float64
+	PaceFactor            float64
+	OpponentFormFactor    float64
+	RimDeterrenceFactor   float64
+	PerimeterImpactFactor float64
+	SampleCount           int
 }
 
 type positionDVPMetric struct {
 	Factor      float64
 	SampleCount int
+}
+
+type matchupFactorDetail struct {
+	MatchupFactor         float64
+	DefRatingFactor       float64
+	PaceFactor            float64
+	DvPFactor             float64
+	HistoryFactor         float64
+	OpponentFormFactor    float64
+	RimDeterrenceFactor   float64
+	PerimeterImpactFactor float64
 }
 
 // predictPower 计算单个候选球员的预测战力及因子明细。
@@ -58,26 +74,6 @@ func (s *LineupRecommendService) predictPower(
 	gamePower := player.CombatPower
 	baseValue := gamePower
 	dbPlayer := dbPlayerMap[player.NBAPlayerID]
-	var dbPower5, dbPower10 float64
-	if dbPlayer != nil && dbPlayer.PowerPer10 > 0 {
-		dbPower10 = dbPlayer.PowerPer10
-		dbPower5 = dbPlayer.PowerPer5
-		baseValue = 0.4*dbPower10 + 0.3*dbPower5 + 0.3*gamePower
-	}
-
-	// Step 3: 因素3 — 近期状态趋势 (StatusTrend)
-	statusTrend := 1.0
-	if dbPlayer != nil && dbPlayer.PowerPer10 > 0 && dbPlayer.PowerPer5 > 0 {
-		rawTrend := dbPlayer.PowerPer5 / dbPlayer.PowerPer10
-		statusTrend = clamp(rawTrend, 0.85, 1.15)
-	}
-
-	// Step 4: 因素4 — 对手实力匹配 (MatchupFactor)
-	matchupFactor := 1.0
-	defRatingFactor := 1.0
-	paceFactor := 1.0
-	dvpFactor := 1.0
-	historyFactor := 1.0
 	txPlayerID := uint(0)
 	if dbPlayer != nil {
 		txPlayerID = dbPlayer.TxPlayerID
@@ -86,14 +82,49 @@ func (s *LineupRecommendService) predictPower(
 	if txPlayerID > 0 {
 		stats = gameStatsMap[txPlayerID]
 	}
+
+	var dbPower5, dbPower10 float64
+	if dbPlayer != nil && dbPlayer.PowerPer10 > 0 {
+		dbPower10 = dbPlayer.PowerPer10
+		dbPower5 = dbPlayer.PowerPer5
+		baseValue = 0.4*dbPower10 + 0.3*dbPower5 + 0.3*gamePower
+	}
+	recentPower5, recentPower10 := calcRecentPowerAverages(stats)
+	baseValue = stabilizeBaseValue(baseValue, gamePower, recentPower5, recentPower10, len(stats))
+
+	// Step 3: 因素3 — 近期状态趋势 (StatusTrend)
+	statusTrend := calcStatusTrend(dbPlayer, stats)
+
+	// Step 4: 因素4 — 对手实力匹配 (MatchupFactor)
+	matchupFactor := 1.0
+	defRatingFactor := 1.0
+	paceFactor := 1.0
+	dvpFactor := 1.0
+	historyFactor := 1.0
+	opponentFormFactor := 1.0
+	rimDeterrenceFactor := 1.0
 	opponentTeam := s.getOpponentTeamCode(player, allPlayers)
-	matchupFactor, defRatingFactor, paceFactor, dvpFactor, historyFactor = s.calcMatchupFactorWithContext(
+	matchupDetail := s.calcMatchupFactorWithContext(
 		stats,
 		opponentTeam,
 		baseValue,
 		player.Position,
 		teamMatchupMap,
 		dvpFactorMap,
+	)
+	matchupFactor = matchupDetail.MatchupFactor
+	defRatingFactor = matchupDetail.DefRatingFactor
+	paceFactor = matchupDetail.PaceFactor
+	dvpFactor = matchupDetail.DvPFactor
+	historyFactor = matchupDetail.HistoryFactor
+	opponentFormFactor = matchupDetail.OpponentFormFactor
+	rimDeterrenceFactor = matchupDetail.RimDeterrenceFactor
+
+	defenseAnchorFactor := s.calcOpponentDefenseAnchorFactor(
+		player,
+		allPlayers,
+		dbPlayerMap,
+		gameStatsMap,
 	)
 
 	// Step 5: 因素5 — 球队阵容上下文 (TeamContextFactor)
@@ -106,40 +137,66 @@ func (s *LineupRecommendService) predictPower(
 	minutesFactor := 1.0
 	usageFactor := 1.0
 	stabilityFactor := 1.0
+	defenseUpsideFactor := 1.0
+	roleSecurityFactor := 1.0
+	dataReliabilityFactor := 1.0
 	fatigueFactor := 1.0
+	seasonStats := seasonStatsMap[txPlayerID]
 	if txPlayerID > 0 {
 		stats := gameStatsMap[txPlayerID]
-		minutesFactor = s.calcMinutesFactor(stats, seasonStatsMap[txPlayerID])
+		minutesFactor = s.calcMinutesFactor(stats, seasonStats)
 		usageFactor = s.calcUsageFactor(stats)
 		stabilityFactor = s.calcStabilityFactor(stats)
+		defenseUpsideFactor = s.calcDefenseUpsideFactor(stats, seasonStats, player.Position)
+		roleSecurityFactor = s.calcRoleSecurityFactor(stats, seasonStats, player.Salary)
 		fatigueFactor = s.calcFatigueFactor(stats, player.GameDate)
 	}
+	dataReliabilityFactor = calcDataReliabilityFactor(len(stats), dbPlayer, seasonStats, player.Salary)
 
 	// Step 8: 因素2 — 比赛取消风险 (GameRiskFactor)
 	gameRiskFactor := 1.0 // NBA 室内运动，默认无风险
 
 	// Step 9: 综合计算
-	predictedPower := baseValue * availabilityScore * statusTrend * matchupFactor *
-		homeAwayFactor * teamContextFactor * minutesFactor * usageFactor *
-		stabilityFactor * fatigueFactor * gameRiskFactor
+	dynamicMultiplier := statusTrend * matchupFactor * homeAwayFactor * teamContextFactor *
+		minutesFactor * usageFactor * stabilityFactor * defenseUpsideFactor *
+		roleSecurityFactor * dataReliabilityFactor * defenseAnchorFactor * fatigueFactor
+	dynamicMultiplier = clampDynamicMultiplier(dynamicMultiplier, len(stats))
+
+	predictedPower := baseValue * availabilityScore * dynamicMultiplier * gameRiskFactor
+	predictedPower = calibratePredictedPower(predictedPower, baseValue, recentPower10, len(stats))
+	optimizedPower := s.calcConservativePower(
+		predictedPower,
+		stats,
+		availabilityScore,
+		roleSecurityFactor,
+		dataReliabilityFactor,
+	)
 
 	return PlayerPrediction{
-		PredictedPower:    roundTo(predictedPower, 1),
-		BaseValue:         roundTo(baseValue, 1),
-		AvailabilityScore: availabilityScore,
-		StatusTrend:       roundTo(statusTrend, 2),
-		MatchupFactor:     roundTo(matchupFactor, 2),
-		DefRatingFactor:   roundTo(defRatingFactor, 2),
-		PaceFactor:        roundTo(paceFactor, 2),
-		DvPFactor:         roundTo(dvpFactor, 2),
-		HistoryFactor:     roundTo(historyFactor, 2),
-		HomeAwayFactor:    roundTo(homeAwayFactor, 2),
-		TeamContextFactor: roundTo(teamContextFactor, 2),
-		MinutesFactor:     roundTo(minutesFactor, 2),
-		UsageFactor:       roundTo(usageFactor, 2),
-		StabilityFactor:   roundTo(stabilityFactor, 2),
-		FatigueFactor:     roundTo(fatigueFactor, 2),
-		GameRiskFactor:    roundTo(gameRiskFactor, 2),
+		PredictedPower:        roundTo(predictedPower, 1),
+		OptimizedPower:        roundTo(optimizedPower, 1),
+		BaseValue:             roundTo(baseValue, 1),
+		AvailabilityScore:     availabilityScore,
+		StatusTrend:           roundTo(statusTrend, 2),
+		MatchupFactor:         roundTo(matchupFactor, 2),
+		DefRatingFactor:       roundTo(defRatingFactor, 2),
+		PaceFactor:            roundTo(paceFactor, 2),
+		DvPFactor:             roundTo(dvpFactor, 2),
+		HistoryFactor:         roundTo(historyFactor, 2),
+		OpponentFormFactor:    roundTo(opponentFormFactor, 2),
+		RimDeterrenceFactor:   roundTo(rimDeterrenceFactor, 2),
+		DefenseAnchorFactor:   roundTo(defenseAnchorFactor, 2),
+		HomeAwayFactor:        roundTo(homeAwayFactor, 2),
+		TeamContextFactor:     roundTo(teamContextFactor, 2),
+		MinutesFactor:         roundTo(minutesFactor, 2),
+		UsageFactor:           roundTo(usageFactor, 2),
+		StabilityFactor:       roundTo(stabilityFactor, 2),
+		DefenseUpsideFactor:   roundTo(defenseUpsideFactor, 2),
+		RoleSecurityFactor:    roundTo(roleSecurityFactor, 2),
+		DataReliabilityFactor: roundTo(dataReliabilityFactor, 2),
+		TeamExposureFactor:    1.0,
+		FatigueFactor:         roundTo(fatigueFactor, 2),
+		GameRiskFactor:        roundTo(gameRiskFactor, 2),
 	}
 }
 
@@ -340,6 +397,11 @@ func buildTeamMatchupMetricsFromAggregates(rows []repositories.TeamGameAggregate
 		PointsAllowed float64
 		GameTotal     float64
 	}
+	type teamDefenseSkillSample struct {
+		Date       time.Time
+		TeamBlocks float64
+		TeamSteals float64
+	}
 
 	gameTotalMap := make(map[string]float64)
 	for _, row := range rows {
@@ -352,6 +414,7 @@ func buildTeamMatchupMetricsFromAggregates(rows []repositories.TeamGameAggregate
 	}
 
 	teamSampleMap := make(map[string][]teamGameSample)
+	defenseSkillMap := make(map[string][]teamDefenseSkillSample)
 	for _, row := range rows {
 		offenseTeam := normalizeTeamCode(row.PlayerTeamName)
 		defenseTeam := normalizeTeamCode(row.VsTeamName)
@@ -369,15 +432,23 @@ func buildTeamMatchupMetricsFromAggregates(rows []repositories.TeamGameAggregate
 			PointsAllowed: row.TeamPoints,
 			GameTotal:     gameTotal,
 		})
+
+		defenseSkillMap[offenseTeam] = append(defenseSkillMap[offenseTeam], teamDefenseSkillSample{
+			Date:       row.GameDate,
+			TeamBlocks: row.TeamBlocks,
+			TeamSteals: row.TeamSteals,
+		})
 	}
-	if len(teamSampleMap) == 0 {
+	if len(teamSampleMap) == 0 && len(defenseSkillMap) == 0 {
 		return map[string]teamMatchupMetric{}
 	}
 
 	trimmedByTeam := make(map[string][]teamGameSample, len(teamSampleMap))
+	trimmedSkillByTeam := make(map[string][]teamDefenseSkillSample, len(defenseSkillMap))
 	leagueAllowedTotal := 0.0
 	leagueTotalPoints := 0.0
 	leagueSampleCount := 0
+
 	for team, samples := range teamSampleMap {
 		sort.Slice(samples, func(i, j int) bool {
 			return samples[i].Date.After(samples[j].Date)
@@ -393,42 +464,128 @@ func buildTeamMatchupMetricsFromAggregates(rows []repositories.TeamGameAggregate
 		}
 	}
 
-	if leagueSampleCount == 0 {
-		return map[string]teamMatchupMetric{}
+	leagueBlocksTotal := 0.0
+	leagueStealsTotal := 0.0
+	leagueSkillCount := 0
+	for team, samples := range defenseSkillMap {
+		sort.Slice(samples, func(i, j int) bool {
+			return samples[i].Date.After(samples[j].Date)
+		})
+		if len(samples) > teamMetricMaxGames {
+			samples = samples[:teamMetricMaxGames]
+		}
+		trimmedSkillByTeam[team] = samples
+		for _, sample := range samples {
+			leagueBlocksTotal += sample.TeamBlocks
+			leagueStealsTotal += sample.TeamSteals
+			leagueSkillCount++
+		}
 	}
-	leagueAvgAllowed := leagueAllowedTotal / float64(leagueSampleCount)
-	leagueAvgTotal := leagueTotalPoints / float64(leagueSampleCount)
+
+	leagueAvgAllowed := 112.0
+	leagueAvgTotal := 224.0
+	if leagueSampleCount > 0 {
+		leagueAvgAllowed = leagueAllowedTotal / float64(leagueSampleCount)
+		leagueAvgTotal = leagueTotalPoints / float64(leagueSampleCount)
+	}
 	if leagueAvgAllowed <= 0 {
 		leagueAvgAllowed = 112.0
 	}
 	if leagueAvgTotal <= 0 {
 		leagueAvgTotal = 224.0
 	}
+	leagueAvgBlocks := 5.2
+	leagueAvgSteals := 7.5
+	if leagueSkillCount > 0 {
+		leagueAvgBlocks = leagueBlocksTotal / float64(leagueSkillCount)
+		leagueAvgSteals = leagueStealsTotal / float64(leagueSkillCount)
+	}
 
-	result := make(map[string]teamMatchupMetric, len(trimmedByTeam))
+	result := make(map[string]teamMatchupMetric, max(len(trimmedByTeam), len(trimmedSkillByTeam)))
 	for team, samples := range trimmedByTeam {
 		metric := teamMatchupMetric{
-			DefRatingFactor: 1.0,
-			PaceFactor:      1.0,
-			SampleCount:     len(samples),
+			DefRatingFactor:       1.0,
+			PaceFactor:            1.0,
+			OpponentFormFactor:    1.0,
+			RimDeterrenceFactor:   1.0,
+			PerimeterImpactFactor: 1.0,
+			SampleCount:           len(samples),
 		}
-		if len(samples) < teamMetricMinGames {
-			result[team] = metric
-			continue
+		if len(samples) >= teamMetricMinGames {
+			teamAllowed := 0.0
+			teamTotal := 0.0
+			for _, sample := range samples {
+				teamAllowed += sample.PointsAllowed
+				teamTotal += sample.GameTotal
+			}
+			avgAllowed := teamAllowed / float64(len(samples))
+			avgTotal := teamTotal / float64(len(samples))
+			metric.DefRatingFactor = clamp(avgAllowed/leagueAvgAllowed, 0.88, 1.12)
+			metric.PaceFactor = clamp(avgTotal/leagueAvgTotal, 0.94, 1.08)
+
+			recentCount := min(teamTrendRecentGames, len(samples))
+			recentAllowed := 0.0
+			for i := 0; i < recentCount; i++ {
+				recentAllowed += samples[i].PointsAllowed
+			}
+			if recentCount > 0 && avgAllowed > 0 {
+				recentAvgAllowed := recentAllowed / float64(recentCount)
+				metric.OpponentFormFactor = clamp(recentAvgAllowed/avgAllowed, 0.90, 1.08)
+			}
 		}
 
-		teamAllowed := 0.0
-		teamTotal := 0.0
-		for _, sample := range samples {
-			teamAllowed += sample.PointsAllowed
-			teamTotal += sample.GameTotal
+		skillSamples := trimmedSkillByTeam[team]
+		if len(skillSamples) >= teamMetricMinGames {
+			blocksTotal := 0.0
+			stealsTotal := 0.0
+			for _, sample := range skillSamples {
+				blocksTotal += sample.TeamBlocks
+				stealsTotal += sample.TeamSteals
+			}
+			avgBlocks := blocksTotal / float64(len(skillSamples))
+			avgSteals := stealsTotal / float64(len(skillSamples))
+			if avgBlocks > 0 && leagueAvgBlocks > 0 {
+				metric.RimDeterrenceFactor = clamp(leagueAvgBlocks/avgBlocks, 0.88, 1.08)
+			}
+			if avgSteals > 0 && leagueAvgSteals > 0 {
+				metric.PerimeterImpactFactor = clamp(leagueAvgSteals/avgSteals, 0.92, 1.08)
+			}
 		}
-		avgAllowed := teamAllowed / float64(len(samples))
-		avgTotal := teamTotal / float64(len(samples))
-		metric.DefRatingFactor = clamp(avgAllowed/leagueAvgAllowed, 0.90, 1.15)
-		metric.PaceFactor = clamp(avgTotal/leagueAvgTotal, 0.95, 1.10)
+
 		result[team] = metric
 	}
+
+	for team, skillSamples := range trimmedSkillByTeam {
+		if _, exists := result[team]; exists {
+			continue
+		}
+		metric := teamMatchupMetric{
+			DefRatingFactor:       1.0,
+			PaceFactor:            1.0,
+			OpponentFormFactor:    1.0,
+			RimDeterrenceFactor:   1.0,
+			PerimeterImpactFactor: 1.0,
+			SampleCount:           len(skillSamples),
+		}
+		if len(skillSamples) >= teamMetricMinGames {
+			blocksTotal := 0.0
+			stealsTotal := 0.0
+			for _, sample := range skillSamples {
+				blocksTotal += sample.TeamBlocks
+				stealsTotal += sample.TeamSteals
+			}
+			avgBlocks := blocksTotal / float64(len(skillSamples))
+			avgSteals := stealsTotal / float64(len(skillSamples))
+			if avgBlocks > 0 && leagueAvgBlocks > 0 {
+				metric.RimDeterrenceFactor = clamp(leagueAvgBlocks/avgBlocks, 0.88, 1.08)
+			}
+			if avgSteals > 0 && leagueAvgSteals > 0 {
+				metric.PerimeterImpactFactor = clamp(leagueAvgSteals/avgSteals, 0.92, 1.08)
+			}
+		}
+		result[team] = metric
+	}
+
 	return result
 }
 
@@ -513,7 +670,142 @@ func (s *LineupRecommendService) getOpponentTeamCode(player entity.NBAGamePlayer
 	return ""
 }
 
+func calcRecentPowerAverages(stats []entity.PlayerGameStats) (float64, float64) {
+	if len(stats) == 0 {
+		return 0, 0
+	}
+	count5 := min(5, len(stats))
+	count10 := min(10, len(stats))
+
+	sum5 := 0.0
+	sum10 := 0.0
+	for i := 0; i < count10; i++ {
+		power := calcPowerFromStats(stats[i])
+		sum10 += power
+		if i < count5 {
+			sum5 += power
+		}
+	}
+
+	avg5 := 0.0
+	if count5 > 0 {
+		avg5 = sum5 / float64(count5)
+	}
+	avg10 := 0.0
+	if count10 > 0 {
+		avg10 = sum10 / float64(count10)
+	}
+	return avg5, avg10
+}
+
+func stabilizeBaseValue(baseValue, gamePower, recentPower5, recentPower10 float64, statCount int) float64 {
+	if recentPower10 <= 0 || statCount < recentBaseMinGames {
+		return baseValue
+	}
+
+	recentComposite := recentPower10
+	if recentPower5 > 0 {
+		recentComposite = 0.65*recentPower5 + 0.35*recentPower10
+	}
+
+	reliability := clamp(float64(min(statCount, 10))/10.0, 0.30, 1.0)
+	recentWeight := 0.25 + 0.35*reliability
+	gameWeight := 0.10
+	baseWeight := 1.0 - recentWeight - gameWeight
+	if baseWeight < 0.20 {
+		baseWeight = 0.20
+		gameWeight = 0.10
+		recentWeight = 0.70
+	}
+
+	mixed := baseWeight*baseValue + recentWeight*recentComposite + gameWeight*gamePower
+	lower := recentPower10 * 0.78
+	upper := recentPower10 * 1.28
+	return clamp(mixed, lower, upper)
+}
+
+func calcStatusTrend(dbPlayer *entity.Player, stats []entity.PlayerGameStats) float64 {
+	dbTrend := 1.0
+	if dbPlayer != nil && dbPlayer.PowerPer10 > 0 && dbPlayer.PowerPer5 > 0 {
+		dbTrend = clamp(dbPlayer.PowerPer5/dbPlayer.PowerPer10, 0.88, 1.12)
+	}
+
+	recentTrend := 1.0
+	if len(stats) >= 5 {
+		recent3 := 0.0
+		recent10 := 0.0
+		count3 := min(3, len(stats))
+		count10 := min(10, len(stats))
+		for i := 0; i < count10; i++ {
+			power := calcPowerFromStats(stats[i])
+			recent10 += power
+			if i < count3 {
+				recent3 += power
+			}
+		}
+		if count3 > 0 && count10 > 0 {
+			avg3 := recent3 / float64(count3)
+			avg10 := recent10 / float64(count10)
+			if avg10 > 0 {
+				recentTrend = clamp(avg3/avg10, 0.90, 1.10)
+			}
+		}
+	}
+
+	recentWeight := 0.0
+	if len(stats) >= 5 {
+		recentWeight = 0.40
+	}
+	return clamp(dbTrend*(1-recentWeight)+recentTrend*recentWeight, 0.88, 1.12)
+}
+
+func clampDynamicMultiplier(multiplier float64, statCount int) float64 {
+	if statCount >= 8 {
+		return clamp(multiplier, 0.80, 1.18)
+	}
+	if statCount >= 5 {
+		return clamp(multiplier, 0.76, 1.14)
+	}
+	if statCount >= 3 {
+		return clamp(multiplier, 0.70, 1.10)
+	}
+	return clamp(multiplier, 0.58, 1.05)
+}
+
+func calibratePredictedPower(predicted, baseValue, recentPower10 float64, statCount int) float64 {
+	if predicted <= 0 {
+		return predicted
+	}
+	if recentPower10 <= 0 || statCount < 5 {
+		// 无足够近期样本时，避免过拟合因素把结果拉太离谱。
+		modelWeight := 0.85
+		if statCount == 0 {
+			modelWeight = 0.72
+		} else if statCount < 3 {
+			modelWeight = 0.78
+		}
+		return modelWeight*predicted + (1-modelWeight)*baseValue
+	}
+
+	reliability := clamp(float64(min(statCount, 10))/10.0, 0.40, 1.0)
+	modelWeight := 0.58 + 0.20*reliability
+	anchored := modelWeight*predicted + (1-modelWeight)*recentPower10
+	return anchored
+}
+
+func shrinkTowardsOne(value, confidence float64) float64 {
+	conf := clamp(confidence, 0.0, 1.0)
+	return 1.0 + (value-1.0)*conf
+}
+
 func (s *LineupRecommendService) calcMatchupFactor(stats []entity.PlayerGameStats, opponentTeam string, baseValue float64) float64 {
+	targetTeam := normalizeTeamCode(opponentTeam)
+	if targetTeam == "" {
+		return 1.0
+	}
+	if countVsTeamGames(stats, targetTeam) < 3 {
+		return 1.0
+	}
 	return s.calcHistoryFactor(stats, opponentTeam, baseValue)
 }
 
@@ -524,18 +816,55 @@ func (s *LineupRecommendService) calcMatchupFactorWithContext(
 	position uint,
 	teamMatchupMap map[string]teamMatchupMetric,
 	dvpFactorMap map[string]map[uint]positionDVPMetric,
-) (float64, float64, float64, float64, float64) {
+) matchupFactorDetail {
 	targetTeam := normalizeTeamCode(opponentTeam)
 	if targetTeam == "" {
-		return 1.0, 1.0, 1.0, 1.0, 1.0
+		return matchupFactorDetail{
+			MatchupFactor:         1.0,
+			DefRatingFactor:       1.0,
+			PaceFactor:            1.0,
+			DvPFactor:             1.0,
+			HistoryFactor:         1.0,
+			OpponentFormFactor:    1.0,
+			RimDeterrenceFactor:   1.0,
+			PerimeterImpactFactor: 1.0,
+		}
 	}
 
 	historyFactor := s.calcHistoryFactor(stats, targetTeam, baseValue)
 	defRatingFactor := 1.0
 	paceFactor := 1.0
+	opponentFormFactor := 1.0
+	rimDeterrenceFactor := 1.0
+	perimeterImpactFactor := 1.0
 	if metric, ok := teamMatchupMap[targetTeam]; ok {
 		defRatingFactor = metric.DefRatingFactor
 		paceFactor = metric.PaceFactor
+		opponentFormFactor = metric.OpponentFormFactor
+		rimDeterrenceFactor = metric.RimDeterrenceFactor
+		perimeterImpactFactor = metric.PerimeterImpactFactor
+		if defRatingFactor <= 0 {
+			defRatingFactor = 1.0
+		}
+		if paceFactor <= 0 {
+			paceFactor = 1.0
+		}
+		if opponentFormFactor <= 0 {
+			opponentFormFactor = 1.0
+		}
+		if rimDeterrenceFactor <= 0 {
+			rimDeterrenceFactor = 1.0
+		}
+		if perimeterImpactFactor <= 0 {
+			perimeterImpactFactor = 1.0
+		}
+		confidence := float64(min(metric.SampleCount, teamMetricMaxGames)) / float64(teamMetricMaxGames)
+		confidence = clamp(confidence, 0.35, 1.0)
+		defRatingFactor = shrinkTowardsOne(defRatingFactor, confidence)
+		paceFactor = shrinkTowardsOne(paceFactor, confidence)
+		opponentFormFactor = shrinkTowardsOne(opponentFormFactor, confidence)
+		rimDeterrenceFactor = shrinkTowardsOne(rimDeterrenceFactor, confidence)
+		perimeterImpactFactor = shrinkTowardsOne(perimeterImpactFactor, confidence)
 	}
 
 	dvpFactor := 1.0
@@ -543,12 +872,36 @@ func (s *LineupRecommendService) calcMatchupFactorWithContext(
 	if byPosition, ok := dvpFactorMap[targetTeam]; ok {
 		if metric, ok := byPosition[positionGroup]; ok {
 			dvpFactor = metric.Factor
+			confidence := float64(min(metric.SampleCount, 24)) / 24.0
+			confidence = clamp(confidence, 0.25, 1.0)
+			dvpFactor = shrinkTowardsOne(dvpFactor, confidence)
 		}
 	}
 
-	baseMatchup := 0.5*defRatingFactor + 0.3*paceFactor + 0.2*historyFactor
-	matchupFactor := clamp(baseMatchup*dvpFactor, 0.88, 1.18)
-	return matchupFactor, defRatingFactor, paceFactor, dvpFactor, historyFactor
+	historyConfidence := 0.20 + float64(min(countVsTeamGames(stats, targetTeam), 8))/10.0
+	historyConfidence = clamp(historyConfidence, 0.20, 0.92)
+	historyFactor = shrinkTowardsOne(historyFactor, historyConfidence)
+
+	disruptionFactor := 1.0
+	if positionGroup == 0 {
+		disruptionFactor = 0.72*rimDeterrenceFactor + 0.28*perimeterImpactFactor
+	} else {
+		disruptionFactor = 0.35*rimDeterrenceFactor + 0.65*perimeterImpactFactor
+	}
+	disruptionFactor = clamp(disruptionFactor, 0.90, 1.08)
+
+	baseMatchup := 0.43*defRatingFactor + 0.23*paceFactor + 0.16*historyFactor + 0.18*opponentFormFactor
+	matchupFactor := clamp(baseMatchup*dvpFactor*disruptionFactor, 0.86, 1.14)
+	return matchupFactorDetail{
+		MatchupFactor:         matchupFactor,
+		DefRatingFactor:       defRatingFactor,
+		PaceFactor:            paceFactor,
+		DvPFactor:             dvpFactor,
+		HistoryFactor:         historyFactor,
+		OpponentFormFactor:    opponentFormFactor,
+		RimDeterrenceFactor:   rimDeterrenceFactor,
+		PerimeterImpactFactor: perimeterImpactFactor,
+	}
 }
 
 func normalizePositionGroup(position uint) uint {
@@ -564,17 +917,12 @@ func (s *LineupRecommendService) calcHistoryFactor(stats []entity.PlayerGameStat
 	}
 
 	// 历史对阵因子：该球员对阵该对手的历史战力均值 / 基础战力。
-	var vsGames []entity.PlayerGameStats
 	targetTeam := normalizeTeamCode(opponentTeam)
 	if targetTeam == "" {
 		return 1.0
 	}
 
-	for _, g := range stats {
-		if normalizeTeamCode(g.VsTeamName) == targetTeam {
-			vsGames = append(vsGames, g)
-		}
-	}
+	vsGames := filterVsTeamGames(stats, targetTeam)
 
 	if len(vsGames) >= 3 {
 		totalPower := 0.0
@@ -585,7 +933,109 @@ func (s *LineupRecommendService) calcHistoryFactor(stats []entity.PlayerGameStat
 		return clamp(avgPower/baseValue, 0.90, 1.10)
 	}
 
+	if len(vsGames) == 2 {
+		totalPower := calcPowerFromStats(vsGames[0]) + calcPowerFromStats(vsGames[1])
+		avgPower := totalPower / 2.0
+		return clamp(avgPower/baseValue, 0.94, 1.06)
+	}
+
+	if len(vsGames) == 1 {
+		oneGame := calcPowerFromStats(vsGames[0])
+		return clamp(oneGame/baseValue, 0.96, 1.04)
+	}
+
 	return 1.0
+}
+
+func filterVsTeamGames(stats []entity.PlayerGameStats, targetTeam string) []entity.PlayerGameStats {
+	var vsGames []entity.PlayerGameStats
+	for _, g := range stats {
+		if normalizeTeamCode(g.VsTeamName) == targetTeam {
+			vsGames = append(vsGames, g)
+		}
+	}
+	return vsGames
+}
+
+func countVsTeamGames(stats []entity.PlayerGameStats, targetTeam string) int {
+	return len(filterVsTeamGames(stats, targetTeam))
+}
+
+func (s *LineupRecommendService) calcOpponentDefenseAnchorFactor(
+	player entity.NBAGamePlayer,
+	allPlayers []entity.NBAGamePlayer,
+	dbPlayerMap map[uint]*entity.Player,
+	gameStatsMap map[uint][]entity.PlayerGameStats,
+) float64 {
+	positionGroup := normalizePositionGroup(player.Position)
+	maxImpact := 0.0
+
+	for _, opponent := range allPlayers {
+		if opponent.MatchID != player.MatchID || opponent.NBATeamID == player.NBATeamID {
+			continue
+		}
+		dbOpponent := dbPlayerMap[opponent.NBAPlayerID]
+		if dbOpponent == nil || dbOpponent.TxPlayerID == 0 {
+			continue
+		}
+		stats := gameStatsMap[dbOpponent.TxPlayerID]
+		if len(stats) == 0 {
+			continue
+		}
+
+		recentCount := min(8, len(stats))
+		if recentCount == 0 {
+			continue
+		}
+
+		blocksTotal := 0.0
+		stealsTotal := 0.0
+		minutesTotal := 0.0
+		for i := 0; i < recentCount; i++ {
+			blocksTotal += float64(stats[i].Blocks)
+			stealsTotal += float64(stats[i].Steals)
+			minutesTotal += float64(stats[i].Minutes)
+		}
+
+		blocksAvg := blocksTotal / float64(recentCount)
+		stealsAvg := stealsTotal / float64(recentCount)
+		minutesAvg := minutesTotal / float64(recentCount)
+		reliability := clamp(float64(recentCount)/8.0, 0.35, 1.0)
+
+		impact := 0.0
+		if positionGroup == 0 {
+			impact = 1.25*blocksAvg + 0.45*stealsAvg
+		} else {
+			impact = 0.45*blocksAvg + 0.95*stealsAvg
+		}
+		if minutesAvg >= 30 {
+			impact += 0.20
+		} else if minutesAvg >= 24 {
+			impact += 0.10
+		}
+		if opponent.Salary >= 35 {
+			impact += 0.10
+		}
+		if opponent.CombatPower >= 45 {
+			impact += 0.08
+		}
+
+		impact *= reliability
+		if impact > maxImpact {
+			maxImpact = impact
+		}
+	}
+
+	if maxImpact <= 0 {
+		return 1.0
+	}
+
+	penaltySlope := 0.032
+	if positionGroup == 1 {
+		penaltySlope = 0.020
+	}
+	penalty := penaltySlope * math.Max(0.0, maxImpact-1.10)
+	return clamp(1.0-penalty, 0.88, 1.02)
 }
 
 func (s *LineupRecommendService) calcTeamContextFactor(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer) float64 {
@@ -714,6 +1164,205 @@ func (s *LineupRecommendService) calcUsageFactor(stats []entity.PlayerGameStats)
 	}
 
 	return clamp(recentAvg/totalAvg, 0.92, 1.10)
+}
+
+func (s *LineupRecommendService) calcDefenseUpsideFactor(
+	stats []entity.PlayerGameStats,
+	seasonStats *entity.PlayerSeasonStats,
+	position uint,
+) float64 {
+	if len(stats) == 0 {
+		return 1.0
+	}
+
+	recentCount := min(5, len(stats))
+	recentStocks := 0.0
+	recentMinutes := 0.0
+	for i := 0; i < recentCount; i++ {
+		recentStocks += float64(stats[i].Blocks + stats[i].Steals)
+		recentMinutes += float64(stats[i].Minutes)
+	}
+	recentStocksAvg := recentStocks / float64(recentCount)
+	recentMinutesAvg := recentMinutes / float64(recentCount)
+
+	baselineStocks := 0.0
+	if seasonStats != nil && (seasonStats.Blocks > 0 || seasonStats.Steals > 0) {
+		baselineStocks = seasonStats.Blocks + seasonStats.Steals
+	} else {
+		window := min(10, len(stats))
+		total := 0.0
+		for i := 0; i < window; i++ {
+			total += float64(stats[i].Blocks + stats[i].Steals)
+		}
+		if window > 0 {
+			baselineStocks = total / float64(window)
+		}
+	}
+	if baselineStocks <= 0 {
+		return 1.0
+	}
+
+	ratio := recentStocksAvg / baselineStocks
+	positionGroup := normalizePositionGroup(position)
+	if positionGroup == 0 {
+		ratio = clamp(ratio, 0.92, 1.14)
+	} else {
+		ratio = clamp(ratio, 0.94, 1.10)
+	}
+
+	if recentMinutesAvg < 20 {
+		ratio = 1.0 + (ratio-1.0)*0.55
+	} else if recentMinutesAvg < 26 {
+		ratio = 1.0 + (ratio-1.0)*0.75
+	}
+	return ratio
+}
+
+func (s *LineupRecommendService) calcRoleSecurityFactor(
+	stats []entity.PlayerGameStats,
+	seasonStats *entity.PlayerSeasonStats,
+	salary uint,
+) float64 {
+	if len(stats) == 0 {
+		switch {
+		case seasonStats != nil && seasonStats.Minutes >= 24:
+			return 1.0
+		case seasonStats != nil && seasonStats.Minutes >= 18:
+			return 0.95
+		case salary <= 12:
+			return 0.84
+		default:
+			return 0.90
+		}
+	}
+
+	recentCount := min(5, len(stats))
+	window := min(8, len(stats))
+	recentMinutes := 0.0
+	for i := 0; i < recentCount; i++ {
+		recentMinutes += float64(stats[i].Minutes)
+	}
+	recentAvg := recentMinutes / float64(recentCount)
+
+	baseline := 0.0
+	if seasonStats != nil && seasonStats.Minutes > 0 {
+		baseline = seasonStats.Minutes
+	} else {
+		for i := 0; i < window; i++ {
+			baseline += float64(stats[i].Minutes)
+		}
+		baseline /= float64(window)
+	}
+
+	lowMinutesCount := 0
+	veryLowMinutesCount := 0
+	for i := 0; i < window; i++ {
+		if stats[i].Minutes <= 14 {
+			lowMinutesCount++
+		}
+		if stats[i].Minutes <= 8 {
+			veryLowMinutesCount++
+		}
+	}
+
+	factor := 1.0
+	if baseline > 0 {
+		if recentAvg < 0.85*baseline {
+			factor -= clamp((0.85*baseline-recentAvg)/baseline, 0.0, 0.16)
+		} else if recentAvg > 1.08*baseline {
+			factor += clamp((recentAvg-1.08*baseline)/baseline, 0.0, 0.04)
+		}
+	}
+
+	lowRate := float64(lowMinutesCount) / float64(window)
+	veryLowRate := float64(veryLowMinutesCount) / float64(window)
+	factor -= 0.12 * lowRate
+	factor -= 0.20 * veryLowRate
+
+	if salary <= 12 {
+		factor -= 0.05 * lowRate
+	}
+	if window < 5 {
+		factor -= 0.03
+	}
+
+	return clamp(factor, 0.72, 1.05)
+}
+
+func calcDataReliabilityFactor(
+	statCount int,
+	dbPlayer *entity.Player,
+	seasonStats *entity.PlayerSeasonStats,
+	salary uint,
+) float64 {
+	hasDBAnchor := dbPlayer != nil && (dbPlayer.PowerPer5 > 0 || dbPlayer.PowerPer10 > 0)
+	hasSeasonAnchor := seasonStats != nil && seasonStats.Minutes > 0
+
+	factor := 1.0
+	switch {
+	case statCount >= 8:
+		factor = 1.0
+	case statCount >= 5:
+		factor = 0.95
+	case statCount >= 3:
+		factor = 0.90
+	case statCount >= 1:
+		factor = 0.84
+	default:
+		if hasDBAnchor || hasSeasonAnchor {
+			factor = 0.78
+		} else {
+			factor = 0.68
+		}
+	}
+
+	if salary <= 10 && statCount < 3 {
+		factor -= 0.08
+	} else if salary <= 15 && statCount < 5 {
+		factor -= 0.04
+	}
+
+	return clamp(factor, 0.62, 1.02)
+}
+
+func (s *LineupRecommendService) calcConservativePower(
+	predicted float64,
+	stats []entity.PlayerGameStats,
+	availabilityScore float64,
+	roleSecurityFactor float64,
+	dataReliabilityFactor float64,
+) float64 {
+	if predicted <= 0 {
+		return predicted
+	}
+
+	riskAnchor := clamp(roleSecurityFactor*dataReliabilityFactor, 0.65, 1.0)
+	if len(stats) < 3 {
+		conservative := predicted * (0.82 + 0.18*riskAnchor)
+		return clamp(conservative, predicted*0.60, predicted)
+	}
+
+	window := min(8, len(stats))
+	sum := 0.0
+	powers := make([]float64, 0, window)
+	for i := 0; i < window; i++ {
+		power := calcPowerFromStats(stats[i])
+		powers = append(powers, power)
+		sum += power
+	}
+	mean := sum / float64(window)
+	variance := 0.0
+	for _, p := range powers {
+		diff := p - mean
+		variance += diff * diff
+	}
+	stdDev := math.Sqrt(variance / float64(window))
+	floorPower := math.Max(0.0, mean-0.85*stdDev)
+
+	blended := 0.72*predicted + 0.28*floorPower
+	availabilityRisk := clamp(0.85+0.15*availabilityScore, 0.75, 1.0)
+	conservative := blended * clamp(0.90+0.10*riskAnchor, 0.80, 1.02) * availabilityRisk
+	return clamp(conservative, predicted*0.60, predicted*1.02)
 }
 
 func (s *LineupRecommendService) calcStabilityFactor(stats []entity.PlayerGameStats) float64 {

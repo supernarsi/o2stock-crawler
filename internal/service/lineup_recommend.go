@@ -73,22 +73,30 @@ type ActualFeedbackLineup struct {
 
 // PlayerPrediction 预测结果及各因子明细。
 type PlayerPrediction struct {
-	PredictedPower    float64
-	BaseValue         float64
-	AvailabilityScore float64
-	StatusTrend       float64
-	MatchupFactor     float64
-	DefRatingFactor   float64
-	PaceFactor        float64
-	DvPFactor         float64
-	HistoryFactor     float64
-	HomeAwayFactor    float64
-	TeamContextFactor float64
-	MinutesFactor     float64
-	UsageFactor       float64
-	StabilityFactor   float64
-	FatigueFactor     float64
-	GameRiskFactor    float64
+	PredictedPower        float64
+	OptimizedPower        float64
+	BaseValue             float64
+	AvailabilityScore     float64
+	StatusTrend           float64
+	MatchupFactor         float64
+	DefRatingFactor       float64
+	PaceFactor            float64
+	DvPFactor             float64
+	HistoryFactor         float64
+	OpponentFormFactor    float64
+	RimDeterrenceFactor   float64
+	DefenseAnchorFactor   float64
+	HomeAwayFactor        float64
+	TeamContextFactor     float64
+	MinutesFactor         float64
+	UsageFactor           float64
+	StabilityFactor       float64
+	DefenseUpsideFactor   float64
+	RoleSecurityFactor    float64
+	DataReliabilityFactor float64
+	TeamExposureFactor    float64
+	FatigueFactor         float64
+	GameRiskFactor        float64
 }
 
 // PlayerCandidate 候选球员（含预测值）。
@@ -105,24 +113,32 @@ type DetailPlayer struct {
 	Salary         uint    `json:"salary"`
 	CombatPower    float64 `json:"combat_power"`
 	PredictedPower float64 `json:"predicted_power"`
+	OptimizedPower float64 `json:"optimized_power,omitempty"`
 	Factors        struct {
-		BaseValue         float64 `json:"base_value"`
-		AvailabilityScore float64 `json:"availability_score"`
-		StatusTrend       float64 `json:"status_trend"`
-		MatchupFactor     float64 `json:"matchup_factor"`
-		DefRatingFactor   float64 `json:"def_rating_factor,omitempty"`
-		PaceFactor        float64 `json:"pace_factor,omitempty"`
-		DvPFactor         float64 `json:"dvp_factor,omitempty"`
-		HistoryFactor     float64 `json:"history_factor,omitempty"`
-		HomeAwayFactor    float64 `json:"home_away_factor"`
-		TeamContextFactor float64 `json:"team_context_factor"`
-		MinutesFactor     float64 `json:"minutes_factor"`
-		UsageFactor       float64 `json:"usage_factor"`
-		StabilityFactor   float64 `json:"stability_factor"`
-		FatigueFactor     float64 `json:"fatigue_factor"`
-		GameRiskFactor    float64 `json:"game_risk_factor"`
-		DbPowerPer5       float64 `json:"db_power_per5,omitempty"`
-		DbPowerPer10      float64 `json:"db_power_per10,omitempty"`
+		BaseValue             float64 `json:"base_value"`
+		AvailabilityScore     float64 `json:"availability_score"`
+		StatusTrend           float64 `json:"status_trend"`
+		MatchupFactor         float64 `json:"matchup_factor"`
+		DefRatingFactor       float64 `json:"def_rating_factor,omitempty"`
+		PaceFactor            float64 `json:"pace_factor,omitempty"`
+		DvPFactor             float64 `json:"dvp_factor,omitempty"`
+		HistoryFactor         float64 `json:"history_factor,omitempty"`
+		OpponentFormFactor    float64 `json:"opponent_form_factor,omitempty"`
+		RimDeterrenceFactor   float64 `json:"rim_deterrence_factor,omitempty"`
+		DefenseAnchorFactor   float64 `json:"defense_anchor_factor,omitempty"`
+		HomeAwayFactor        float64 `json:"home_away_factor"`
+		TeamContextFactor     float64 `json:"team_context_factor"`
+		MinutesFactor         float64 `json:"minutes_factor"`
+		UsageFactor           float64 `json:"usage_factor"`
+		StabilityFactor       float64 `json:"stability_factor"`
+		DefenseUpsideFactor   float64 `json:"defense_upside_factor,omitempty"`
+		RoleSecurityFactor    float64 `json:"role_security_factor,omitempty"`
+		DataReliabilityFactor float64 `json:"data_reliability_factor,omitempty"`
+		TeamExposureFactor    float64 `json:"team_exposure_factor,omitempty"`
+		FatigueFactor         float64 `json:"fatigue_factor"`
+		GameRiskFactor        float64 `json:"game_risk_factor"`
+		DbPowerPer5           float64 `json:"db_power_per5,omitempty"`
+		DbPowerPer10          float64 `json:"db_power_per10,omitempty"`
 	} `json:"factors"`
 }
 

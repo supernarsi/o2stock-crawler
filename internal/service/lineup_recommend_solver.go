@@ -42,7 +42,8 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 		if c.Player.Salary == 0 {
 			continue
 		}
-		if allowNonPositive || c.Prediction.PredictedPower > 0 {
+		scorePower := selectionPower(c, allowNonPositive)
+		if allowNonPositive || scorePower > 0 {
 			allValid = append(allValid, c)
 		}
 	}
@@ -51,6 +52,11 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 	}
 
 	valid := allValid
+
+	stateLimit := topN
+	if !allowNonPositive {
+		stateLimit = max(topN*12, 36)
+	}
 
 	log.Printf("DP 求解: 候选球员 %d 人, 工资帽 %d, 选 %d 人, 输出 Top %d", len(valid), salaryCap, pickCount, topN)
 
@@ -63,7 +69,7 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 
 	for i, c := range valid {
 		salary := int(c.Player.Salary)
-		power := c.Prediction.PredictedPower
+		power := selectionPower(c, allowNonPositive)
 		if salary > salaryCap {
 			continue
 		}
@@ -83,24 +89,31 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 						score:   prev.score + power,
 						salary:  k,
 						indices: nextIdx,
-					}, topN)
+					}, stateLimit)
 				}
 				dp[j][k] = nextStates
 			}
 		}
 	}
 
-	bestStates := make([]lineupState, 0, topN)
+	bestStates := make([]lineupState, 0, stateLimit)
 	for k := 0; k <= salaryCap; k++ {
 		for _, st := range dp[pickCount][k] {
-			bestStates = insertLineupState(bestStates, st, topN)
+			bestStates = insertLineupState(bestStates, st, stateLimit)
 		}
 	}
 	if len(bestStates) == 0 {
 		return nil
 	}
 
-	results := make([][]PlayerCandidate, 0, len(bestStates))
+	type scoredLineup struct {
+		lineup         []PlayerCandidate
+		rawScore       float64
+		structureScore float64
+		totalSalary    int
+	}
+
+	scored := make([]scoredLineup, 0, len(bestStates))
 	for _, st := range bestStates {
 		lineup := make([]PlayerCandidate, 0, len(st.indices))
 		for _, idx := range st.indices {
@@ -115,9 +128,76 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 			}
 			return lineup[i].Prediction.PredictedPower > lineup[j].Prediction.PredictedPower
 		})
-		results = append(results, lineup)
+
+		totalSalary := 0
+		for _, c := range lineup {
+			totalSalary += int(c.Player.Salary)
+		}
+
+		structureScore := st.score
+		if !allowNonPositive {
+			structureScore = st.score * calcLineupStructureFactor(lineup)
+		}
+
+		scored = append(scored, scoredLineup{
+			lineup:         lineup,
+			rawScore:       st.score,
+			structureScore: structureScore,
+			totalSalary:    totalSalary,
+		})
+	}
+
+	sort.Slice(scored, func(i, j int) bool {
+		if math.Abs(scored[i].structureScore-scored[j].structureScore) > 1e-9 {
+			return scored[i].structureScore > scored[j].structureScore
+		}
+		if math.Abs(scored[i].rawScore-scored[j].rawScore) > 1e-9 {
+			return scored[i].rawScore > scored[j].rawScore
+		}
+		return scored[i].totalSalary < scored[j].totalSalary
+	})
+
+	results := make([][]PlayerCandidate, 0, min(topN, len(scored)))
+	for _, item := range scored {
+		results = append(results, item.lineup)
+	}
+	if len(results) > topN {
+		results = results[:topN]
 	}
 	return results
+}
+
+func selectionPower(candidate PlayerCandidate, allowNonPositive bool) float64 {
+	if allowNonPositive {
+		return candidate.Prediction.PredictedPower
+	}
+	if candidate.Prediction.OptimizedPower > 0 {
+		return candidate.Prediction.OptimizedPower
+	}
+	return candidate.Prediction.PredictedPower
+}
+
+func calcLineupStructureFactor(lineup []PlayerCandidate) float64 {
+	// 仅在标准 5 人阵容下施加结构惩罚，避免低薪 punt 过多导致阵容稳定性差。
+	if len(lineup) != defaultPickCount {
+		return 1.0
+	}
+
+	cheapCount := 0
+	for _, c := range lineup {
+		if c.Player.Salary <= 10 {
+			cheapCount++
+		}
+	}
+
+	switch {
+	case cheapCount <= 1:
+		return 1.0
+	case cheapCount == 2:
+		return 0.97
+	default:
+		return 0.92
+	}
 }
 
 type lineupState struct {

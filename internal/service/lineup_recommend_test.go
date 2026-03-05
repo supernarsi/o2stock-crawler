@@ -107,7 +107,7 @@ func TestCalcMatchupFactorWithContext(t *testing.T) {
 		"LAL": {1: {Factor: 1.06, SampleCount: 20}},
 	}
 
-	matchup, defFactor, paceFactor, dvpFactor, historyFactor := svc.calcMatchupFactorWithContext(
+	matchup := svc.calcMatchupFactorWithContext(
 		stats,
 		"湖人",
 		20,
@@ -116,20 +116,26 @@ func TestCalcMatchupFactorWithContext(t *testing.T) {
 		dvpMap,
 	)
 
-	if math.Abs(defFactor-1.12) > 1e-9 {
-		t.Fatalf("defFactor=%.3f, want 1.12", defFactor)
+	if math.Abs(matchup.DefRatingFactor-1.05) > 1e-9 {
+		t.Fatalf("defFactor=%.3f, want 1.05", matchup.DefRatingFactor)
 	}
-	if math.Abs(paceFactor-1.08) > 1e-9 {
-		t.Fatalf("paceFactor=%.3f, want 1.08", paceFactor)
+	if math.Abs(matchup.PaceFactor-1.0333333333) > 1e-9 {
+		t.Fatalf("paceFactor=%.3f, want 1.033", matchup.PaceFactor)
 	}
-	if math.Abs(dvpFactor-1.06) > 1e-9 {
-		t.Fatalf("dvpFactor=%.3f, want 1.06", dvpFactor)
+	if math.Abs(matchup.DvPFactor-1.05) > 1e-9 {
+		t.Fatalf("dvpFactor=%.3f, want 1.05", matchup.DvPFactor)
 	}
-	if math.Abs(historyFactor-1.10) > 1e-9 {
-		t.Fatalf("historyFactor=%.3f, want 1.10", historyFactor)
+	if math.Abs(matchup.HistoryFactor-1.05) > 1e-9 {
+		t.Fatalf("historyFactor=%.3f, want 1.05", matchup.HistoryFactor)
 	}
-	if math.Abs(matchup-1.17024) > 1e-6 {
-		t.Fatalf("matchupFactor=%.5f, want 1.17024", matchup)
+	if math.Abs(matchup.OpponentFormFactor-1.0) > 1e-9 {
+		t.Fatalf("opponentFormFactor=%.3f, want 1.00", matchup.OpponentFormFactor)
+	}
+	if math.Abs(matchup.RimDeterrenceFactor-1.0) > 1e-9 {
+		t.Fatalf("rimDeterrenceFactor=%.3f, want 1.00", matchup.RimDeterrenceFactor)
+	}
+	if math.Abs(matchup.MatchupFactor-1.0890249999) > 1e-6 {
+		t.Fatalf("matchupFactor=%.8f, want 1.08902500", matchup.MatchupFactor)
 	}
 }
 
@@ -209,6 +215,54 @@ func TestBuildDVPFactorMap(t *testing.T) {
 	}
 }
 
+func TestCalcOpponentDefenseAnchorFactorPenalizesEliteRimProtector(t *testing.T) {
+	svc := &LineupRecommendService{}
+
+	playerFrontcourt := entity.NBAGamePlayer{
+		NBAPlayerID: 1001,
+		NBATeamID:   "DET",
+		MatchID:     "m1",
+		Position:    0,
+	}
+	playerGuard := entity.NBAGamePlayer{
+		NBAPlayerID: 1002,
+		NBATeamID:   "DET",
+		MatchID:     "m1",
+		Position:    1,
+	}
+	wembyLike := entity.NBAGamePlayer{
+		NBAPlayerID: 2001,
+		NBATeamID:   "SAS",
+		MatchID:     "m1",
+		Salary:      42,
+		CombatPower: 51,
+	}
+
+	allPlayers := []entity.NBAGamePlayer{playerFrontcourt, playerGuard, wembyLike}
+	dbPlayerMap := map[uint]*entity.Player{
+		2001: {NBAPlayerID: 2001, TxPlayerID: 9001},
+	}
+	gameStatsMap := map[uint][]entity.PlayerGameStats{
+		9001: {
+			{Blocks: 5, Steals: 2, Minutes: 34},
+			{Blocks: 4, Steals: 1, Minutes: 33},
+			{Blocks: 3, Steals: 2, Minutes: 35},
+			{Blocks: 4, Steals: 1, Minutes: 32},
+			{Blocks: 3, Steals: 2, Minutes: 34},
+		},
+	}
+
+	frontcourtFactor := svc.calcOpponentDefenseAnchorFactor(playerFrontcourt, allPlayers, dbPlayerMap, gameStatsMap)
+	guardFactor := svc.calcOpponentDefenseAnchorFactor(playerGuard, allPlayers, dbPlayerMap, gameStatsMap)
+
+	if !(frontcourtFactor < 0.94) {
+		t.Fatalf("frontcourtFactor=%.3f, want < 0.94", frontcourtFactor)
+	}
+	if !(guardFactor < 1.0 && guardFactor > frontcourtFactor) {
+		t.Fatalf("guardFactor=%.3f, expected between (frontcourtFactor,1.0), frontcourtFactor=%.3f", guardFactor, frontcourtFactor)
+	}
+}
+
 func TestCalcMinutesFactorUsesSeasonBaseline(t *testing.T) {
 	svc := &LineupRecommendService{}
 	stats := []entity.PlayerGameStats{
@@ -241,6 +295,149 @@ func TestCalcUsageFactorRecentIncrease(t *testing.T) {
 	}
 }
 
+func TestCalcDefenseUpsideFactor(t *testing.T) {
+	svc := &LineupRecommendService{}
+	stats := []entity.PlayerGameStats{
+		{Blocks: 4, Steals: 2, Minutes: 34},
+		{Blocks: 3, Steals: 2, Minutes: 33},
+		{Blocks: 4, Steals: 1, Minutes: 32},
+		{Blocks: 3, Steals: 2, Minutes: 33},
+		{Blocks: 4, Steals: 2, Minutes: 34},
+	}
+	season := &entity.PlayerSeasonStats{
+		Blocks: 2.2,
+		Steals: 1.0,
+	}
+
+	frontcourt := svc.calcDefenseUpsideFactor(stats, season, 0)
+	guard := svc.calcDefenseUpsideFactor(stats, season, 1)
+	if math.Abs(frontcourt-1.14) > 1e-9 {
+		t.Fatalf("frontcourt=%.2f, want 1.14", frontcourt)
+	}
+	if math.Abs(guard-1.10) > 1e-9 {
+		t.Fatalf("guard=%.2f, want 1.10", guard)
+	}
+}
+
+func TestCalcRoleSecurityFactorPenalizesLowMinuteRisk(t *testing.T) {
+	svc := &LineupRecommendService{}
+	stable := []entity.PlayerGameStats{
+		{Minutes: 35},
+		{Minutes: 34},
+		{Minutes: 36},
+		{Minutes: 33},
+		{Minutes: 34},
+	}
+	volatile := []entity.PlayerGameStats{
+		{Minutes: 28},
+		{Minutes: 8},
+		{Minutes: 24},
+		{Minutes: 10},
+		{Minutes: 7},
+		{Minutes: 22},
+	}
+
+	stableFactor := svc.calcRoleSecurityFactor(stable, &entity.PlayerSeasonStats{Minutes: 33}, 30)
+	volatileFactor := svc.calcRoleSecurityFactor(volatile, &entity.PlayerSeasonStats{Minutes: 24}, 10)
+
+	if !(stableFactor > volatileFactor) {
+		t.Fatalf("expected stableFactor > volatileFactor, got stable=%.2f volatile=%.2f", stableFactor, volatileFactor)
+	}
+	if !(volatileFactor < 0.90) {
+		t.Fatalf("volatileFactor=%.2f, want < 0.90", volatileFactor)
+	}
+}
+
+func TestCalcDataReliabilityFactor(t *testing.T) {
+	high := calcDataReliabilityFactor(9, &entity.Player{PowerPer10: 35}, &entity.PlayerSeasonStats{Minutes: 32}, 35)
+	low := calcDataReliabilityFactor(0, nil, nil, 8)
+	mid := calcDataReliabilityFactor(2, &entity.Player{PowerPer10: 30}, nil, 8)
+
+	if math.Abs(high-1.0) > 1e-9 {
+		t.Fatalf("high=%.2f, want 1.00", high)
+	}
+	if math.Abs(low-0.62) > 1e-9 {
+		t.Fatalf("low=%.2f, want 0.62", low)
+	}
+	if math.Abs(mid-0.76) > 1e-9 {
+		t.Fatalf("mid=%.2f, want 0.76", mid)
+	}
+}
+
+func TestApplyTeamExposurePenalty(t *testing.T) {
+	candidates := []PlayerCandidate{
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 1, TeamName: "湖人"}, Prediction: PlayerPrediction{PredictedPower: 50, OptimizedPower: 50}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 2, TeamName: "湖人"}, Prediction: PlayerPrediction{PredictedPower: 40, OptimizedPower: 40}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 3, TeamName: "湖人"}, Prediction: PlayerPrediction{PredictedPower: 29, OptimizedPower: 29}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 4, TeamName: "湖人"}, Prediction: PlayerPrediction{PredictedPower: 20, OptimizedPower: 20}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 5, TeamName: "勇士"}, Prediction: PlayerPrediction{PredictedPower: 35, OptimizedPower: 35}},
+	}
+
+	adjusted := applyTeamExposurePenalty(candidates)
+	byID := make(map[uint]PlayerPrediction, len(adjusted))
+	for _, c := range adjusted {
+		byID[c.Player.NBAPlayerID] = c.Prediction
+	}
+
+	if math.Abs(byID[1].TeamExposureFactor-1.0) > 1e-9 || math.Abs(byID[1].OptimizedPower-50.0) > 1e-9 {
+		t.Fatalf("id=1 unexpected penalty: %+v", byID[1])
+	}
+	if math.Abs(byID[2].TeamExposureFactor-1.0) > 1e-9 || math.Abs(byID[2].OptimizedPower-40.0) > 1e-9 {
+		t.Fatalf("id=2 unexpected penalty: %+v", byID[2])
+	}
+	if math.Abs(byID[3].TeamExposureFactor-0.95) > 1e-9 || math.Abs(byID[3].OptimizedPower-27.55) > 1e-9 {
+		t.Fatalf("id=3 unexpected penalty: %+v", byID[3])
+	}
+	if math.Abs(byID[4].TeamExposureFactor-0.90) > 1e-9 || math.Abs(byID[4].OptimizedPower-18.0) > 1e-9 {
+		t.Fatalf("id=4 unexpected penalty: %+v", byID[4])
+	}
+	if math.Abs(byID[5].TeamExposureFactor-1.0) > 1e-9 || math.Abs(byID[5].OptimizedPower-35.0) > 1e-9 {
+		t.Fatalf("id=5 unexpected penalty: %+v", byID[5])
+	}
+}
+
+func TestApplyTeamExposurePenaltyPenalizesSecondPlayerUnderHighPressure(t *testing.T) {
+	candidates := []PlayerCandidate{
+		{
+			Player: entity.NBAGamePlayer{NBAPlayerID: 1, TeamName: "活塞"},
+			Prediction: PlayerPrediction{
+				PredictedPower:      52,
+				OptimizedPower:      52,
+				MatchupFactor:       0.90,
+				DefenseAnchorFactor: 0.90,
+				RimDeterrenceFactor: 0.90,
+				OpponentFormFactor:  0.90,
+			},
+		},
+		{
+			Player: entity.NBAGamePlayer{NBAPlayerID: 2, TeamName: "活塞"},
+			Prediction: PlayerPrediction{
+				PredictedPower:      41,
+				OptimizedPower:      41,
+				MatchupFactor:       0.90,
+				DefenseAnchorFactor: 0.90,
+				RimDeterrenceFactor: 0.90,
+				OpponentFormFactor:  0.90,
+			},
+		},
+	}
+
+	adjusted := applyTeamExposurePenalty(candidates)
+	byID := make(map[uint]PlayerPrediction, len(adjusted))
+	for _, c := range adjusted {
+		byID[c.Player.NBAPlayerID] = c.Prediction
+	}
+	if math.Abs(byID[1].TeamExposureFactor-1.0) > 1e-9 {
+		t.Fatalf("id=1 unexpected penalty: %+v", byID[1])
+	}
+	if math.Abs(byID[2].TeamExposureFactor-0.90) > 1e-9 {
+		t.Fatalf("id=2 expected second-player penalty 0.90, got %+v", byID[2])
+	}
+	if math.Abs(byID[2].OptimizedPower-36.9) > 1e-9 {
+		t.Fatalf("id=2 optimized power expected 36.9, got %+v", byID[2])
+	}
+}
+
 func TestCalcFatigueFactorBackToBack(t *testing.T) {
 	svc := &LineupRecommendService{}
 	stats := []entity.PlayerGameStats{
@@ -250,6 +447,56 @@ func TestCalcFatigueFactorBackToBack(t *testing.T) {
 	got := svc.calcFatigueFactor(stats, "2026-03-05")
 	if math.Abs(got-0.94) > 1e-9 {
 		t.Fatalf("fatigueFactor=%.2f, want 0.94", got)
+	}
+}
+
+func TestSelectionPower(t *testing.T) {
+	c := PlayerCandidate{
+		Prediction: PlayerPrediction{
+			PredictedPower: 50,
+			OptimizedPower: 42,
+		},
+	}
+
+	if got := selectionPower(c, false); math.Abs(got-42) > 1e-9 {
+		t.Fatalf("selectionPower(recommend)=%.1f, want 42", got)
+	}
+	if got := selectionPower(c, true); math.Abs(got-50) > 1e-9 {
+		t.Fatalf("selectionPower(backtest)=%.1f, want 50", got)
+	}
+}
+
+func TestCalcLineupStructureFactor(t *testing.T) {
+	lineupCheap1 := []PlayerCandidate{
+		{Player: entity.NBAGamePlayer{Salary: 40}},
+		{Player: entity.NBAGamePlayer{Salary: 35}},
+		{Player: entity.NBAGamePlayer{Salary: 30}},
+		{Player: entity.NBAGamePlayer{Salary: 25}},
+		{Player: entity.NBAGamePlayer{Salary: 10}},
+	}
+	lineupCheap2 := []PlayerCandidate{
+		{Player: entity.NBAGamePlayer{Salary: 40}},
+		{Player: entity.NBAGamePlayer{Salary: 35}},
+		{Player: entity.NBAGamePlayer{Salary: 30}},
+		{Player: entity.NBAGamePlayer{Salary: 10}},
+		{Player: entity.NBAGamePlayer{Salary: 8}},
+	}
+	lineupCheap3 := []PlayerCandidate{
+		{Player: entity.NBAGamePlayer{Salary: 40}},
+		{Player: entity.NBAGamePlayer{Salary: 10}},
+		{Player: entity.NBAGamePlayer{Salary: 9}},
+		{Player: entity.NBAGamePlayer{Salary: 8}},
+		{Player: entity.NBAGamePlayer{Salary: 7}},
+	}
+
+	if got := calcLineupStructureFactor(lineupCheap1); math.Abs(got-1.0) > 1e-9 {
+		t.Fatalf("factor(cheap1)=%.2f, want 1.00", got)
+	}
+	if got := calcLineupStructureFactor(lineupCheap2); math.Abs(got-0.97) > 1e-9 {
+		t.Fatalf("factor(cheap2)=%.2f, want 0.97", got)
+	}
+	if got := calcLineupStructureFactor(lineupCheap3); math.Abs(got-0.92) > 1e-9 {
+		t.Fatalf("factor(cheap3)=%.2f, want 0.92", got)
 	}
 }
 

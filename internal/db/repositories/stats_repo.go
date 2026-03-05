@@ -19,6 +19,8 @@ type TeamGameAggregate struct {
 	VsTeamName     string    `gorm:"column:vs_team_name"`
 	GameDate       time.Time `gorm:"column:game_date"`
 	TeamPoints     float64   `gorm:"column:team_points"`
+	TeamBlocks     float64   `gorm:"column:team_blocks"`
+	TeamSteals     float64   `gorm:"column:team_steals"`
 }
 
 func NewStatsRepository(db *gorm.DB) *StatsRepository {
@@ -139,7 +141,7 @@ func (r *StatsRepository) GetRecentTeamGameAggregates(ctx context.Context, lookb
 
 	err := r.ctx(ctx).
 		Model(&entity.PlayerGameStats{}).
-		Select("tx_game_id, player_team_name, vs_team_name, MAX(game_date) AS game_date, SUM(points) AS team_points").
+		Select("tx_game_id, player_team_name, vs_team_name, MAX(game_date) AS game_date, SUM(points) AS team_points, SUM(blocks) AS team_blocks, SUM(steals) AS team_steals").
 		Where("game_date >= ?", startDate).
 		Group("tx_game_id, player_team_name, vs_team_name").
 		Order("game_date DESC").
