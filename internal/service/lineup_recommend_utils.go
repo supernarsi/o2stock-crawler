@@ -156,6 +156,15 @@ func parseISODate(value string) (time.Time, bool) {
 	return normalizeDateOnly(dt), true
 }
 
+func isHistoricalGameDate(gameDate string) bool {
+	targetDate, ok := parseISODate(gameDate)
+	if !ok {
+		return false
+	}
+	now := normalizeDateOnly(time.Now())
+	return targetDate.Before(now)
+}
+
 func normalizeDateOnly(dt time.Time) time.Time {
 	y, m, d := dt.UTC().Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)

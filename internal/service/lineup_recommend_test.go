@@ -180,9 +180,9 @@ func TestBuildDVPFactorMap(t *testing.T) {
 		{NBAPlayerID: 1, Position: 1},
 		{NBAPlayerID: 2, Position: 1},
 	}
-	dbPlayerMap := map[uint]*entity.Player{
-		1: {NBAPlayerID: 1, TxPlayerID: 101},
-		2: {NBAPlayerID: 2, TxPlayerID: 102},
+	txPlayerIDMap := map[uint]uint{
+		1: 101,
+		2: 102,
 	}
 	gameStatsMap := map[uint][]entity.PlayerGameStats{
 		101: {
@@ -207,7 +207,7 @@ func TestBuildDVPFactorMap(t *testing.T) {
 		},
 	}
 
-	dvpMap := svc.buildDVPFactorMap(allPlayers, dbPlayerMap, gameStatsMap)
+	dvpMap := svc.buildDVPFactorMap(allPlayers, txPlayerIDMap, gameStatsMap)
 	if got := dvpMap["LAL"][1].Factor; math.Abs(got-1.10) > 1e-9 {
 		t.Fatalf("LAL dvpFactor=%.2f, want 1.10", got)
 	}
@@ -240,8 +240,8 @@ func TestCalcOpponentDefenseAnchorFactorPenalizesEliteRimProtector(t *testing.T)
 	}
 
 	allPlayers := []entity.NBAGamePlayer{playerFrontcourt, playerGuard, wembyLike}
-	dbPlayerMap := map[uint]*entity.Player{
-		2001: {NBAPlayerID: 2001, TxPlayerID: 9001},
+	txPlayerIDMap := map[uint]uint{
+		2001: 9001,
 	}
 	gameStatsMap := map[uint][]entity.PlayerGameStats{
 		9001: {
@@ -253,8 +253,8 @@ func TestCalcOpponentDefenseAnchorFactorPenalizesEliteRimProtector(t *testing.T)
 		},
 	}
 
-	frontcourtFactor := svc.calcOpponentDefenseAnchorFactor(playerFrontcourt, allPlayers, dbPlayerMap, gameStatsMap)
-	guardFactor := svc.calcOpponentDefenseAnchorFactor(playerGuard, allPlayers, dbPlayerMap, gameStatsMap)
+	frontcourtFactor := svc.calcOpponentDefenseAnchorFactor(playerFrontcourt, allPlayers, txPlayerIDMap, gameStatsMap)
+	guardFactor := svc.calcOpponentDefenseAnchorFactor(playerGuard, allPlayers, txPlayerIDMap, gameStatsMap)
 
 	if !(frontcourtFactor < 0.94) {
 		t.Fatalf("frontcourtFactor=%.3f, want < 0.94", frontcourtFactor)
@@ -320,6 +320,79 @@ func TestCalcDefenseUpsideFactor(t *testing.T) {
 	}
 }
 
+func TestSoftenEliteFrontcourtNegativeFactors(t *testing.T) {
+	player := entity.NBAGamePlayer{
+		Position: 0,
+		Salary:   45,
+	}
+
+	matchup, anchor := softenEliteFrontcourtNegativeFactors(
+		player,
+		50.7,
+		0.87,
+		0.94,
+		1.10,
+		1.10,
+		1.14,
+	)
+
+	if !(matchup > 0.87 && matchup <= 1.0) {
+		t.Fatalf("matchup=%.3f, want softened but <= 1.0", matchup)
+	}
+	if !(anchor > 0.94 && anchor <= 1.0) {
+		t.Fatalf("anchor=%.3f, want softened but <= 1.0", anchor)
+	}
+}
+
+func TestCalcArchetypeFactorFrontcourtValueAndCheapGuard(t *testing.T) {
+	frontcourt := calcArchetypeFactor(
+		entity.NBAGamePlayer{Position: 0, Salary: 15, CombatPower: 26},
+		37.1,
+		1.10,
+		1.07,
+		0.93,
+		1.14,
+		1.04,
+		1.00,
+		1.10,
+	)
+	cheapGuard := calcArchetypeFactor(
+		entity.NBAGamePlayer{Position: 1, Salary: 10, CombatPower: 24},
+		36.9,
+		1.10,
+		1.10,
+		1.00,
+		1.10,
+		1.00,
+		1.00,
+		1.05,
+	)
+
+	if !(frontcourt > 1.0) {
+		t.Fatalf("frontcourt archetype factor=%.3f, want > 1.0", frontcourt)
+	}
+	if !(cheapGuard < 1.0) {
+		t.Fatalf("cheapGuard archetype factor=%.3f, want < 1.0", cheapGuard)
+	}
+}
+
+func TestAdjustOptimizedPowerForArchetype(t *testing.T) {
+	got := adjustOptimizedPowerForArchetype(
+		entity.NBAGamePlayer{Position: 0, Salary: 18},
+		41.9,
+		37.7,
+		37.1,
+		1.10,
+		1.07,
+		0.97,
+		1.08,
+	)
+
+	if !(got > 37.7 && got < 41.9) {
+		t.Fatalf("adjusted optimized=%.3f, want between original and predicted", got)
+	}
+}
+
 func TestCalcRoleSecurityFactorPenalizesLowMinuteRisk(t *testing.T) {
 	svc := &LineupRecommendService{}
 	stable := []entity.PlayerGameStats{
@@ -357,8 +430,8 @@ func TestCalcDataReliabilityFactor(t *testing.T) {
 	if math.Abs(high-1.0) > 1e-9 {
 		t.Fatalf("high=%.2f, want 1.00", high)
 	}
-	if math.Abs(low-0.62) > 1e-9 {
-		t.Fatalf("low=%.2f, want 0.62", low)
+	if math.Abs(low-0.42) > 1e-9 {
+		t.Fatalf("low=%.2f, want 0.42", low)
 	}
 	if math.Abs(mid-0.76) > 1e-9 {
 		t.Fatalf("mid=%.2f, want 0.76", mid)
@@ -781,6 +854,33 @@ func TestFormatBacktestPlayersFromRowWithTxOnlySlot(t *testing.T) {
 	}
 }
 
+func TestCalcAveragePowerFromStats(t *testing.T) {
+	stats := []entity.PlayerGameStats{
+		{Points: 30, Rebounds: 10, Assists: 5, Steals: 1, Blocks: 1, Turnovers: 2},
+		{Points: 20, Rebounds: 8, Assists: 8, Steals: 2, Blocks: 0, Turnovers: 3},
+		{Points: 10, Rebounds: 5, Assists: 4, Steals: 0, Blocks: 1, Turnovers: 1},
+		{Points: 40, Rebounds: 12, Assists: 7, Steals: 3, Blocks: 2, Turnovers: 4},
+	}
+
+	got := calcAveragePowerFromStats(stats, 3)
+	want := roundTo((calcPowerFromStats(stats[0])+calcPowerFromStats(stats[1])+calcPowerFromStats(stats[2]))/3, 1)
+	if got != want {
+		t.Fatalf("calcAveragePowerFromStats()=%.1f, want %.1f", got, want)
+	}
+}
+
+func TestBacktestBenchmarkResultType(t *testing.T) {
+	if got := backtestBenchmarkResultType(3); got != entity.LineupBacktestResultTypeAvg3Benchmark {
+		t.Fatalf("lookback=3 resultType=%d, want %d", got, entity.LineupBacktestResultTypeAvg3Benchmark)
+	}
+	if got := backtestBenchmarkResultType(5); got != entity.LineupBacktestResultTypeAvg5Benchmark {
+		t.Fatalf("lookback=5 resultType=%d, want %d", got, entity.LineupBacktestResultTypeAvg5Benchmark)
+	}
+	if got := backtestBenchmarkResultType(7); got != 0 {
+		t.Fatalf("lookback=7 resultType=%d, want 0", got)
+	}
+}
+
 func TestBuildBacktestRowFromCandidatesTxOnlyPersistsDetail(t *testing.T) {
 	svc := &LineupRecommendService{}
 	lineup := []PlayerCandidate{
@@ -823,6 +923,7 @@ func TestBuildBacktestRowFromCandidatesTxOnlyPersistsDetail(t *testing.T) {
 		lineup,
 		"",
 		0,
+		-1,
 	)
 	if row.Player2ID != 0 {
 		t.Fatalf("row.Player2ID=%d, want 0 for tx-only candidate", row.Player2ID)
@@ -837,6 +938,41 @@ func TestBuildBacktestRowFromCandidatesTxOnlyPersistsDetail(t *testing.T) {
 	}
 	if detail.Lineup[1].TxPlayerID != 196154 || detail.Lineup[1].NBAPlayerID != 0 {
 		t.Fatalf("detail slot2 ids mismatch: %+v", detail.Lineup[1])
+	}
+}
+
+func TestBuildBacktestRowFromCandidatesUsesBenchmarkResultTypeAndActualOverride(t *testing.T) {
+	svc := &LineupRecommendService{}
+	lineup := []PlayerCandidate{
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 1, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 30}, BacktestTxPlayerID: 101, BacktestName: "A"},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 2, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 28}, BacktestTxPlayerID: 102, BacktestName: "B"},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 3, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 26}, BacktestTxPlayerID: 103, BacktestName: "C"},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 4, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 24}, BacktestTxPlayerID: 104, BacktestName: "D"},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 5, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 22}, BacktestTxPlayerID: 105, BacktestName: "E"},
+	}
+
+	row := svc.buildBacktestRowFromCandidates(
+		"2026-03-06",
+		1,
+		entity.LineupBacktestResultTypeAvg3Benchmark,
+		lineup,
+		"3_game_average_baseline",
+		130,
+		118.5,
+	)
+	if row.TotalActualPower != 118.5 {
+		t.Fatalf("row.TotalActualPower=%.1f, want 118.5", row.TotalActualPower)
+	}
+
+	var detail backtestDetailPayload
+	if err := json.Unmarshal([]byte(row.DetailJSON), &detail); err != nil {
+		t.Fatalf("unmarshal detail_json err=%v", err)
+	}
+	if detail.ResultType != "avg3_baseline" {
+		t.Fatalf("detail.ResultType=%q, want avg3_baseline", detail.ResultType)
+	}
+	if detail.PredictedTotalPower != 130 {
+		t.Fatalf("detail.PredictedTotalPower=%.1f, want 130", detail.PredictedTotalPower)
 	}
 }
 

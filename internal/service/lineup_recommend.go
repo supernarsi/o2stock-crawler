@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/entity"
@@ -13,6 +15,7 @@ import (
 type LineupRecommendService struct {
 	db           *db.DB
 	injuryClient *crawler.InjuryClient
+	txNBAClient  txTeamLineupClient
 }
 
 const (
@@ -26,7 +29,12 @@ func NewLineupRecommendService(database *db.DB) *LineupRecommendService {
 	return &LineupRecommendService{
 		db:           database,
 		injuryClient: crawler.NewInjuryClient(),
+		txNBAClient:  crawler.NewTxNBAClient(),
 	}
+}
+
+type txTeamLineupClient interface {
+	GetTeamLineup(ctx context.Context, teamID string) (*crawler.TxTeamLineupResponse, error)
 }
 
 // MatchData 比赛数据 JSON 结构。
@@ -92,6 +100,7 @@ type PlayerPrediction struct {
 	UsageFactor           float64
 	StabilityFactor       float64
 	DefenseUpsideFactor   float64
+	ArchetypeFactor       float64
 	RoleSecurityFactor    float64
 	DataReliabilityFactor float64
 	TeamExposureFactor    float64
@@ -134,6 +143,7 @@ type DetailPlayer struct {
 		UsageFactor           float64 `json:"usage_factor"`
 		StabilityFactor       float64 `json:"stability_factor"`
 		DefenseUpsideFactor   float64 `json:"defense_upside_factor,omitempty"`
+		ArchetypeFactor       float64 `json:"archetype_factor,omitempty"`
 		RoleSecurityFactor    float64 `json:"role_security_factor,omitempty"`
 		DataReliabilityFactor float64 `json:"data_reliability_factor,omitempty"`
 		TeamExposureFactor    float64 `json:"team_exposure_factor,omitempty"`

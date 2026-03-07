@@ -7,6 +7,7 @@ import (
 	"log"
 	"sort"
 
+	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/entity"
 )
@@ -26,24 +27,44 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		return nil
 	}
 	log.Printf("候选球员池: %d 人", len(allPlayers))
+	historicalMode := isHistoricalGameDate(gameDate)
+	if historicalMode {
+		log.Printf("历史日期推荐模式: %s，将禁用实时伤病并仅使用赛前历史数据", gameDate)
+	}
 
 	// 2. 获取伤病报告
-	injuryMap := s.fetchInjuryMap(ctx, allPlayers)
+	injuryMap := map[uint]crawler.InjuryReport{}
+	if !historicalMode {
+		injuryMap = s.fetchInjuryMap(ctx, allPlayers)
+	}
 	log.Printf("伤病报告: 匹配到 %d 名球员", len(injuryMap))
 
 	// 3. 获取 DB 球员数据（用于增强预测）
-	dbPlayerMap := s.loadDBPlayerMap(ctx, allPlayers)
+	rawDBPlayerMap := s.loadDBPlayerMap(ctx, allPlayers)
+	dbPlayerMap := rawDBPlayerMap
+	if historicalMode {
+		dbPlayerMap = stripPredictAnchors(rawDBPlayerMap)
+	}
 	log.Printf("DB 球员匹配: %d / %d", len(dbPlayerMap), len(allPlayers))
+	txPlayerIDMap, txMapSummary := s.buildRecommendTxPlayerIDMap(ctx, allPlayers, rawDBPlayerMap)
+	log.Printf(
+		"TX 球员映射: %d / %d (DB=%d, 手工=%d, lineup=%d)",
+		len(txPlayerIDMap),
+		len(allPlayers),
+		txMapSummary.DBCount,
+		txMapSummary.ManualCount,
+		txMapSummary.LineupFallbackCount,
+	)
 
 	// 4. 加载历史战绩数据
 	statsRepo := repositories.NewStatsRepository(s.db.DB)
-	gameStatsMap := s.loadGameStatsMap(ctx, statsRepo, dbPlayerMap)
+	gameStatsMap := s.loadGameStatsMap(ctx, statsRepo, txPlayerIDMap, gameDate, historicalMode)
 	log.Printf("历史战绩数据: %d 名球员有记录", len(gameStatsMap))
-	seasonStatsMap := s.loadSeasonStatsMap(ctx, statsRepo, dbPlayerMap, gameDate)
+	seasonStatsMap := s.loadSeasonStatsMap(ctx, statsRepo, txPlayerIDMap, gameDate, historicalMode)
 	log.Printf("赛季场均数据: %d 名球员有记录", len(seasonStatsMap))
-	teamMatchupMap := s.loadTeamMatchupMetrics(ctx, statsRepo)
+	teamMatchupMap := s.loadTeamMatchupMetrics(ctx, statsRepo, gameDate, historicalMode)
 	log.Printf("对手 DefRating/Pace 数据: %d 支球队", len(teamMatchupMap))
-	dvpFactorMap := s.buildDVPFactorMap(allPlayers, dbPlayerMap, gameStatsMap)
+	dvpFactorMap := s.buildDVPFactorMap(allPlayers, txPlayerIDMap, gameStatsMap)
 	log.Printf("对手 DvP 数据: %d 支球队", len(dvpFactorMap))
 
 	// 5. 对每位球员预测战力
@@ -55,6 +76,7 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 			allPlayers,
 			injuryMap,
 			dbPlayerMap,
+			txPlayerIDMap,
 			gameStatsMap,
 			seasonStatsMap,
 			teamMatchupMap,
@@ -155,6 +177,7 @@ func (s *LineupRecommendService) buildRecommendation(
 		dp.Factors.UsageFactor = c.Prediction.UsageFactor
 		dp.Factors.StabilityFactor = c.Prediction.StabilityFactor
 		dp.Factors.DefenseUpsideFactor = c.Prediction.DefenseUpsideFactor
+		dp.Factors.ArchetypeFactor = c.Prediction.ArchetypeFactor
 		dp.Factors.RoleSecurityFactor = c.Prediction.RoleSecurityFactor
 		dp.Factors.DataReliabilityFactor = c.Prediction.DataReliabilityFactor
 		dp.Factors.TeamExposureFactor = c.Prediction.TeamExposureFactor

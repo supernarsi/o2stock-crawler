@@ -5,9 +5,11 @@ import "time"
 const (
 	LineupBacktestResultTypeRecommendedActual uint8 = 1
 	LineupBacktestResultTypeActualOptimal     uint8 = 2
+	LineupBacktestResultTypeAvg3Benchmark     uint8 = 3
+	LineupBacktestResultTypeAvg5Benchmark     uint8 = 4
 )
 
-// LineupBacktestResult 回测结果（推荐阵容实得 / 实际最优阵容）
+// LineupBacktestResult 回测结果（推荐阵容实得 / 基准阵容 / 实际最优阵容）
 type LineupBacktestResult struct {
 	ID               uint      `gorm:"primaryKey;column:id"`
 	GameDate         string    `gorm:"column:game_date"`

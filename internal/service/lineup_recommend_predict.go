@@ -5,6 +5,8 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"o2stock-crawler/internal/crawler"
@@ -35,6 +37,12 @@ type positionDVPMetric struct {
 	SampleCount int
 }
 
+type txLineupPlayer struct {
+	ID     uint
+	CnName string
+	EnName string
+}
+
 type matchupFactorDetail struct {
 	MatchupFactor         float64
 	DefRatingFactor       float64
@@ -52,6 +60,7 @@ func (s *LineupRecommendService) predictPower(
 	allPlayers []entity.NBAGamePlayer,
 	injuryMap map[uint]crawler.InjuryReport,
 	dbPlayerMap map[uint]*entity.Player,
+	txPlayerIDMap map[uint]uint,
 	gameStatsMap map[uint][]entity.PlayerGameStats,
 	seasonStatsMap map[uint]*entity.PlayerSeasonStats,
 	teamMatchupMap map[string]teamMatchupMetric,
@@ -65,6 +74,7 @@ func (s *LineupRecommendService) predictPower(
 	}
 	if injury, ok := injuryMap[player.NBAPlayerID]; ok {
 		availabilityScore = crawler.StatusToAvailabilityScore(injury.Status)
+		availabilityScore = rebalanceAvailabilityScore(injury.Status, availabilityScore)
 		if availabilityScore == 0 {
 			return PlayerPrediction{AvailabilityScore: 0.0}
 		}
@@ -74,10 +84,7 @@ func (s *LineupRecommendService) predictPower(
 	gamePower := player.CombatPower
 	baseValue := gamePower
 	dbPlayer := dbPlayerMap[player.NBAPlayerID]
-	txPlayerID := uint(0)
-	if dbPlayer != nil {
-		txPlayerID = dbPlayer.TxPlayerID
-	}
+	txPlayerID := txPlayerIDMap[player.NBAPlayerID]
 	var stats []entity.PlayerGameStats
 	if txPlayerID > 0 {
 		stats = gameStatsMap[txPlayerID]
@@ -123,7 +130,7 @@ func (s *LineupRecommendService) predictPower(
 	defenseAnchorFactor := s.calcOpponentDefenseAnchorFactor(
 		player,
 		allPlayers,
-		dbPlayerMap,
+		txPlayerIDMap,
 		gameStatsMap,
 	)
 
@@ -153,13 +160,35 @@ func (s *LineupRecommendService) predictPower(
 	}
 	dataReliabilityFactor = calcDataReliabilityFactor(len(stats), dbPlayer, seasonStats, player.Salary)
 
+	matchupFactor, defenseAnchorFactor = softenEliteFrontcourtNegativeFactors(
+		player,
+		baseValue,
+		matchupFactor,
+		defenseAnchorFactor,
+		minutesFactor,
+		usageFactor,
+		defenseUpsideFactor,
+	)
+	archetypeFactor := calcArchetypeFactor(
+		player,
+		baseValue,
+		minutesFactor,
+		usageFactor,
+		stabilityFactor,
+		defenseUpsideFactor,
+		roleSecurityFactor,
+		dataReliabilityFactor,
+		teamContextFactor,
+	)
+
 	// Step 8: 因素2 — 比赛取消风险 (GameRiskFactor)
 	gameRiskFactor := 1.0 // NBA 室内运动，默认无风险
 
 	// Step 9: 综合计算
 	dynamicMultiplier := statusTrend * matchupFactor * homeAwayFactor * teamContextFactor *
 		minutesFactor * usageFactor * stabilityFactor * defenseUpsideFactor *
-		roleSecurityFactor * dataReliabilityFactor * defenseAnchorFactor * fatigueFactor
+		archetypeFactor * roleSecurityFactor * dataReliabilityFactor *
+		defenseAnchorFactor * fatigueFactor
 	dynamicMultiplier = clampDynamicMultiplier(dynamicMultiplier, len(stats))
 
 	predictedPower := baseValue * availabilityScore * dynamicMultiplier * gameRiskFactor
@@ -170,6 +199,16 @@ func (s *LineupRecommendService) predictPower(
 		availabilityScore,
 		roleSecurityFactor,
 		dataReliabilityFactor,
+	)
+	optimizedPower = adjustOptimizedPowerForArchetype(
+		player,
+		predictedPower,
+		optimizedPower,
+		baseValue,
+		minutesFactor,
+		usageFactor,
+		defenseAnchorFactor,
+		archetypeFactor,
 	)
 
 	return PlayerPrediction{
@@ -192,6 +231,7 @@ func (s *LineupRecommendService) predictPower(
 		UsageFactor:           roundTo(usageFactor, 2),
 		StabilityFactor:       roundTo(stabilityFactor, 2),
 		DefenseUpsideFactor:   roundTo(defenseUpsideFactor, 2),
+		ArchetypeFactor:       roundTo(archetypeFactor, 2),
 		RoleSecurityFactor:    roundTo(roleSecurityFactor, 2),
 		DataReliabilityFactor: roundTo(dataReliabilityFactor, 2),
 		TeamExposureFactor:    1.0,
@@ -276,6 +316,92 @@ func selectPlayerByTeamCode(players []entity.NBAGamePlayer, teamCode string) (ui
 	return 0, false
 }
 
+func rebalanceAvailabilityScore(status string, availabilityScore float64) float64 {
+	if availabilityScore <= 0 || availabilityScore >= 1 {
+		return availabilityScore
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	switch {
+	case normalized == "day-to-day":
+		return clamp(math.Max(availabilityScore, 0.78), 0.0, 1.0)
+	case strings.Contains(normalized, "questionable"):
+		return clamp(math.Max(availabilityScore, 0.68), 0.0, 1.0)
+	default:
+		return availabilityScore
+	}
+}
+
+func matchNBAGamePlayerToTxLineupPlayer(
+	player entity.NBAGamePlayer,
+	lineupPlayers []struct {
+		ID       string `json:"id"`
+		CnName   string `json:"cnName"`
+		EnName   string `json:"enName"`
+		Logo     string `json:"logo"`
+		Position string `json:"position"`
+	},
+	usedTxIDs map[uint]struct{},
+) (uint, bool) {
+	normalizedEn := normalizePlayerName(player.PlayerEnName)
+	normalizedCN := normalizeLocalizedPlayerName(player.PlayerName)
+
+	exactCandidates := make([]txLineupPlayer, 0)
+	fuzzyCandidates := make([]txLineupPlayer, 0)
+	for _, raw := range lineupPlayers {
+		txPlayerID := parseUintOrZero(raw.ID)
+		if txPlayerID == 0 {
+			continue
+		}
+		if _, used := usedTxIDs[txPlayerID]; used {
+			continue
+		}
+
+		lineupPlayer := txLineupPlayer{
+			ID:     txPlayerID,
+			CnName: raw.CnName,
+			EnName: raw.EnName,
+		}
+		if normalizedEn != "" && normalizePlayerName(raw.EnName) == normalizedEn {
+			exactCandidates = append(exactCandidates, lineupPlayer)
+			continue
+		}
+		if normalizedCN != "" && normalizeLocalizedPlayerName(raw.CnName) == normalizedCN {
+			exactCandidates = append(exactCandidates, lineupPlayer)
+			continue
+		}
+		if normalizedEn != "" && crawler.MatchInjuryToPlayer(raw.EnName, player.PlayerEnName) {
+			fuzzyCandidates = append(fuzzyCandidates, lineupPlayer)
+		}
+	}
+
+	if len(exactCandidates) == 1 {
+		return exactCandidates[0].ID, true
+	}
+	if len(fuzzyCandidates) == 1 {
+		return fuzzyCandidates[0].ID, true
+	}
+	return 0, false
+}
+
+func normalizeLocalizedPlayerName(name string) string {
+	replacer := strings.NewReplacer(
+		".", "",
+		"-", "",
+		"·", "",
+		" ", "",
+	)
+	return strings.ToLower(strings.TrimSpace(replacer.Replace(name)))
+}
+
+func parseUintOrZero(value string) uint {
+	n, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return uint(n)
+}
+
 func (s *LineupRecommendService) loadDBPlayerMap(ctx context.Context, gamePlayers []entity.NBAGamePlayer) map[uint]*entity.Player {
 	result := make(map[uint]*entity.Player)
 
@@ -310,20 +436,117 @@ func (s *LineupRecommendService) loadDBPlayerMap(ctx context.Context, gamePlayer
 	return result
 }
 
-func (s *LineupRecommendService) loadGameStatsMap(ctx context.Context, repo *repositories.StatsRepository, dbPlayerMap map[uint]*entity.Player) map[uint][]entity.PlayerGameStats {
-	result := make(map[uint][]entity.PlayerGameStats)
+func stripPredictAnchors(dbPlayerMap map[uint]*entity.Player) map[uint]*entity.Player {
+	if len(dbPlayerMap) == 0 {
+		return dbPlayerMap
+	}
+	result := make(map[uint]*entity.Player, len(dbPlayerMap))
+	for nbaPlayerID, player := range dbPlayerMap {
+		if player == nil {
+			continue
+		}
+		cloned := *player
+		cloned.PowerPer5 = 0
+		cloned.PowerPer10 = 0
+		result[nbaPlayerID] = &cloned
+	}
+	return result
+}
 
-	// 收集所有有 tx_player_id 的球员
-	seenTxIDs := make(map[uint]struct{})
-	var txPlayerIDs []uint
-	for _, p := range dbPlayerMap {
-		if p.TxPlayerID > 0 {
-			if _, ok := seenTxIDs[p.TxPlayerID]; ok {
+type recommendTxMapSummary struct {
+	DBCount             int
+	ManualCount         int
+	LineupFallbackCount int
+}
+
+func (s *LineupRecommendService) buildRecommendTxPlayerIDMap(
+	ctx context.Context,
+	gamePlayers []entity.NBAGamePlayer,
+	dbPlayerMap map[uint]*entity.Player,
+) (map[uint]uint, recommendTxMapSummary) {
+	result := make(map[uint]uint, len(gamePlayers))
+	summary := recommendTxMapSummary{}
+
+	for _, player := range gamePlayers {
+		dbPlayer := dbPlayerMap[player.NBAPlayerID]
+		if dbPlayer == nil || dbPlayer.TxPlayerID == 0 {
+			continue
+		}
+		if _, exists := result[player.NBAPlayerID]; exists {
+			continue
+		}
+		result[player.NBAPlayerID] = dbPlayer.TxPlayerID
+		summary.DBCount++
+	}
+
+	missingSet := make(map[uint]struct{})
+	for _, player := range gamePlayers {
+		if player.NBAPlayerID == 0 {
+			continue
+		}
+		if result[player.NBAPlayerID] > 0 {
+			continue
+		}
+		missingSet[player.NBAPlayerID] = struct{}{}
+	}
+	summary.ManualCount = applyManualNBATxPlayerIDOverrides(result, missingSet)
+
+	missingByTeam := make(map[string][]entity.NBAGamePlayer)
+	for _, player := range gamePlayers {
+		if player.NBAPlayerID == 0 || result[player.NBAPlayerID] > 0 || strings.TrimSpace(player.NBATeamID) == "" {
+			continue
+		}
+		missingByTeam[player.NBATeamID] = append(missingByTeam[player.NBATeamID], player)
+	}
+	if len(missingByTeam) == 0 || s.txNBAClient == nil {
+		return result, summary
+	}
+
+	for teamID, teamPlayers := range missingByTeam {
+		resp, err := s.txNBAClient.GetTeamLineup(ctx, teamID)
+		if err != nil {
+			log.Printf("获取腾讯球队阵容失败: team_id=%s err=%v", teamID, err)
+			continue
+		}
+		if resp == nil || len(resp.Data.LineUp.Players) == 0 {
+			continue
+		}
+
+		usedTxIDs := make(map[uint]struct{})
+		for _, player := range teamPlayers {
+			txPlayerID, ok := matchNBAGamePlayerToTxLineupPlayer(player, resp.Data.LineUp.Players, usedTxIDs)
+			if !ok {
 				continue
 			}
-			seenTxIDs[p.TxPlayerID] = struct{}{}
-			txPlayerIDs = append(txPlayerIDs, p.TxPlayerID)
+			result[player.NBAPlayerID] = txPlayerID
+			usedTxIDs[txPlayerID] = struct{}{}
+			summary.LineupFallbackCount++
 		}
+	}
+
+	return result, summary
+}
+
+func (s *LineupRecommendService) loadGameStatsMap(
+	ctx context.Context,
+	repo *repositories.StatsRepository,
+	txPlayerIDMap map[uint]uint,
+	gameDate string,
+	historical bool,
+) map[uint][]entity.PlayerGameStats {
+	result := make(map[uint][]entity.PlayerGameStats)
+
+	seenTxIDs := make(map[uint]struct{})
+	var txPlayerIDs []uint
+	for _, txPlayerID := range txPlayerIDMap {
+		if txPlayerID == 0 {
+			continue
+		}
+		if _, ok := seenTxIDs[txPlayerID]; ok {
+			continue
+		}
+		seenTxIDs[txPlayerID] = struct{}{}
+		txPlayerIDs = append(txPlayerIDs, txPlayerID)
 	}
 
 	if len(txPlayerIDs) == 0 {
@@ -331,7 +554,15 @@ func (s *LineupRecommendService) loadGameStatsMap(ctx context.Context, repo *rep
 	}
 
 	// 批量获取近 10 场数据
-	statsMap, err := repo.BatchGetRecentGameStats(ctx, txPlayerIDs, 10)
+	var (
+		statsMap map[uint][]entity.PlayerGameStats
+		err      error
+	)
+	if historical {
+		statsMap, err = repo.BatchGetRecentGameStatsBeforeDate(ctx, txPlayerIDs, 10, gameDate)
+	} else {
+		statsMap, err = repo.BatchGetRecentGameStats(ctx, txPlayerIDs, 10)
+	}
 	if err != nil {
 		log.Printf("批量获取历史比赛数据失败: %v", err)
 		return result
@@ -349,22 +580,26 @@ func (s *LineupRecommendService) loadGameStatsMap(ctx context.Context, repo *rep
 func (s *LineupRecommendService) loadSeasonStatsMap(
 	ctx context.Context,
 	repo *repositories.StatsRepository,
-	dbPlayerMap map[uint]*entity.Player,
+	txPlayerIDMap map[uint]uint,
 	gameDate string,
+	historical bool,
 ) map[uint]*entity.PlayerSeasonStats {
 	result := make(map[uint]*entity.PlayerSeasonStats)
+	if historical {
+		return result
+	}
 
 	seenTxIDs := make(map[uint]struct{})
 	var txPlayerIDs []uint
-	for _, p := range dbPlayerMap {
-		if p.TxPlayerID == 0 {
+	for _, txPlayerID := range txPlayerIDMap {
+		if txPlayerID == 0 {
 			continue
 		}
-		if _, ok := seenTxIDs[p.TxPlayerID]; ok {
+		if _, ok := seenTxIDs[txPlayerID]; ok {
 			continue
 		}
-		seenTxIDs[p.TxPlayerID] = struct{}{}
-		txPlayerIDs = append(txPlayerIDs, p.TxPlayerID)
+		seenTxIDs[txPlayerID] = struct{}{}
+		txPlayerIDs = append(txPlayerIDs, txPlayerID)
 	}
 	if len(txPlayerIDs) == 0 {
 		return result
@@ -382,8 +617,22 @@ func (s *LineupRecommendService) loadSeasonStatsMap(
 func (s *LineupRecommendService) loadTeamMatchupMetrics(
 	ctx context.Context,
 	repo *repositories.StatsRepository,
+	gameDate string,
+	historical bool,
 ) map[string]teamMatchupMetric {
-	rows, err := repo.GetRecentTeamGameAggregates(ctx, matchupLookbackDays)
+	var (
+		rows []repositories.TeamGameAggregate
+		err  error
+	)
+	if historical {
+		beforeDate, ok := parseISODate(gameDate)
+		if !ok {
+			return map[string]teamMatchupMetric{}
+		}
+		rows, err = repo.GetRecentTeamGameAggregatesBeforeDate(ctx, matchupLookbackDays, beforeDate)
+	} else {
+		rows, err = repo.GetRecentTeamGameAggregates(ctx, matchupLookbackDays)
+	}
 	if err != nil {
 		log.Printf("加载对手 DefRating/Pace 数据失败: %v", err)
 		return map[string]teamMatchupMetric{}
@@ -591,18 +840,18 @@ func buildTeamMatchupMetricsFromAggregates(rows []repositories.TeamGameAggregate
 
 func (s *LineupRecommendService) buildDVPFactorMap(
 	allPlayers []entity.NBAGamePlayer,
-	dbPlayerMap map[uint]*entity.Player,
+	txPlayerIDMap map[uint]uint,
 	gameStatsMap map[uint][]entity.PlayerGameStats,
 ) map[string]map[uint]positionDVPMetric {
 	opponentPositionPowers := make(map[string]map[uint][]float64)
 	leaguePositionPowers := make(map[uint][]float64)
 
 	for _, player := range allPlayers {
-		dbPlayer := dbPlayerMap[player.NBAPlayerID]
-		if dbPlayer == nil || dbPlayer.TxPlayerID == 0 {
+		txPlayerID := txPlayerIDMap[player.NBAPlayerID]
+		if txPlayerID == 0 {
 			continue
 		}
-		stats := gameStatsMap[dbPlayer.TxPlayerID]
+		stats := gameStatsMap[txPlayerID]
 		if len(stats) == 0 {
 			continue
 		}
@@ -964,7 +1213,7 @@ func countVsTeamGames(stats []entity.PlayerGameStats, targetTeam string) int {
 func (s *LineupRecommendService) calcOpponentDefenseAnchorFactor(
 	player entity.NBAGamePlayer,
 	allPlayers []entity.NBAGamePlayer,
-	dbPlayerMap map[uint]*entity.Player,
+	txPlayerIDMap map[uint]uint,
 	gameStatsMap map[uint][]entity.PlayerGameStats,
 ) float64 {
 	positionGroup := normalizePositionGroup(player.Position)
@@ -974,11 +1223,11 @@ func (s *LineupRecommendService) calcOpponentDefenseAnchorFactor(
 		if opponent.MatchID != player.MatchID || opponent.NBATeamID == player.NBATeamID {
 			continue
 		}
-		dbOpponent := dbPlayerMap[opponent.NBAPlayerID]
-		if dbOpponent == nil || dbOpponent.TxPlayerID == 0 {
+		txOpponentID := txPlayerIDMap[opponent.NBAPlayerID]
+		if txOpponentID == 0 {
 			continue
 		}
-		stats := gameStatsMap[dbOpponent.TxPlayerID]
+		stats := gameStatsMap[txOpponentID]
 		if len(stats) == 0 {
 			continue
 		}
@@ -1036,6 +1285,122 @@ func (s *LineupRecommendService) calcOpponentDefenseAnchorFactor(
 	}
 	penalty := penaltySlope * math.Max(0.0, maxImpact-1.10)
 	return clamp(1.0-penalty, 0.88, 1.02)
+}
+
+func softenEliteFrontcourtNegativeFactors(
+	player entity.NBAGamePlayer,
+	baseValue float64,
+	matchupFactor float64,
+	defenseAnchorFactor float64,
+	minutesFactor float64,
+	usageFactor float64,
+	defenseUpsideFactor float64,
+) (float64, float64) {
+	if normalizePositionGroup(player.Position) != 0 {
+		return matchupFactor, defenseAnchorFactor
+	}
+	if baseValue < 45 || minutesFactor < 1.03 || usageFactor < 1.03 {
+		return matchupFactor, defenseAnchorFactor
+	}
+
+	resilience := 0.30
+	if baseValue >= 50 {
+		resilience += 0.18
+	}
+	if player.Salary >= 40 {
+		resilience += 0.10
+	}
+	if defenseUpsideFactor >= 1.10 {
+		resilience += 0.14
+	}
+	resilience = clamp(resilience, 0.30, 0.62)
+
+	if matchupFactor < 1.0 {
+		matchupFactor = 1.0 + (matchupFactor-1.0)*(1.0-resilience)
+	}
+	if defenseAnchorFactor < 1.0 {
+		matchConfidence := clamp(resilience*0.80, 0.18, 0.48)
+		defenseAnchorFactor = 1.0 + (defenseAnchorFactor-1.0)*(1.0-matchConfidence)
+	}
+
+	return clamp(matchupFactor, 0.90, 1.14), clamp(defenseAnchorFactor, 0.90, 1.03)
+}
+
+func calcArchetypeFactor(
+	player entity.NBAGamePlayer,
+	baseValue float64,
+	minutesFactor float64,
+	usageFactor float64,
+	stabilityFactor float64,
+	defenseUpsideFactor float64,
+	roleSecurityFactor float64,
+	dataReliabilityFactor float64,
+	teamContextFactor float64,
+) float64 {
+	factor := 1.0
+	positionGroup := normalizePositionGroup(player.Position)
+
+	if positionGroup == 0 {
+		if player.Salary <= 20 && player.CombatPower >= 18 {
+			factor += clamp((minutesFactor-1.0)*0.40, 0.0, 0.05)
+			factor += clamp((defenseUpsideFactor-1.0)*0.45, 0.0, 0.06)
+			factor += clamp((teamContextFactor-1.0)*0.80, 0.0, 0.04)
+		}
+		if player.Salary <= 12 && player.CombatPower >= 18 {
+			factor += 0.05
+		}
+		if dataReliabilityFactor < 0.78 && player.CombatPower >= 20 {
+			factor += clamp((0.82-dataReliabilityFactor)*0.55, 0.0, 0.07)
+		}
+		if baseValue >= 48 && minutesFactor >= 1.05 && usageFactor >= 1.05 {
+			factor += 0.03
+		}
+		if stabilityFactor < 0.95 {
+			factor -= clamp((0.95-stabilityFactor)*0.25, 0.0, 0.03)
+		}
+		return clamp(factor, 0.94, 1.12)
+	}
+
+	if player.Salary <= 12 {
+		factor -= clamp(math.Max(0.0, minutesFactor-1.0)*0.35+math.Max(0.0, usageFactor-1.0)*0.35, 0.0, 0.08)
+		factor -= clamp(math.Max(0.0, defenseUpsideFactor-1.0)*0.30, 0.0, 0.03)
+		if roleSecurityFactor < 1.0 {
+			factor -= clamp((1.0-roleSecurityFactor)*0.20, 0.0, 0.04)
+		}
+	}
+
+	if player.Salary <= 18 && teamContextFactor > 1.04 && stabilityFactor < 1.0 {
+		factor -= clamp((teamContextFactor-1.04)*0.35, 0.0, 0.03)
+	}
+
+	return clamp(factor, 0.90, 1.05)
+}
+
+func adjustOptimizedPowerForArchetype(
+	player entity.NBAGamePlayer,
+	predictedPower float64,
+	optimizedPower float64,
+	baseValue float64,
+	minutesFactor float64,
+	usageFactor float64,
+	defenseAnchorFactor float64,
+	archetypeFactor float64,
+) float64 {
+	if predictedPower <= 0 || optimizedPower <= 0 || predictedPower <= optimizedPower {
+		return optimizedPower
+	}
+
+	positionGroup := normalizePositionGroup(player.Position)
+	upsideGap := predictedPower - optimizedPower
+
+	if positionGroup == 0 && baseValue >= 45 && minutesFactor >= 1.03 && usageFactor >= 1.03 && defenseAnchorFactor >= 0.93 {
+		optimizedPower += upsideGap * 0.30
+	}
+	if positionGroup == 0 && player.Salary <= 20 && archetypeFactor > 1.02 && defenseAnchorFactor >= 0.94 {
+		optimizedPower += upsideGap * clamp((archetypeFactor-1.0)*4.0, 0.0, 0.42)
+	}
+
+	return clamp(optimizedPower, predictedPower*0.62, predictedPower)
 }
 
 func (s *LineupRecommendService) calcTeamContextFactor(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer) float64 {
@@ -1229,10 +1594,14 @@ func (s *LineupRecommendService) calcRoleSecurityFactor(
 			return 1.0
 		case seasonStats != nil && seasonStats.Minutes >= 18:
 			return 0.95
+		case salary <= 10:
+			return 0.70
 		case salary <= 12:
-			return 0.84
+			return 0.74
+		case salary <= 15:
+			return 0.78
 		default:
-			return 0.90
+			return 0.86
 		}
 	}
 
@@ -1303,16 +1672,30 @@ func calcDataReliabilityFactor(
 	case statCount >= 8:
 		factor = 1.0
 	case statCount >= 5:
-		factor = 0.95
-	case statCount >= 3:
-		factor = 0.90
-	case statCount >= 1:
-		factor = 0.84
-	default:
 		if hasDBAnchor || hasSeasonAnchor {
-			factor = 0.78
+			factor = 0.95
 		} else {
-			factor = 0.68
+			factor = 0.92
+		}
+	case statCount >= 3:
+		if hasDBAnchor || hasSeasonAnchor {
+			factor = 0.90
+		} else {
+			factor = 0.82
+		}
+	case statCount >= 1:
+		if hasDBAnchor || hasSeasonAnchor {
+			factor = 0.84
+		} else {
+			factor = 0.70
+		}
+	default:
+		if hasDBAnchor && hasSeasonAnchor {
+			factor = 0.78
+		} else if hasDBAnchor || hasSeasonAnchor {
+			factor = 0.64
+		} else {
+			factor = 0.48
 		}
 	}
 
@@ -1322,7 +1705,7 @@ func calcDataReliabilityFactor(
 		factor -= 0.04
 	}
 
-	return clamp(factor, 0.62, 1.02)
+	return clamp(factor, 0.42, 1.02)
 }
 
 func (s *LineupRecommendService) calcConservativePower(

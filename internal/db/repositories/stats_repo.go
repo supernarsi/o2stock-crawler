@@ -104,6 +104,32 @@ func (r *StatsRepository) BatchGetRecentGameStats(ctx context.Context, txPlayerI
 	return out, nil
 }
 
+// BatchGetRecentGameStatsBeforeDate 批量获取多球员在指定比赛日前的近 N 场数据（不含当天）。
+func (r *StatsRepository) BatchGetRecentGameStatsBeforeDate(ctx context.Context, txPlayerIDs []uint, limit int, beforeDate string) (map[uint][]entity.PlayerGameStats, error) {
+	out := make(map[uint][]entity.PlayerGameStats)
+	if len(txPlayerIDs) == 0 || limit <= 0 || beforeDate == "" {
+		return out, nil
+	}
+
+	subQuery := r.ctx(ctx).Model(&entity.PlayerGameStats{}).
+		Select("*, ROW_NUMBER() OVER (PARTITION BY tx_player_id ORDER BY game_date DESC) AS rn").
+		Where("tx_player_id IN ? AND DATE(game_date) < ?", txPlayerIDs, beforeDate)
+
+	var results []entity.PlayerGameStats
+	err := r.ctx(ctx).
+		Table("(?) as t", subQuery).
+		Where("rn <= ?", limit).
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, g := range results {
+		out[g.TxPlayerID] = append(out[g.TxPlayerID], g)
+	}
+	return out, nil
+}
+
 // GetGameStatsByDate 获取指定日期的全部单场数据（按 tx_player_id 去重，保留最新一条）。
 func (r *StatsRepository) GetGameStatsByDate(ctx context.Context, gameDate string) (map[uint]entity.PlayerGameStats, error) {
 	out := make(map[uint]entity.PlayerGameStats)
@@ -172,6 +198,27 @@ func (r *StatsRepository) GetRecentTeamGameAggregates(ctx context.Context, lookb
 		Model(&entity.PlayerGameStats{}).
 		Select("tx_game_id, player_team_name, vs_team_name, MAX(game_date) AS game_date, SUM(points) AS team_points, SUM(blocks) AS team_blocks, SUM(steals) AS team_steals").
 		Where("game_date >= ?", startDate).
+		Group("tx_game_id, player_team_name, vs_team_name").
+		Order("game_date DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// GetRecentTeamGameAggregatesBeforeDate 获取指定比赛日前最近 N 天球队单场聚合统计（不含当天）。
+func (r *StatsRepository) GetRecentTeamGameAggregatesBeforeDate(ctx context.Context, lookbackDays int, beforeDate time.Time) ([]TeamGameAggregate, error) {
+	var rows []TeamGameAggregate
+	if lookbackDays <= 0 {
+		lookbackDays = 120
+	}
+	startDate := beforeDate.AddDate(0, 0, -lookbackDays)
+
+	err := r.ctx(ctx).
+		Model(&entity.PlayerGameStats{}).
+		Select("tx_game_id, player_team_name, vs_team_name, MAX(game_date) AS game_date, SUM(points) AS team_points, SUM(blocks) AS team_blocks, SUM(steals) AS team_steals").
+		Where("game_date >= ? AND DATE(game_date) < ?", startDate, beforeDate.Format("2006-01-02")).
 		Group("tx_game_id, player_team_name, vs_team_name").
 		Order("game_date DESC").
 		Find(&rows).Error

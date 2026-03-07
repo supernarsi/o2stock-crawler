@@ -172,6 +172,51 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 		return fmt.Errorf("回写推荐阵容实际战力失败: %w", err)
 	}
 
+	benchmarkRowsByType := make(map[uint8][]entity.LineupBacktestResult, 2)
+	for _, lookback := range []int{3, 5} {
+		benchmarkType := backtestBenchmarkResultType(lookback)
+		if benchmarkType == 0 {
+			continue
+		}
+
+		benchmarkCandidates, benchmarkSummary, err := s.buildBacktestAverageBenchmarkCandidates(ctx, gameDate, gamePlayers, lookback)
+		if err != nil {
+			return err
+		}
+		log.Printf(
+			"回测均值基准候选(%s): lookback=%d, 候选=%d, NBA映射=%d(手工兜底=%d), 历史命中=%d, 历史不足=%d",
+			gameDate,
+			benchmarkSummary.LookbackGames,
+			benchmarkSummary.CandidateCount,
+			benchmarkSummary.MappedNBACount,
+			benchmarkSummary.ManualMapApplied,
+			benchmarkSummary.HistoryHitCount,
+			benchmarkSummary.InsufficientHistory,
+		)
+
+		lineups := s.solveOptimalLineupAllowZero(benchmarkCandidates, defaultSalaryCap, defaultPickCount, topN)
+		if len(lineups) == 0 {
+			log.Printf("回测均值基准未找到可行阵容: %s lookback=%d", gameDate, lookback)
+			continue
+		}
+
+		rows := make([]entity.LineupBacktestResult, 0, len(lineups))
+		for i, lineup := range lineups {
+			actualTotal := calcLineupActualFromCandidates(lineup, actualMap)
+			predictedTotal := calcLineupPredictedFromCandidates(lineup)
+			rows = append(rows, s.buildBacktestRowFromCandidates(
+				gameDate,
+				uint(i+1),
+				benchmarkType,
+				lineup,
+				fmt.Sprintf("%d_game_average_baseline", lookback),
+				predictedTotal,
+				actualTotal,
+			))
+		}
+		benchmarkRowsByType[benchmarkType] = rows
+	}
+
 	// B. 以真实战力为目标值，重新求解真实最优 TopN（tx 视角，不依赖 NBA->TX 映射完整性）
 	actualCandidates, actualCandidateSummary, err := s.buildBacktestActualCandidates(ctx, gameDate, gamePlayers, actualRows)
 	if err != nil {
@@ -204,6 +249,7 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 			lineup,
 			"",
 			0,
+			-1,
 		))
 	}
 
@@ -211,11 +257,16 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 	if err := backtestRepo.ReplaceByGameDateAndType(ctx, gameDate, entity.LineupBacktestResultTypeRecommendedActual, recRows); err != nil {
 		return fmt.Errorf("保存推荐实得回测结果失败: %w", err)
 	}
+	for resultType, rows := range benchmarkRowsByType {
+		if err := backtestRepo.ReplaceByGameDateAndType(ctx, gameDate, resultType, rows); err != nil {
+			return fmt.Errorf("保存均值基准回测结果失败(type=%d): %w", resultType, err)
+		}
+	}
 	if err := backtestRepo.ReplaceByGameDateAndType(ctx, gameDate, entity.LineupBacktestResultTypeActualOptimal, optRows); err != nil {
 		return fmt.Errorf("保存真实最优回测结果失败: %w", err)
 	}
 
-	s.printBacktestSummary(gameDate, recRows, optRows, playerMap)
+	s.printBacktestSummary(gameDate, recRows, benchmarkRowsByType, optRows, playerMap)
 	log.Printf(">>> 回测完成，结果已保存到 lineup_backtest_result 表 <<<")
 	return nil
 }
@@ -283,6 +334,63 @@ func calcLineupActualTotal(playerIDs [5]uint, actualMap map[uint]float64) float6
 	return roundTo(total, 1)
 }
 
+func calcLineupActualFromCandidates(lineup []PlayerCandidate, actualMap map[uint]float64) float64 {
+	total := 0.0
+	for _, candidate := range lineup {
+		total += actualMap[candidate.Player.NBAPlayerID]
+	}
+	return roundTo(total, 1)
+}
+
+func calcLineupPredictedFromCandidates(lineup []PlayerCandidate) float64 {
+	total := 0.0
+	for _, candidate := range lineup {
+		total += candidate.Prediction.PredictedPower
+	}
+	return roundTo(total, 1)
+}
+
+func backtestBenchmarkResultType(lookback int) uint8 {
+	switch lookback {
+	case 3:
+		return entity.LineupBacktestResultTypeAvg3Benchmark
+	case 5:
+		return entity.LineupBacktestResultTypeAvg5Benchmark
+	default:
+		return 0
+	}
+}
+
+func backtestResultTypeName(resultType uint8) string {
+	switch resultType {
+	case entity.LineupBacktestResultTypeRecommendedActual:
+		return "recommended_actual"
+	case entity.LineupBacktestResultTypeActualOptimal:
+		return "actual_optimal"
+	case entity.LineupBacktestResultTypeAvg3Benchmark:
+		return "avg3_baseline"
+	case entity.LineupBacktestResultTypeAvg5Benchmark:
+		return "avg5_baseline"
+	default:
+		return "unknown"
+	}
+}
+
+func backtestResultTypeLabel(resultType uint8) string {
+	switch resultType {
+	case entity.LineupBacktestResultTypeRecommendedActual:
+		return "推荐实得"
+	case entity.LineupBacktestResultTypeActualOptimal:
+		return "真实最优"
+	case entity.LineupBacktestResultTypeAvg3Benchmark:
+		return "3日均值基准"
+	case entity.LineupBacktestResultTypeAvg5Benchmark:
+		return "5日均值基准"
+	default:
+		return fmt.Sprintf("结果类型%d", resultType)
+	}
+}
+
 type backtestActualPowerSummary struct {
 	CandidateCount         int
 	MappedTxCount          int
@@ -301,6 +409,15 @@ type backtestActualCandidateSummary struct {
 	TxOnlyCount              int
 	FeedbackOnlyCount        int
 	TxOnlyDefaultSalaryCount int
+}
+
+type backtestBenchmarkCandidateSummary struct {
+	LookbackGames       int
+	CandidateCount      int
+	MappedNBACount      int
+	ManualMapApplied    int
+	HistoryHitCount     int
+	InsufficientHistory int
 }
 
 type backtestLineupSlot struct {
@@ -329,6 +446,8 @@ const backtestTxOnlyDefaultSalary uint = 5
 var manualNBATxPlayerIDOverrides = map[uint]uint{
 	1631157: 196154, // Ryan Rollins（莱恩.罗林斯）
 	1631119: 196152, // Jaylin.Williams（杰林.威廉姆斯）
+	1642271: 272768, // Kyle Filipowski（凯尔.菲利波夫斯基）
+	1629674: 175332, // Neemias.Queta（内米亚斯.奎塔）
 }
 
 // buildBacktestActualPowerMap 构建回测真实战力映射，优先来源顺序如下：
@@ -529,6 +648,98 @@ func (s *LineupRecommendService) buildBacktestActualCandidates(
 	return candidates, summary, nil
 }
 
+func (s *LineupRecommendService) buildBacktestAverageBenchmarkCandidates(
+	ctx context.Context,
+	gameDate string,
+	gamePlayers []entity.NBAGamePlayer,
+	lookback int,
+) ([]PlayerCandidate, backtestBenchmarkCandidateSummary, error) {
+	summary := backtestBenchmarkCandidateSummary{
+		LookbackGames:  lookback,
+		CandidateCount: len(gamePlayers),
+	}
+	if len(gamePlayers) == 0 || lookback <= 0 {
+		return nil, summary, nil
+	}
+
+	salaryByNBA, nameByNBA, candidateSet := buildGamePlayerMetadata(gamePlayers)
+	nbaPlayerIDs := collectCandidateNBAPlayerIDs(gamePlayers)
+
+	playerRepo := repositories.NewPlayerRepository(s.db.DB)
+	dbPlayers, err := playerRepo.BatchGetByNBAPlayerIDs(ctx, nbaPlayerIDs)
+	if err != nil {
+		return nil, summary, fmt.Errorf("查询均值基准 NBA->TX 映射失败: %w", err)
+	}
+	nbaToTxMap, _ := buildNBAToTxPlayerIDMap(dbPlayers)
+	summary.ManualMapApplied = applyManualNBATxPlayerIDOverrides(nbaToTxMap, candidateSet)
+	summary.MappedNBACount = len(nbaToTxMap)
+
+	statsRepo := repositories.NewStatsRepository(s.db.DB)
+	recentStatsByTx, err := statsRepo.BatchGetRecentGameStatsBeforeDate(ctx, collectUniqueTxPlayerIDs(nbaToTxMap), lookback, gameDate)
+	if err != nil {
+		return nil, summary, fmt.Errorf("查询均值基准历史比赛失败: %w", err)
+	}
+
+	candidates := make([]PlayerCandidate, 0, len(gamePlayers))
+	for _, player := range gamePlayers {
+		if player.NBAPlayerID == 0 {
+			continue
+		}
+		txPlayerID := nbaToTxMap[player.NBAPlayerID]
+		if txPlayerID == 0 {
+			summary.InsufficientHistory++
+			continue
+		}
+
+		stats := recentStatsByTx[txPlayerID]
+		if len(stats) == 0 {
+			summary.InsufficientHistory++
+			continue
+		}
+
+		avgPower := calcAveragePowerFromStats(stats, lookback)
+		if avgPower <= 0 {
+			summary.InsufficientHistory++
+			continue
+		}
+
+		name := strings.TrimSpace(nameByNBA[player.NBAPlayerID])
+		if name == "" {
+			name = strings.TrimSpace(player.PlayerName)
+		}
+		if name == "" {
+			name = "-"
+		}
+
+		candidates = append(candidates, PlayerCandidate{
+			Player: entity.NBAGamePlayer{
+				NBAPlayerID: player.NBAPlayerID,
+				Salary:      salaryByNBA[player.NBAPlayerID],
+			},
+			Prediction: PlayerPrediction{
+				PredictedPower: avgPower,
+			},
+			BacktestTxPlayerID: txPlayerID,
+			BacktestName:       name,
+		})
+		summary.HistoryHitCount++
+	}
+
+	return candidates, summary, nil
+}
+
+func calcAveragePowerFromStats(stats []entity.PlayerGameStats, lookback int) float64 {
+	if len(stats) == 0 || lookback <= 0 {
+		return 0
+	}
+	limit := min(len(stats), lookback)
+	total := 0.0
+	for i := 0; i < limit; i++ {
+		total += calcPowerFromStats(stats[i])
+	}
+	return roundTo(total/float64(limit), 1)
+}
+
 func buildGamePlayerMetadata(players []entity.NBAGamePlayer) (map[uint]uint, map[uint]string, map[uint]struct{}) {
 	salaryByNBA := make(map[uint]uint, len(players))
 	nameByNBA := make(map[uint]string, len(players))
@@ -694,7 +905,7 @@ func (s *LineupRecommendService) buildBacktestRowFromRecommendation(
 	}
 
 	detail, _ := json.Marshal(map[string]any{
-		"result_type":           "recommended_actual",
+		"result_type":           backtestResultTypeName(entity.LineupBacktestResultTypeRecommendedActual),
 		"predicted_total_power": rec.TotalPredictedPower,
 		"actual_total_power":    actualTotal,
 		"delta_actual_predict":  roundTo(actualTotal-rec.TotalPredictedPower, 1),
@@ -722,6 +933,7 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 	lineup []PlayerCandidate,
 	note string,
 	predictedTotal float64,
+	actualTotalOverride float64,
 ) entity.LineupBacktestResult {
 	var totalActual float64
 	var totalSalary uint
@@ -763,8 +975,12 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 		lineupNBAIDs = append(lineupNBAIDs, c.Player.NBAPlayerID)
 	}
 
+	if actualTotalOverride >= 0 {
+		totalActual = actualTotalOverride
+	}
+
 	detailData := backtestDetailPayload{
-		ResultType:         "actual_optimal",
+		ResultType:         backtestResultTypeName(resultType),
 		Lineup:             lineupSlots,
 		LineupTxPlayerIDs:  lineupTxIDs,
 		LineupNBAPlayerIDs: lineupNBAIDs,
@@ -795,27 +1011,58 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 func (s *LineupRecommendService) printBacktestSummary(
 	gameDate string,
 	recRows []entity.LineupBacktestResult,
+	benchmarkRowsByType map[uint8][]entity.LineupBacktestResult,
 	optRows []entity.LineupBacktestResult,
 	playerMap map[uint]entity.NBAGamePlayer,
 ) {
 	fmt.Printf("\n>>> 今日NBA回测结果 — %s <<<\n\n", gameDate)
 
-	limit := min(len(recRows), len(optRows))
-	if limit == 0 {
-		fmt.Println("无可对比结果")
+	if len(recRows) == 0 {
+		fmt.Println("无推荐回测结果")
 		return
 	}
 
 	sort.Slice(recRows, func(i, j int) bool { return recRows[i].Rank < recRows[j].Rank })
 	sort.Slice(optRows, func(i, j int) bool { return optRows[i].Rank < optRows[j].Rank })
+	for resultType := range benchmarkRowsByType {
+		rows := benchmarkRowsByType[resultType]
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Rank < rows[j].Rank })
+		benchmarkRowsByType[resultType] = rows
+	}
 
-	for i := 0; i < limit; i++ {
+	for i := 0; i < len(recRows); i++ {
 		rec := recRows[i]
-		opt := optRows[i]
-		gap := roundTo(opt.TotalActualPower-rec.TotalActualPower, 1)
-		fmt.Printf("#%d 推荐实得 %.1f vs 真实最优 %.1f (差距 %.1f)\n",
-			i+1, rec.TotalActualPower, opt.TotalActualPower, gap)
-		fmt.Printf("   真实最优阵容: %s\n", formatBacktestPlayersFromRow(opt, playerMap))
+		fmt.Printf("#%d %s %.1f", i+1, backtestResultTypeLabel(rec.ResultType), rec.TotalActualPower)
+
+		for _, benchmarkType := range []uint8{
+			entity.LineupBacktestResultTypeAvg3Benchmark,
+			entity.LineupBacktestResultTypeAvg5Benchmark,
+		} {
+			rows := benchmarkRowsByType[benchmarkType]
+			if i >= len(rows) {
+				continue
+			}
+			gap := roundTo(rec.TotalActualPower-rows[i].TotalActualPower, 1)
+			fmt.Printf(" | %s %.1f (%+.1f)", backtestResultTypeLabel(benchmarkType), rows[i].TotalActualPower, gap)
+		}
+
+		if i < len(optRows) {
+			opt := optRows[i]
+			gap := roundTo(opt.TotalActualPower-rec.TotalActualPower, 1)
+			fmt.Printf(" | %s %.1f (差距 %.1f)", backtestResultTypeLabel(opt.ResultType), opt.TotalActualPower, gap)
+			fmt.Printf("\n   %s: %s", backtestResultTypeLabel(opt.ResultType), formatBacktestPlayersFromRow(opt, playerMap))
+		}
+		fmt.Println()
+		for _, benchmarkType := range []uint8{
+			entity.LineupBacktestResultTypeAvg3Benchmark,
+			entity.LineupBacktestResultTypeAvg5Benchmark,
+		} {
+			rows := benchmarkRowsByType[benchmarkType]
+			if i >= len(rows) {
+				continue
+			}
+			fmt.Printf("   %s: %s\n", backtestResultTypeLabel(benchmarkType), formatBacktestPlayersFromRow(rows[i], playerMap))
+		}
 	}
 	fmt.Println()
 }
