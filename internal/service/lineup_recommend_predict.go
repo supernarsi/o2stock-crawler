@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math"
 	"sort"
@@ -54,6 +55,15 @@ type matchupFactorDetail struct {
 	PerimeterImpactFactor float64
 }
 
+type recentPowerProfile struct {
+	Avg3        float64
+	Avg5        float64
+	Avg10       float64
+	Median5     float64
+	Volatility  float64
+	SampleCount int
+}
+
 // predictPower 计算单个候选球员的预测战力及因子明细。
 func (s *LineupRecommendService) predictPower(
 	player entity.NBAGamePlayer,
@@ -68,16 +78,9 @@ func (s *LineupRecommendService) predictPower(
 ) PlayerPrediction {
 
 	// Step 1: 因素1 — 球员出场可用性 (AvailabilityScore)
-	availabilityScore := 1.0
-	if player.CombatPower == 0 {
+	availabilityScore := resolveAvailabilityScore(player, injuryMap)
+	if availabilityScore == 0 {
 		return PlayerPrediction{AvailabilityScore: 0.0}
-	}
-	if injury, ok := injuryMap[player.NBAPlayerID]; ok {
-		availabilityScore = crawler.StatusToAvailabilityScore(injury.Status)
-		availabilityScore = rebalanceAvailabilityScore(injury.Status, availabilityScore)
-		if availabilityScore == 0 {
-			return PlayerPrediction{AvailabilityScore: 0.0}
-		}
 	}
 
 	// Step 2: 基础战力值 (BaseValue)
@@ -97,7 +100,9 @@ func (s *LineupRecommendService) predictPower(
 		baseValue = 0.4*dbPower10 + 0.3*dbPower5 + 0.3*gamePower
 	}
 	recentPower5, recentPower10 := calcRecentPowerAverages(stats)
+	recentProfile := calcRecentPowerProfile(stats)
 	baseValue = stabilizeBaseValue(baseValue, gamePower, recentPower5, recentPower10, len(stats))
+	baseValue = buildRobustBaseValue(baseValue, gamePower, recentProfile)
 
 	// Step 3: 因素3 — 近期状态趋势 (StatusTrend)
 	statusTrend := calcStatusTrend(dbPlayer, stats)
@@ -159,6 +164,17 @@ func (s *LineupRecommendService) predictPower(
 		fatigueFactor = s.calcFatigueFactor(stats, player.GameDate)
 	}
 	dataReliabilityFactor = calcDataReliabilityFactor(len(stats), dbPlayer, seasonStats, player.Salary)
+	factorConfidence := calcPredictiveFactorConfidence(recentProfile, stabilityFactor, roleSecurityFactor, dataReliabilityFactor)
+
+	statusTrend = shrinkTowardsOne(statusTrend, factorConfidence*0.65)
+	matchupFactor = shrinkTowardsOne(matchupFactor, factorConfidence*0.72)
+	homeAwayFactor = shrinkTowardsOne(homeAwayFactor, factorConfidence*0.45)
+	teamContextFactor = shrinkTowardsOne(teamContextFactor, factorConfidence*0.42)
+	minutesFactor = shrinkTowardsOne(minutesFactor, factorConfidence*0.62)
+	usageFactor = shrinkTowardsOne(usageFactor, factorConfidence*0.58)
+	defenseUpsideFactor = shrinkTowardsOne(defenseUpsideFactor, factorConfidence*0.52)
+	defenseAnchorFactor = shrinkTowardsOne(defenseAnchorFactor, factorConfidence*0.75)
+	fatigueFactor = shrinkTowardsOne(fatigueFactor, factorConfidence*0.78)
 
 	matchupFactor, defenseAnchorFactor = softenEliteFrontcourtNegativeFactors(
 		player,
@@ -180,6 +196,7 @@ func (s *LineupRecommendService) predictPower(
 		dataReliabilityFactor,
 		teamContextFactor,
 	)
+	archetypeFactor = shrinkTowardsOne(archetypeFactor, factorConfidence*0.48)
 
 	// Step 8: 因素2 — 比赛取消风险 (GameRiskFactor)
 	gameRiskFactor := 1.0 // NBA 室内运动，默认无风险
@@ -192,7 +209,19 @@ func (s *LineupRecommendService) predictPower(
 	dynamicMultiplier = clampDynamicMultiplier(dynamicMultiplier, len(stats))
 
 	predictedPower := baseValue * availabilityScore * dynamicMultiplier * gameRiskFactor
-	predictedPower = calibratePredictedPower(predictedPower, baseValue, recentPower10, len(stats))
+	predictedPower = calibratePredictedPower(predictedPower, baseValue, recentProfile, len(stats))
+	predictedPower = applyStableStarLift(
+		player,
+		predictedPower,
+		baseValue,
+		minutesFactor,
+		usageFactor,
+		stabilityFactor,
+		defenseUpsideFactor,
+		roleSecurityFactor,
+		dataReliabilityFactor,
+		defenseAnchorFactor,
+	)
 	optimizedPower := s.calcConservativePower(
 		predictedPower,
 		stats,
@@ -240,16 +269,33 @@ func (s *LineupRecommendService) predictPower(
 	}
 }
 
+func resolveAvailabilityScore(
+	player entity.NBAGamePlayer,
+	injuryMap map[uint]crawler.InjuryReport,
+) float64 {
+	if player.CombatPower == 0 {
+		return 0.0
+	}
+	if injury, ok := injuryMap[player.NBAPlayerID]; ok {
+		availabilityScore := crawler.StatusToAvailabilityScore(injury.Status)
+		return rebalanceAvailabilityScore(injury.Status, availabilityScore)
+	}
+	return 1.0
+}
+
 // --- 0-1 背包 DP 求解 ---
 
 // 预测流程所需的数据准备与因子计算函数。
-func (s *LineupRecommendService) fetchInjuryMap(ctx context.Context, players []entity.NBAGamePlayer) map[uint]crawler.InjuryReport {
+func (s *LineupRecommendService) fetchInjuryMap(
+	ctx context.Context,
+	players []entity.NBAGamePlayer,
+) (map[uint]crawler.InjuryReport, []entity.NBAGameInjurySnapshot, error) {
 	result := make(map[uint]crawler.InjuryReport)
+	snapshots := make([]entity.NBAGameInjurySnapshot, 0)
 
 	reports, err := s.injuryClient.GetInjuryReports(ctx)
 	if err != nil {
-		log.Printf("获取伤病报告失败（将跳过伤病因素）: %v", err)
-		return result
+		return result, nil, fmt.Errorf("获取伤病报告失败: %w", err)
 	}
 
 	exactNameMap := make(map[string][]entity.NBAGamePlayer)
@@ -267,9 +313,62 @@ func (s *LineupRecommendService) fetchInjuryMap(ctx context.Context, players []e
 			continue
 		}
 		result[nbaPlayerID] = report
+		snapshots = append(snapshots, entity.NBAGameInjurySnapshot{
+			NBAPlayerID: nbaPlayerID,
+			PlayerName:  report.PlayerName,
+			TeamName:    report.TeamName,
+			Status:      report.Status,
+			Description: report.Description,
+			ReportDate:  report.Date,
+			Source:      "espn",
+		})
 	}
 
-	return result
+	return result, snapshots, nil
+}
+
+func (s *LineupRecommendService) loadInjurySnapshotMap(
+	ctx context.Context,
+	gameDate string,
+) (map[uint]crawler.InjuryReport, bool) {
+	repo := repositories.NewNBAGameInjurySnapshotRepository(s.db.DB)
+	rows, err := repo.GetByGameDate(ctx, gameDate)
+	if err != nil {
+		log.Printf("读取伤病快照失败: game_date=%s err=%v", gameDate, err)
+		return map[uint]crawler.InjuryReport{}, false
+	}
+	if len(rows) == 0 {
+		return map[uint]crawler.InjuryReport{}, false
+	}
+
+	result := make(map[uint]crawler.InjuryReport, len(rows))
+	for _, row := range rows {
+		if row.NBAPlayerID == 0 {
+			continue
+		}
+		result[row.NBAPlayerID] = crawler.InjuryReport{
+			PlayerName:  row.PlayerName,
+			TeamName:    row.TeamName,
+			Status:      row.Status,
+			Description: row.Description,
+			Date:        row.ReportDate,
+		}
+	}
+	return result, true
+}
+
+func (s *LineupRecommendService) persistInjurySnapshots(
+	ctx context.Context,
+	gameDate string,
+	rows []entity.NBAGameInjurySnapshot,
+) error {
+	repo := repositories.NewNBAGameInjurySnapshotRepository(s.db.DB)
+	now := time.Now()
+	for i := range rows {
+		rows[i].GameDate = gameDate
+		rows[i].FetchedAt = now
+	}
+	return repo.ReplaceByGameDate(ctx, gameDate, rows)
 }
 
 func pickInjuryMatchedPlayer(
@@ -947,6 +1046,65 @@ func calcRecentPowerAverages(stats []entity.PlayerGameStats) (float64, float64) 
 	return avg5, avg10
 }
 
+func calcRecentPowerProfile(stats []entity.PlayerGameStats) recentPowerProfile {
+	profile := recentPowerProfile{}
+	if len(stats) == 0 {
+		return profile
+	}
+
+	powers := make([]float64, 0, min(10, len(stats)))
+	for i := 0; i < min(10, len(stats)); i++ {
+		power := calcPowerFromStats(stats[i])
+		if power <= 0 {
+			continue
+		}
+		powers = append(powers, power)
+	}
+	if len(powers) == 0 {
+		return profile
+	}
+
+	profile.SampleCount = len(powers)
+	for i := 0; i < min(3, len(powers)); i++ {
+		profile.Avg3 += powers[i]
+	}
+	profile.Avg3 /= float64(min(3, len(powers)))
+	for i := 0; i < min(5, len(powers)); i++ {
+		profile.Avg5 += powers[i]
+	}
+	profile.Avg5 /= float64(min(5, len(powers)))
+	for _, power := range powers {
+		profile.Avg10 += power
+	}
+	profile.Avg10 /= float64(len(powers))
+
+	medianWindow := append([]float64(nil), powers[:min(5, len(powers))]...)
+	sort.Float64s(medianWindow)
+	mid := len(medianWindow) / 2
+	if len(medianWindow)%2 == 0 {
+		profile.Median5 = (medianWindow[mid-1] + medianWindow[mid]) / 2.0
+	} else {
+		profile.Median5 = medianWindow[mid]
+	}
+
+	window := powers[:min(5, len(powers))]
+	mean := 0.0
+	for _, power := range window {
+		mean += power
+	}
+	mean /= float64(len(window))
+	if mean > 0 {
+		variance := 0.0
+		for _, power := range window {
+			diff := power - mean
+			variance += diff * diff
+		}
+		profile.Volatility = math.Sqrt(variance/float64(len(window))) / mean
+	}
+
+	return profile
+}
+
 func stabilizeBaseValue(baseValue, gamePower, recentPower5, recentPower10 float64, statCount int) float64 {
 	if recentPower10 <= 0 || statCount < recentBaseMinGames {
 		return baseValue
@@ -971,6 +1129,84 @@ func stabilizeBaseValue(baseValue, gamePower, recentPower5, recentPower10 float6
 	lower := recentPower10 * 0.78
 	upper := recentPower10 * 1.28
 	return clamp(mixed, lower, upper)
+}
+
+func buildRobustBaseValue(baseValue, gamePower float64, profile recentPowerProfile) float64 {
+	if profile.SampleCount == 0 {
+		return baseValue
+	}
+
+	type weightedPoint struct {
+		value  float64
+		weight float64
+	}
+	points := []weightedPoint{
+		{value: baseValue, weight: 0.32},
+		{value: gamePower, weight: 0.08},
+	}
+	if profile.Avg10 > 0 {
+		points = append(points, weightedPoint{value: profile.Avg10, weight: 0.30})
+	}
+	if profile.Avg5 > 0 {
+		points = append(points, weightedPoint{value: profile.Avg5, weight: 0.18})
+	}
+	if profile.Median5 > 0 {
+		points = append(points, weightedPoint{value: profile.Median5, weight: 0.12})
+	}
+
+	totalWeight := 0.0
+	mixed := 0.0
+	for _, point := range points {
+		if point.value <= 0 || point.weight <= 0 {
+			continue
+		}
+		totalWeight += point.weight
+		mixed += point.value * point.weight
+	}
+	if totalWeight <= 0 {
+		return baseValue
+	}
+	mixed /= totalWeight
+
+	anchor := profile.Avg10
+	if anchor <= 0 {
+		anchor = profile.Avg5
+	}
+	if anchor <= 0 {
+		anchor = profile.Median5
+	}
+	if anchor <= 0 {
+		return mixed
+	}
+
+	volatilityPenalty := clamp((profile.Volatility-0.18)/(0.50-0.18), 0.0, 1.0)
+	lower := anchor * (0.84 - 0.03*volatilityPenalty)
+	upper := anchor * (1.18 - 0.05*volatilityPenalty)
+	if upper < lower {
+		upper = lower
+	}
+	return clamp(mixed, lower, upper)
+}
+
+func calcPredictiveFactorConfidence(
+	profile recentPowerProfile,
+	stabilityFactor float64,
+	roleSecurityFactor float64,
+	dataReliabilityFactor float64,
+) float64 {
+	sampleConfidence := clamp(float64(profile.SampleCount)/10.0, 0.18, 1.0)
+	volatilityPenalty := clamp((profile.Volatility-0.18)/(0.48-0.18), 0.0, 1.0)
+	stabilityConfidence := clamp((stabilityFactor-0.90)/(1.03-0.90), 0.12, 1.0)
+	roleConfidence := clamp((roleSecurityFactor-0.72)/(1.05-0.72), 0.12, 1.0)
+	reliabilityConfidence := clamp((dataReliabilityFactor-0.42)/(1.02-0.42), 0.10, 1.0)
+
+	confidence := 0.22 +
+		0.30*sampleConfidence +
+		0.20*stabilityConfidence +
+		0.14*roleConfidence +
+		0.18*reliabilityConfidence -
+		0.12*volatilityPenalty
+	return clamp(confidence, 0.24, 0.94)
 }
 
 func calcStatusTrend(dbPlayer *entity.Player, stats []entity.PlayerGameStats) float64 {
@@ -1021,25 +1257,98 @@ func clampDynamicMultiplier(multiplier float64, statCount int) float64 {
 	return clamp(multiplier, 0.58, 1.05)
 }
 
-func calibratePredictedPower(predicted, baseValue, recentPower10 float64, statCount int) float64 {
+func calibratePredictedPower(predicted, baseValue float64, profile recentPowerProfile, statCount int) float64 {
 	if predicted <= 0 {
 		return predicted
 	}
-	if recentPower10 <= 0 || statCount < 5 {
+	anchor := profile.Avg10
+	if anchor <= 0 {
+		anchor = profile.Avg5
+	}
+	if anchor <= 0 {
+		anchor = profile.Median5
+	}
+	if anchor <= 0 || statCount < 5 {
 		// 无足够近期样本时，避免过拟合因素把结果拉太离谱。
-		modelWeight := 0.85
+		modelWeight := 0.82
 		if statCount == 0 {
-			modelWeight = 0.72
+			modelWeight = 0.66
 		} else if statCount < 3 {
-			modelWeight = 0.78
+			modelWeight = 0.74
 		}
 		return modelWeight*predicted + (1-modelWeight)*baseValue
 	}
 
+	robustAnchor := 0.60*anchor + 0.25*profile.Median5 + 0.15*baseValue
 	reliability := clamp(float64(min(statCount, 10))/10.0, 0.40, 1.0)
-	modelWeight := 0.58 + 0.20*reliability
-	anchored := modelWeight*predicted + (1-modelWeight)*recentPower10
-	return anchored
+	volatilityPenalty := clamp((profile.Volatility-0.18)/(0.50-0.18), 0.0, 1.0)
+	modelWeight := 0.58 + 0.18*reliability - 0.10*volatilityPenalty
+	modelWeight = clamp(modelWeight, 0.52, 0.82)
+	anchored := modelWeight*predicted + (1-modelWeight)*robustAnchor
+	lower := robustAnchor * (0.82 - 0.03*volatilityPenalty)
+	upper := robustAnchor * (1.28 - 0.06*volatilityPenalty)
+	if upper < lower {
+		upper = lower
+	}
+	return clamp(anchored, lower, upper)
+}
+
+func applyStableStarLift(
+	player entity.NBAGamePlayer,
+	predictedPower float64,
+	baseValue float64,
+	minutesFactor float64,
+	usageFactor float64,
+	stabilityFactor float64,
+	defenseUpsideFactor float64,
+	roleSecurityFactor float64,
+	dataReliabilityFactor float64,
+	defenseAnchorFactor float64,
+) float64 {
+	if predictedPower <= 0 || baseValue <= 0 {
+		return predictedPower
+	}
+
+	positionGroup := normalizePositionGroup(player.Position)
+	if positionGroup != 0 {
+		return predictedPower
+	}
+	if baseValue < 46 || player.Salary < 35 {
+		return predictedPower
+	}
+
+	stableSignal := 0.0
+	if baseValue >= 50 {
+		stableSignal += 0.18
+	}
+	if minutesFactor >= 1.02 {
+		stableSignal += 0.18
+	}
+	if usageFactor >= 1.01 {
+		stableSignal += 0.12
+	}
+	if stabilityFactor >= 0.99 {
+		stableSignal += 0.18
+	}
+	if defenseUpsideFactor >= 1.03 {
+		stableSignal += 0.16
+	}
+	if roleSecurityFactor >= 0.95 {
+		stableSignal += 0.18
+	}
+	if dataReliabilityFactor >= 0.90 {
+		stableSignal += 0.18
+	}
+	if defenseAnchorFactor >= 0.94 {
+		stableSignal += 0.08
+	}
+	if stableSignal <= 0.25 {
+		return predictedPower
+	}
+
+	lift := clamp((stableSignal-0.25)*0.09, 0.0, 0.07)
+	targetFloor := baseValue * (1.00 + lift)
+	return math.Max(predictedPower, targetFloor)
 }
 
 func shrinkTowardsOne(value, confidence float64) float64 {

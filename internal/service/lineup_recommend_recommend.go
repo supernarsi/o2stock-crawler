@@ -35,7 +35,27 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	// 2. 获取伤病报告
 	injuryMap := map[uint]crawler.InjuryReport{}
 	if !historicalMode {
-		injuryMap = s.fetchInjuryMap(ctx, allPlayers)
+		var (
+			snapshotRows []entity.NBAGameInjurySnapshot
+			err          error
+		)
+		injuryMap, snapshotRows, err = s.fetchInjuryMap(ctx, allPlayers)
+		if err != nil {
+			log.Printf("获取伤病报告失败（将跳过伤病因素）: %v", err)
+		} else {
+			if err := s.persistInjurySnapshots(ctx, gameDate, snapshotRows); err != nil {
+				log.Printf("保存伤病快照失败: %v", err)
+			} else {
+				log.Printf("伤病快照已保存: %d 条 (日期=%s)", len(snapshotRows), gameDate)
+			}
+		}
+	} else {
+		if snapshotMap, ok := s.loadInjurySnapshotMap(ctx, gameDate); ok {
+			injuryMap = snapshotMap
+			log.Printf("历史伤病快照: 命中 %d 名球员", len(injuryMap))
+		} else {
+			log.Printf("历史伤病快照缺失: %s，将继续跳过伤病因素", gameDate)
+		}
 	}
 	log.Printf("伤病报告: 匹配到 %d 名球员", len(injuryMap))
 
@@ -111,12 +131,74 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		return nil
 	}
 
+	type recommendationSet struct {
+		recType  uint8
+		title    string
+		lookback int
+		lineups  [][]PlayerCandidate
+	}
+
+	recommendationSets := []recommendationSet{
+		{
+			recType:  entity.LineupRecommendationTypeAIRecommended,
+			title:    "AI推荐阵容",
+			lookback: 0,
+			lineups:  topLineups,
+		},
+	}
+
+	for _, spec := range []struct {
+		recType  uint8
+		title    string
+		lookback int
+	}{
+		{recType: entity.LineupRecommendationTypeAvg3Baseline, title: "3日均值推荐", lookback: 3},
+		{recType: entity.LineupRecommendationTypeAvg5Baseline, title: "5日均值推荐", lookback: 5},
+	} {
+		benchmarkCandidates, summary, err := s.buildAverageRecommendationCandidates(
+			ctx,
+			gameDate,
+			allPlayers,
+			spec.lookback,
+			injuryMap,
+		)
+		if err != nil {
+			log.Printf("构建%s候选失败: %v", spec.title, err)
+			continue
+		}
+		log.Printf(
+			"%s候选: lookback=%d, 候选=%d, NBA映射=%d(手工兜底=%d), 历史命中=%d, 历史不足=%d, 伤病排除=%d",
+			spec.title,
+			summary.LookbackGames,
+			summary.CandidateCount,
+			summary.MappedNBACount,
+			summary.ManualMapApplied,
+			summary.HistoryHitCount,
+			summary.InsufficientHistory,
+			summary.InjuryFilteredCount,
+		)
+
+		lineups := s.solveOptimalLineup(benchmarkCandidates, defaultSalaryCap, defaultPickCount, defaultTopN)
+		if len(lineups) == 0 {
+			log.Printf("%s未找到可行阵容: %s", spec.title, gameDate)
+			continue
+		}
+		recommendationSets = append(recommendationSets, recommendationSet{
+			recType:  spec.recType,
+			title:    spec.title,
+			lookback: spec.lookback,
+			lineups:  lineups,
+		})
+	}
+
 	// 7. 保存推荐结果
 	lineupRepo := repositories.NewLineupRecommendationRepository(s.db.DB)
 	var recs []entity.LineupRecommendation
-	for rank, lineup := range topLineups {
-		rec := s.buildRecommendation(gameDate, uint(rank+1), lineup, dbPlayerMap)
-		recs = append(recs, rec)
+	for _, set := range recommendationSets {
+		for rank, lineup := range set.lineups {
+			rec := s.buildRecommendation(gameDate, uint(rank+1), set.recType, set.lookback, lineup, dbPlayerMap)
+			recs = append(recs, rec)
+		}
 	}
 
 	if err := lineupRepo.BatchSave(ctx, recs); err != nil {
@@ -124,7 +206,9 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	}
 
 	// 8. 输出推荐结果
-	s.printRecommendations(gameDate, topLineups)
+	for _, set := range recommendationSets {
+		s.printRecommendations(gameDate, set.title, set.lineups)
+	}
 
 	log.Printf(">>> 推荐完成，结果已保存到 lineup_recommendation 表 <<<")
 	return nil
@@ -136,6 +220,8 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 func (s *LineupRecommendService) buildRecommendation(
 	gameDate string,
 	rank uint,
+	recommendationType uint8,
+	lookbackGames int,
 	lineup []PlayerCandidate,
 	dbPlayerMap map[uint]*entity.Player,
 ) entity.LineupRecommendation {
@@ -192,11 +278,16 @@ func (s *LineupRecommendService) buildRecommendation(
 		detailPlayers = append(detailPlayers, dp)
 	}
 
-	detail := DetailJSON{Players: detailPlayers}
+	detail := DetailJSON{
+		RecommendationType: recommendationTypeName(recommendationType),
+		LookbackGames:      lookbackGames,
+		Players:            detailPlayers,
+	}
 	detailBytes, _ := json.Marshal(detail)
 
 	return entity.LineupRecommendation{
 		GameDate:            gameDate,
+		RecommendationType:  recommendationType,
 		Rank:                rank,
 		TotalPredictedPower: roundTo(totalPower, 1),
 		TotalSalary:         totalSalary,
@@ -209,8 +300,8 @@ func (s *LineupRecommendService) buildRecommendation(
 	}
 }
 
-func (s *LineupRecommendService) printRecommendations(gameDate string, lineups [][]PlayerCandidate) {
-	fmt.Printf("\n>>> 今日NBA推荐阵容 — %s <<<\n\n", gameDate)
+func (s *LineupRecommendService) printRecommendations(gameDate string, title string, lineups [][]PlayerCandidate) {
+	fmt.Printf("\n>>> %s — %s <<<\n\n", title, gameDate)
 
 	medals := []string{"🏆", "🥈", "🥉"}
 	for i, lineup := range lineups {
@@ -225,7 +316,7 @@ func (s *LineupRecommendService) printRecommendations(gameDate string, lineups [
 		if i < len(medals) {
 			medal = medals[i]
 		}
-		fmt.Printf("%s 推荐阵容 #%d (总预测战力: %.1f, 总工资: %d)\n", medal, i+1, totalPower, totalSalary)
+		fmt.Printf("%s %s #%d (总预测战力: %.1f, 总工资: %d)\n", medal, title, i+1, totalPower, totalSalary)
 		fmt.Println("┌──────────────────────┬──────┬──────┬───────┬──────────┐")
 		fmt.Println("│ 球员                 │ 球队 │ 工资 │ 预测  │ 可用性   │")
 		fmt.Println("├──────────────────────┼──────┼──────┼───────┼──────────┤")
@@ -237,6 +328,17 @@ func (s *LineupRecommendService) printRecommendations(gameDate string, lineups [
 		}
 		fmt.Println("└──────────────────────┴──────┴──────┴───────┴──────────┘")
 		fmt.Println()
+	}
+}
+
+func recommendationTypeName(recommendationType uint8) string {
+	switch recommendationType {
+	case entity.LineupRecommendationTypeAvg3Baseline:
+		return "avg3_recommendation"
+	case entity.LineupRecommendationTypeAvg5Baseline:
+		return "avg5_recommendation"
+	default:
+		return "ai_recommendation"
 	}
 }
 

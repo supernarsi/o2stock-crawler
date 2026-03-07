@@ -36,9 +36,18 @@ func (r *LineupRecommendationRepository) BatchSave(ctx context.Context, recs []e
 
 // GetByDate 获取指定日期推荐阵容
 func (r *LineupRecommendationRepository) GetByDate(ctx context.Context, gameDate string) ([]entity.LineupRecommendation, error) {
+	return r.GetByDateAndType(ctx, gameDate, entity.LineupRecommendationTypeAIRecommended)
+}
+
+// GetByDateAndType 获取指定日期、指定类型的推荐阵容
+func (r *LineupRecommendationRepository) GetByDateAndType(
+	ctx context.Context,
+	gameDate string,
+	recommendationType uint8,
+) ([]entity.LineupRecommendation, error) {
 	var recs []entity.LineupRecommendation
 	err := r.ctx(ctx).
-		Where("game_date = ?", gameDate).
+		Where("game_date = ? AND recommendation_type = ?", gameDate, recommendationType).
 		Order("`rank` ASC").
 		Find(&recs).Error
 	return recs, err
@@ -63,7 +72,12 @@ func (r *LineupRecommendationRepository) BatchUpdateActualPower(
 	return r.ctx(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, rank := range ranks {
 			if err := tx.Model(&entity.LineupRecommendation{}).
-				Where("game_date = ? AND `rank` = ?", gameDate, rank).
+				Where(
+					"game_date = ? AND recommendation_type = ? AND `rank` = ?",
+					gameDate,
+					entity.LineupRecommendationTypeAIRecommended,
+					rank,
+				).
 				Update("total_actual_power", rankPowerMap[rank]).Error; err != nil {
 				return err
 			}

@@ -2,10 +2,17 @@ package entity
 
 import "time"
 
+const (
+	LineupRecommendationTypeAIRecommended uint8 = 1
+	LineupRecommendationTypeAvg3Baseline  uint8 = 2
+	LineupRecommendationTypeAvg5Baseline  uint8 = 3
+)
+
 // LineupRecommendation 推荐阵容
 type LineupRecommendation struct {
 	ID                  uint      `gorm:"primaryKey;column:id"`
 	GameDate            string    `gorm:"column:game_date"`
+	RecommendationType  uint8     `gorm:"column:recommendation_type"`
 	Rank                uint      `gorm:"column:rank"`
 	TotalPredictedPower float64   `gorm:"column:total_predicted_power"`
 	TotalActualPower    *float64  `gorm:"column:total_actual_power"`

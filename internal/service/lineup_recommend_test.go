@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/entity"
 )
@@ -261,6 +262,27 @@ func TestCalcOpponentDefenseAnchorFactorPenalizesEliteRimProtector(t *testing.T)
 	}
 	if !(guardFactor < 1.0 && guardFactor > frontcourtFactor) {
 		t.Fatalf("guardFactor=%.3f, expected between (frontcourtFactor,1.0), frontcourtFactor=%.3f", guardFactor, frontcourtFactor)
+	}
+}
+
+func TestResolveAvailabilityScore(t *testing.T) {
+	player := entity.NBAGamePlayer{
+		NBAPlayerID: 1,
+		CombatPower: 35,
+	}
+
+	outScore := resolveAvailabilityScore(player, map[uint]crawler.InjuryReport{
+		1: {Status: "Out"},
+	})
+	if outScore != 0 {
+		t.Fatalf("outScore=%.2f, want 0", outScore)
+	}
+
+	questionableScore := resolveAvailabilityScore(player, map[uint]crawler.InjuryReport{
+		1: {Status: "Questionable"},
+	})
+	if math.Abs(questionableScore-0.68) > 1e-9 {
+		t.Fatalf("questionableScore=%.2f, want 0.68", questionableScore)
 	}
 }
 
@@ -866,6 +888,96 @@ func TestCalcAveragePowerFromStats(t *testing.T) {
 	want := roundTo((calcPowerFromStats(stats[0])+calcPowerFromStats(stats[1])+calcPowerFromStats(stats[2]))/3, 1)
 	if got != want {
 		t.Fatalf("calcAveragePowerFromStats()=%.1f, want %.1f", got, want)
+	}
+}
+
+func TestCalcRecentPowerProfile(t *testing.T) {
+	stats := []entity.PlayerGameStats{
+		{Points: 40, Rebounds: 10, Assists: 8, Steals: 2, Blocks: 1, Turnovers: 3},
+		{Points: 18, Rebounds: 4, Assists: 5, Steals: 1, Blocks: 0, Turnovers: 2},
+		{Points: 22, Rebounds: 6, Assists: 7, Steals: 1, Blocks: 1, Turnovers: 1},
+		{Points: 12, Rebounds: 3, Assists: 2, Steals: 0, Blocks: 0, Turnovers: 1},
+		{Points: 28, Rebounds: 8, Assists: 6, Steals: 2, Blocks: 1, Turnovers: 3},
+	}
+
+	profile := calcRecentPowerProfile(stats)
+	if profile.SampleCount != 5 {
+		t.Fatalf("profile.SampleCount=%d, want 5", profile.SampleCount)
+	}
+	if !(profile.Avg10 > 0 && profile.Avg5 > 0 && profile.Median5 > 0) {
+		t.Fatalf("profile averages should all be > 0: %+v", profile)
+	}
+	if profile.Volatility <= 0 {
+		t.Fatalf("profile.Volatility=%.3f, want > 0", profile.Volatility)
+	}
+}
+
+func TestBuildRobustBaseValuePullsTowardHistoryCenter(t *testing.T) {
+	profile := recentPowerProfile{
+		Avg3:        48,
+		Avg5:        44,
+		Avg10:       41,
+		Median5:     42,
+		Volatility:  0.34,
+		SampleCount: 8,
+	}
+
+	got := buildRobustBaseValue(60, 58, profile)
+	if !(got < 60 && got > 41) {
+		t.Fatalf("robust base=%.1f, want between history anchor and raw base", got)
+	}
+}
+
+func TestCalibratePredictedPowerShrinksVolatileSpike(t *testing.T) {
+	profile := recentPowerProfile{
+		Avg3:        50,
+		Avg5:        46,
+		Avg10:       42,
+		Median5:     43,
+		Volatility:  0.44,
+		SampleCount: 8,
+	}
+
+	got := calibratePredictedPower(70, 45, profile, 8)
+	if !(got < 70 && got > 42) {
+		t.Fatalf("calibrated=%.1f, want shrink toward history anchor", got)
+	}
+}
+
+func TestCalcPredictiveFactorConfidenceDropsForVolatileLowReliability(t *testing.T) {
+	volatile := calcPredictiveFactorConfidence(
+		recentPowerProfile{SampleCount: 3, Volatility: 0.46},
+		0.93,
+		0.78,
+		0.62,
+	)
+	stable := calcPredictiveFactorConfidence(
+		recentPowerProfile{SampleCount: 10, Volatility: 0.16},
+		1.01,
+		1.00,
+		0.98,
+	)
+
+	if !(volatile < stable) {
+		t.Fatalf("volatile confidence=%.2f, stable confidence=%.2f, want volatile < stable", volatile, stable)
+	}
+}
+
+func TestApplyStableStarLiftRaisesEliteStableFrontcourt(t *testing.T) {
+	got := applyStableStarLift(
+		entity.NBAGamePlayer{Position: 0, Salary: 45},
+		49.3,
+		52.0,
+		1.04,
+		1.03,
+		1.00,
+		1.07,
+		0.98,
+		0.94,
+		0.96,
+	)
+	if !(got > 49.3) {
+		t.Fatalf("stable star lift=%.1f, want > 49.3", got)
 	}
 }
 

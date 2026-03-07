@@ -6,6 +6,7 @@ import (
 	"log"
 	"o2stock-crawler/internal/config"
 	"o2stock-crawler/internal/db"
+	"o2stock-crawler/internal/entity"
 	"o2stock-crawler/internal/service"
 	"os"
 	"path/filepath"
@@ -34,6 +35,9 @@ func main() {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
 	defer database.Close()
+	if err := ensureNBALineupTables(database); err != nil {
+		log.Fatalf("初始化 NBA 相关表失败: %v", err)
+	}
 
 	ctx := context.Background()
 
@@ -167,4 +171,8 @@ func resolveFeedbackFilePath(gameDate string, feedbackArg string) string {
 		return target
 	}
 	return filepath.Join(target, gameDate+".json")
+}
+
+func ensureNBALineupTables(database *db.DB) error {
+	return database.AutoMigrate(&entity.NBAGameInjurySnapshot{})
 }

@@ -156,5 +156,7 @@ type DetailPlayer struct {
 
 // DetailJSON detail_json 结构。
 type DetailJSON struct {
-	Players []DetailPlayer `json:"players"`
+	RecommendationType string         `json:"recommendation_type,omitempty"`
+	LookbackGames      int            `json:"lookback_games,omitempty"`
+	Players            []DetailPlayer `json:"players"`
 }

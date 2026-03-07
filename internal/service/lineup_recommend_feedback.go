@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/entity"
 )
@@ -418,6 +419,7 @@ type backtestBenchmarkCandidateSummary struct {
 	ManualMapApplied    int
 	HistoryHitCount     int
 	InsufficientHistory int
+	InjuryFilteredCount int
 }
 
 type backtestLineupSlot struct {
@@ -713,8 +715,16 @@ func (s *LineupRecommendService) buildBacktestAverageBenchmarkCandidates(
 
 		candidates = append(candidates, PlayerCandidate{
 			Player: entity.NBAGamePlayer{
-				NBAPlayerID: player.NBAPlayerID,
-				Salary:      salaryByNBA[player.NBAPlayerID],
+				NBAPlayerID:  player.NBAPlayerID,
+				NBATeamID:    player.NBATeamID,
+				MatchID:      player.MatchID,
+				PlayerName:   player.PlayerName,
+				PlayerEnName: player.PlayerEnName,
+				TeamName:     player.TeamName,
+				IsHome:       player.IsHome,
+				Salary:       salaryByNBA[player.NBAPlayerID],
+				Position:     player.Position,
+				CombatPower:  player.CombatPower,
 			},
 			Prediction: PlayerPrediction{
 				PredictedPower: avgPower,
@@ -726,6 +736,38 @@ func (s *LineupRecommendService) buildBacktestAverageBenchmarkCandidates(
 	}
 
 	return candidates, summary, nil
+}
+
+func (s *LineupRecommendService) buildAverageRecommendationCandidates(
+	ctx context.Context,
+	gameDate string,
+	gamePlayers []entity.NBAGamePlayer,
+	lookback int,
+	injuryMap map[uint]crawler.InjuryReport,
+) ([]PlayerCandidate, backtestBenchmarkCandidateSummary, error) {
+	candidates, summary, err := s.buildBacktestAverageBenchmarkCandidates(ctx, gameDate, gamePlayers, lookback)
+	if err != nil {
+		return nil, summary, err
+	}
+	if len(candidates) == 0 {
+		return candidates, summary, nil
+	}
+
+	filtered := make([]PlayerCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		availabilityScore := resolveAvailabilityScore(candidate.Player, injuryMap)
+		if availabilityScore == 0 {
+			summary.InjuryFilteredCount++
+			continue
+		}
+
+		candidate.Prediction.BaseValue = candidate.Prediction.PredictedPower
+		candidate.Prediction.AvailabilityScore = availabilityScore
+		candidate.Prediction.PredictedPower = roundTo(candidate.Prediction.PredictedPower*availabilityScore, 1)
+		filtered = append(filtered, candidate)
+	}
+
+	return filtered, summary, nil
 }
 
 func calcAveragePowerFromStats(stats []entity.PlayerGameStats, lookback int) float64 {
