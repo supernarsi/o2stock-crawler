@@ -671,52 +671,6 @@ func TestTeamNameByID(t *testing.T) {
 	}
 }
 
-func TestResolveActualFeedbackItemsOnlySupportsLineupList(t *testing.T) {
-	lineupJSON := []byte(`{
-		"game_date":"2026-03-04",
-		"source":"manual",
-		"list":[
-			{"rank":1,"players":[{"nba_player_id":2544,"salary":45,"actual_power":43.1}]},
-			{"rank":2,"players":[{"nba_player_id":201939,"actual_power":40.3}]}
-		]
-	}`)
-	date, items, err := resolveActualFeedbackItems(lineupJSON)
-	if err != nil {
-		t.Fatalf("resolve lineup-list err=%v", err)
-	}
-	if date != "2026-03-04" || len(items) != 2 {
-		t.Fatalf("lineup-list parse failed: date=%s items=%+v", date, items)
-	}
-	if items[0].Source != "manual" || items[1].Source != "manual" {
-		t.Fatalf("lineup-list source propagation failed: %+v", items)
-	}
-	if items[0].Salary == nil || *items[0].Salary != 45 {
-		t.Fatalf("lineup-list salary parse failed: %+v", items[0])
-	}
-	if items[0].Rank != 1 || items[1].Rank != 2 {
-		t.Fatalf("lineup-list rank parse failed: %+v", items)
-	}
-}
-
-func TestResolveActualFeedbackItemsRejectsNonLineupJSON(t *testing.T) {
-	notSupported := []byte(`[{"nba_player_id":201939,"actual_power":39.9}]`)
-	if _, _, err := resolveActualFeedbackItems(notSupported); err == nil {
-		t.Fatalf("expected non-lineup json to fail")
-	}
-}
-
-func TestResolveActualFeedbackItemsRejectsInvalidRank(t *testing.T) {
-	invalidRank := []byte(`{
-		"game_date":"2026-03-04",
-		"list":[
-			{"rank":4,"players":[{"nba_player_id":2544,"actual_power":43.1}]}
-		]
-	}`)
-	if _, _, err := resolveActualFeedbackItems(invalidRank); err == nil {
-		t.Fatalf("expected invalid rank to fail")
-	}
-}
-
 func TestSolveOptimalLineupAllowZero(t *testing.T) {
 	svc := &LineupRecommendService{}
 	candidates := []PlayerCandidate{
@@ -781,28 +735,6 @@ func TestApplyManualNBATxPlayerIDOverrides(t *testing.T) {
 	}
 	if got := nbaToTx[1631097]; got != 196122 {
 		t.Fatalf("existing mapping should not be overridden, got %d", got)
-	}
-}
-
-func TestDedupeFeedbackActualMap(t *testing.T) {
-	rows := []entity.NBAGamePlayerActual{
-		{Rank: 1, NBAPlayerID: 2544, ActualPower: 43.16},
-		{Rank: 2, NBAPlayerID: 2544, ActualPower: 41.8},
-		{Rank: 1, NBAPlayerID: 201939, ActualPower: 39.92},
-	}
-
-	got, dupCount := dedupeFeedbackActualMap(rows)
-	if dupCount != 1 {
-		t.Fatalf("dupCount=%d, want 1", dupCount)
-	}
-	if len(got) != 2 {
-		t.Fatalf("map len=%d, want 2", len(got))
-	}
-	if got[2544] != 43.2 {
-		t.Fatalf("actual[2544]=%.1f, want 43.2", got[2544])
-	}
-	if got[201939] != 39.9 {
-		t.Fatalf("actual[201939]=%.1f, want 39.9", got[201939])
 	}
 }
 

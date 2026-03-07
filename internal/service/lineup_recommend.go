@@ -58,27 +58,6 @@ type PlayerSalary struct {
 	ISalary       string `json:"iSalary"`
 }
 
-// ActualFeedbackItem 真实战力反馈项（仅支持阵容 list 格式）。
-type ActualFeedbackItem struct {
-	Rank        uint     `json:"-"`
-	NBAPlayerID uint     `json:"nba_player_id"`
-	Salary      *uint    `json:"salary"`
-	ActualPower *float64 `json:"actual_power"`
-	Source      string   `json:"source"`
-}
-
-// ActualFeedbackLineupPayload 阵容反馈 JSON 结构（list -> players）。
-type ActualFeedbackLineupPayload struct {
-	GameDate string                 `json:"game_date"`
-	Source   string                 `json:"source"`
-	List     []ActualFeedbackLineup `json:"list"`
-}
-
-type ActualFeedbackLineup struct {
-	Rank    uint                 `json:"rank"`
-	Players []ActualFeedbackItem `json:"players"`
-}
-
 // PlayerPrediction 预测结果及各因子明细。
 type PlayerPrediction struct {
 	PredictedPower        float64

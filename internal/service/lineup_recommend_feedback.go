@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"sort"
 	"strings"
 
@@ -14,93 +13,7 @@ import (
 	"o2stock-crawler/internal/entity"
 )
 
-// ImportActualFeedback 导入赛后真实战力反馈（按比赛日全量替换）。
-func (s *LineupRecommendService) ImportActualFeedback(ctx context.Context, gameDate string, feedbackFile string) error {
-	raw, err := os.ReadFile(feedbackFile)
-	if err != nil {
-		return fmt.Errorf("读取反馈文件失败: %w", err)
-	}
-
-	resolvedDate, items, err := resolveActualFeedbackItems(raw)
-	if err != nil {
-		return fmt.Errorf("解析反馈文件失败: %w", err)
-	}
-	if gameDate == "" {
-		gameDate = resolvedDate
-	}
-	if gameDate == "" {
-		return fmt.Errorf("缺少比赛日期，请传入参数或在 JSON 中提供 game_date")
-	}
-	if resolvedDate != "" && resolvedDate != gameDate {
-		return fmt.Errorf("反馈日期不一致: 参数=%s, JSON=%s", gameDate, resolvedDate)
-	}
-	if len(items) == 0 {
-		return fmt.Errorf("反馈文件中无有效球员数据")
-	}
-
-	salaryMap := make(map[uint]uint)
-	gamePlayerRepo := repositories.NewNBAGamePlayerRepository(s.db.DB)
-	gamePlayers, err := gamePlayerRepo.GetByGameDate(ctx, gameDate)
-	if err != nil {
-		log.Printf("加载候选球员工资失败，将仅使用反馈中的 salary: %v", err)
-	} else {
-		for _, p := range gamePlayers {
-			salaryMap[p.NBAPlayerID] = p.Salary
-		}
-	}
-
-	defaultSource := "manual_json"
-	dedup := make(map[string]entity.NBAGamePlayerActual)
-	for _, item := range items {
-		if item.Rank == 0 || item.NBAPlayerID == 0 || item.ActualPower == nil {
-			continue
-		}
-
-		source := strings.TrimSpace(item.Source)
-		if source == "" {
-			source = defaultSource
-		}
-
-		salary := salaryMap[item.NBAPlayerID]
-		if item.Salary != nil {
-			salary = *item.Salary
-		}
-
-		key := fmt.Sprintf("%d:%d", item.Rank, item.NBAPlayerID)
-		dedup[key] = entity.NBAGamePlayerActual{
-			GameDate:    gameDate,
-			Rank:        item.Rank,
-			NBAPlayerID: item.NBAPlayerID,
-			Salary:      salary,
-			ActualPower: roundTo(*item.ActualPower, 1),
-			Source:      source,
-		}
-	}
-	if len(dedup) == 0 {
-		return fmt.Errorf("反馈文件中没有可导入的有效 actual_power")
-	}
-
-	rows := make([]entity.NBAGamePlayerActual, 0, len(dedup))
-	for _, row := range dedup {
-		rows = append(rows, row)
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Rank != rows[j].Rank {
-			return rows[i].Rank < rows[j].Rank
-		}
-		return rows[i].NBAPlayerID < rows[j].NBAPlayerID
-	})
-
-	actualRepo := repositories.NewNBAGamePlayerActualRepository(s.db.DB)
-	if err := actualRepo.ReplaceByGameDate(ctx, gameDate, rows); err != nil {
-		return fmt.Errorf("写入反馈失败: %w", err)
-	}
-
-	log.Printf("已导入真实战力反馈: %d 名球员 (日期: %s)", len(rows), gameDate)
-	return nil
-}
-
-// RunBacktest 基于比赛数据(主) + 用户反馈(补充覆盖)回测推荐结果，并给出真实最优 TopN
+// RunBacktest 基于 player_game_stats 回测推荐结果，并给出真实最优 TopN
 func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate string, topN int) error {
 	if topN <= 0 {
 		topN = defaultTopN
@@ -128,30 +41,21 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 		playerMap[p.NBAPlayerID] = p
 	}
 
-	actualRepo := repositories.NewNBAGamePlayerActualRepository(s.db.DB)
-	actualRows, err := actualRepo.GetByGameDate(ctx, gameDate)
-	if err != nil {
-		return fmt.Errorf("查询真实战力反馈失败: %w", err)
-	}
-
-	actualMap, summary, err := s.buildBacktestActualPowerMap(ctx, gameDate, gamePlayers, actualRows)
+	actualMap, summary, err := s.buildBacktestActualPowerMap(ctx, gameDate, gamePlayers)
 	if err != nil {
 		return err
 	}
 	if len(actualMap) == 0 {
-		return fmt.Errorf("无可用真实战力数据: %s（player_game_stats 与 feedback 均未命中）", gameDate)
+		return fmt.Errorf("无可用真实战力数据: %s（player_game_stats 未命中）", gameDate)
 	}
 	log.Printf(
-		"回测真实战力覆盖(%s): 候选=%d, NBA->TX映射=%d(手工兜底=%d, 冲突=%d), stats命中=%d, feedback去重=%d(重复=%d, 覆盖替换=%d), 最终覆盖=%d",
+		"回测真实战力覆盖(%s): 候选=%d, NBA->TX映射=%d(手工兜底=%d, 冲突=%d), stats命中=%d, 最终覆盖=%d",
 		gameDate,
 		summary.CandidateCount,
 		summary.MappedTxCount,
 		summary.ManualMapAppliedCount,
 		summary.MappingConflictCount,
 		summary.StatsHitCount,
-		summary.FeedbackCount,
-		summary.FeedbackDuplicateCount,
-		summary.FeedbackOverrideCount,
 		summary.FinalCoverageCount,
 	)
 
@@ -219,7 +123,7 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 	}
 
 	// B. 以真实战力为目标值，重新求解真实最优 TopN（tx 视角，不依赖 NBA->TX 映射完整性）
-	actualCandidates, actualCandidateSummary, err := s.buildBacktestActualCandidates(ctx, gameDate, gamePlayers, actualRows)
+	actualCandidates, actualCandidateSummary, err := s.buildBacktestActualCandidates(ctx, gameDate, gamePlayers)
 	if err != nil {
 		return err
 	}
@@ -227,12 +131,11 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 		return fmt.Errorf("无可用真实最优候选: %s", gameDate)
 	}
 	log.Printf(
-		"回测真实最优候选(%s): stats球员=%d, 映射NBA=%d, tx-only=%d, feedback补充=%d, tx默认工资=%d",
+		"回测真实最优候选(%s): stats球员=%d, 映射NBA=%d, tx-only=%d, tx默认工资=%d",
 		gameDate,
 		actualCandidateSummary.StatsCandidateCount,
 		actualCandidateSummary.MappedNBACount,
 		actualCandidateSummary.TxOnlyCount,
-		actualCandidateSummary.FeedbackOnlyCount,
 		actualCandidateSummary.TxOnlyDefaultSalaryCount,
 	)
 
@@ -270,51 +173,6 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 	s.printBacktestSummary(gameDate, recRows, benchmarkRowsByType, optRows, playerMap)
 	log.Printf(">>> 回测完成，结果已保存到 lineup_backtest_result 表 <<<")
 	return nil
-}
-
-// --- 生成推荐 ---
-
-// GenerateRecommendation 生成指定日期的推荐阵容
-
-// resolveActualFeedbackItems 解析用户回传的反馈 JSON。
-// 当前仅支持 list/rank/players 的阵容格式。
-func resolveActualFeedbackItems(raw []byte) (string, []ActualFeedbackItem, error) {
-	var lineupPayload ActualFeedbackLineupPayload
-	if err := json.Unmarshal(raw, &lineupPayload); err != nil {
-		return "", nil, fmt.Errorf("反馈 JSON 解析失败: %w", err)
-	}
-	if len(lineupPayload.List) == 0 {
-		return "", nil, fmt.Errorf("仅支持 list 阵容格式，且 list 不能为空")
-	}
-
-	date := strings.TrimSpace(lineupPayload.GameDate)
-	source := strings.TrimSpace(lineupPayload.Source)
-	items := make([]ActualFeedbackItem, 0)
-	for _, lineup := range lineupPayload.List {
-		if lineup.Rank == 0 {
-			return "", nil, fmt.Errorf("list.rank 不能为空")
-		}
-		if lineup.Rank > 3 {
-			return "", nil, fmt.Errorf("list.rank 超出范围: %d（最多 3）", lineup.Rank)
-		}
-		for _, player := range lineup.Players {
-			if player.NBAPlayerID == 0 {
-				return "", nil, fmt.Errorf("list.rank=%d 存在空 nba_player_id", lineup.Rank)
-			}
-			if player.ActualPower == nil {
-				return "", nil, fmt.Errorf("list.rank=%d player=%d 缺少 actual_power", lineup.Rank, player.NBAPlayerID)
-			}
-			player.Rank = lineup.Rank
-			if source != "" && strings.TrimSpace(player.Source) == "" {
-				player.Source = source
-			}
-			items = append(items, player)
-		}
-	}
-	if len(items) == 0 {
-		return "", nil, fmt.Errorf("list.players 不能为空")
-	}
-	return date, items, nil
 }
 
 func pickLineupPlayerIDs(rec entity.LineupRecommendation) [5]uint {
@@ -393,22 +251,18 @@ func backtestResultTypeLabel(resultType uint8) string {
 }
 
 type backtestActualPowerSummary struct {
-	CandidateCount         int
-	MappedTxCount          int
-	ManualMapAppliedCount  int
-	MappingConflictCount   int
-	StatsHitCount          int
-	FeedbackCount          int
-	FeedbackDuplicateCount int
-	FeedbackOverrideCount  int
-	FinalCoverageCount     int
+	CandidateCount        int
+	MappedTxCount         int
+	ManualMapAppliedCount int
+	MappingConflictCount  int
+	StatsHitCount         int
+	FinalCoverageCount    int
 }
 
 type backtestActualCandidateSummary struct {
 	StatsCandidateCount      int
 	MappedNBACount           int
 	TxOnlyCount              int
-	FeedbackOnlyCount        int
 	TxOnlyDefaultSalaryCount int
 }
 
@@ -452,14 +306,11 @@ var manualNBATxPlayerIDOverrides = map[uint]uint{
 	1629674: 175332, // Neemias.Queta（内米亚斯.奎塔）
 }
 
-// buildBacktestActualPowerMap 构建回测真实战力映射，优先来源顺序如下：
-// 1) player_game_stats（通过 players 表建立 nba_player_id -> tx_player_id 映射）
-// 2) nba_game_player_actual（用户反馈，覆盖同球员的 stats 推导值）
+// buildBacktestActualPowerMap 构建回测真实战力映射，仅使用 player_game_stats。
 func (s *LineupRecommendService) buildBacktestActualPowerMap(
 	ctx context.Context,
 	gameDate string,
 	gamePlayers []entity.NBAGamePlayer,
-	feedbackRows []entity.NBAGamePlayerActual,
 ) (map[uint]float64, backtestActualPowerSummary, error) {
 	summary := backtestActualPowerSummary{
 		CandidateCount: len(gamePlayers),
@@ -509,18 +360,6 @@ func (s *LineupRecommendService) buildBacktestActualPowerMap(
 		summary.StatsHitCount++
 	}
 
-	feedbackMap, feedbackDup := dedupeFeedbackActualMap(feedbackRows)
-	summary.FeedbackDuplicateCount = feedbackDup
-	for nbaPlayerID, power := range feedbackMap {
-		if _, ok := candidateSet[nbaPlayerID]; !ok {
-			continue
-		}
-		summary.FeedbackCount++
-		if existing, exists := actualMap[nbaPlayerID]; exists && existing != power {
-			summary.FeedbackOverrideCount++
-		}
-		actualMap[nbaPlayerID] = power
-	}
 	summary.FinalCoverageCount = len(actualMap)
 	return actualMap, summary, nil
 }
@@ -529,7 +368,6 @@ func (s *LineupRecommendService) buildBacktestActualCandidates(
 	ctx context.Context,
 	gameDate string,
 	gamePlayers []entity.NBAGamePlayer,
-	feedbackRows []entity.NBAGamePlayerActual,
 ) ([]PlayerCandidate, backtestActualCandidateSummary, error) {
 	summary := backtestActualCandidateSummary{}
 	if len(gamePlayers) == 0 {
@@ -555,8 +393,7 @@ func (s *LineupRecommendService) buildBacktestActualCandidates(
 	}
 	summary.StatsCandidateCount = len(statsByTx)
 
-	candidates := make([]PlayerCandidate, 0, len(statsByTx)+len(feedbackRows))
-	txCandidateIndex := make(map[uint]int, len(statsByTx))
+	candidates := make([]PlayerCandidate, 0, len(statsByTx))
 	for txPlayerID, stat := range statsByTx {
 		nbaPlayerID := txToNBAMap[txPlayerID]
 		salary := backtestTxOnlyDefaultSalary
@@ -588,53 +425,6 @@ func (s *LineupRecommendService) buildBacktestActualCandidates(
 			BacktestTxPlayerID: txPlayerID,
 			BacktestName:       name,
 		})
-		txCandidateIndex[txPlayerID] = len(candidates) - 1
-	}
-
-	feedbackMap, _ := dedupeFeedbackActualMap(feedbackRows)
-	feedbackSalaryMap := dedupeFeedbackSalaryMap(feedbackRows)
-	for nbaPlayerID, power := range feedbackMap {
-		salary := salaryByNBA[nbaPlayerID]
-		if feedbackSalary, ok := feedbackSalaryMap[nbaPlayerID]; ok && feedbackSalary > 0 {
-			salary = feedbackSalary
-		}
-		if salary == 0 {
-			salary = backtestTxOnlyDefaultSalary
-		}
-
-		txPlayerID := nbaToTxMap[nbaPlayerID]
-		if txPlayerID > 0 {
-			if idx, exists := txCandidateIndex[txPlayerID]; exists {
-				candidates[idx].Prediction.PredictedPower = power
-				if candidates[idx].Player.NBAPlayerID == 0 {
-					candidates[idx].Player.NBAPlayerID = nbaPlayerID
-				}
-				if candidates[idx].Player.Salary == 0 {
-					candidates[idx].Player.Salary = salary
-				}
-				if trimmed := strings.TrimSpace(nameByNBA[nbaPlayerID]); trimmed != "" {
-					candidates[idx].BacktestName = trimmed
-				}
-				continue
-			}
-		}
-
-		name := strings.TrimSpace(nameByNBA[nbaPlayerID])
-		if name == "" {
-			name = "-"
-		}
-		candidates = append(candidates, PlayerCandidate{
-			Player: entity.NBAGamePlayer{
-				NBAPlayerID: nbaPlayerID,
-				Salary:      salary,
-			},
-			Prediction: PlayerPrediction{
-				PredictedPower: power,
-			},
-			BacktestTxPlayerID: txPlayerID,
-			BacktestName:       name,
-		})
-		summary.FeedbackOnlyCount++
 	}
 
 	for i := range candidates {
@@ -825,20 +615,6 @@ func buildTxToNBAMap(nbaToTxMap map[uint]uint, candidateSet map[uint]struct{}) m
 	return txToNBAMap
 }
 
-func dedupeFeedbackSalaryMap(rows []entity.NBAGamePlayerActual) map[uint]uint {
-	feedbackSalary := make(map[uint]uint, len(rows))
-	for _, row := range rows {
-		if row.NBAPlayerID == 0 {
-			continue
-		}
-		if _, exists := feedbackSalary[row.NBAPlayerID]; exists {
-			continue
-		}
-		feedbackSalary[row.NBAPlayerID] = row.Salary
-	}
-	return feedbackSalary
-}
-
 func collectCandidateNBAPlayerIDs(players []entity.NBAGamePlayer) []uint {
 	if len(players) == 0 {
 		return nil
@@ -914,22 +690,6 @@ func collectUniqueTxPlayerIDs(nbaToTxMap map[uint]uint) []uint {
 		result = append(result, txPlayerID)
 	}
 	return result
-}
-
-func dedupeFeedbackActualMap(rows []entity.NBAGamePlayerActual) (map[uint]float64, int) {
-	feedbackMap := make(map[uint]float64, len(rows))
-	dupCount := 0
-	for _, row := range rows {
-		if row.NBAPlayerID == 0 {
-			continue
-		}
-		if _, exists := feedbackMap[row.NBAPlayerID]; exists {
-			dupCount++
-			continue
-		}
-		feedbackMap[row.NBAPlayerID] = roundTo(row.ActualPower, 1)
-	}
-	return feedbackMap, dupCount
 }
 
 func (s *LineupRecommendService) buildBacktestRowFromRecommendation(
