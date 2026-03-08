@@ -304,6 +304,7 @@ var manualNBATxPlayerIDOverrides = map[uint]uint{
 	1631119: 196152, // Jaylin.Williams（杰林.威廉姆斯）
 	1642271: 272768, // Kyle Filipowski（凯尔.菲利波夫斯基）
 	1629674: 175332, // Neemias.Queta（内米亚斯.奎塔）
+	1630611: 196168, // Gui Santos（古伊.桑托斯）
 }
 
 // buildBacktestActualPowerMap 构建回测真实战力映射，仅使用 player_game_stats。
