@@ -77,6 +77,15 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 		return fmt.Errorf("回写推荐阵容实际战力失败: %w", err)
 	}
 
+	// 均值基准部分尽量复用推荐阶段的候选与伤病过滤逻辑。
+	injuryMap := map[uint]crawler.InjuryReport{}
+	if snapshotMap, ok := s.loadInjurySnapshotMap(ctx, gameDate); ok {
+		injuryMap = snapshotMap
+		log.Printf("回测伤病快照: 命中 %d 名球员", len(injuryMap))
+	} else {
+		log.Printf("回测伤病快照缺失: %s，将跳过均值基准的伤病过滤", gameDate)
+	}
+
 	benchmarkRowsByType := make(map[uint8][]entity.LineupBacktestResult, 2)
 	for _, lookback := range []int{3, 5} {
 		benchmarkType := backtestBenchmarkResultType(lookback)
@@ -84,12 +93,12 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 			continue
 		}
 
-		benchmarkCandidates, benchmarkSummary, err := s.buildBacktestAverageBenchmarkCandidates(ctx, gameDate, gamePlayers, lookback)
+		benchmarkCandidates, benchmarkSummary, err := s.buildAverageRecommendationCandidates(ctx, gameDate, gamePlayers, lookback, injuryMap)
 		if err != nil {
 			return err
 		}
 		log.Printf(
-			"回测均值基准候选(%s): lookback=%d, 候选=%d, NBA映射=%d(手工兜底=%d), 历史命中=%d, 历史不足=%d",
+			"回测均值基准候选(%s): lookback=%d, 候选=%d, NBA映射=%d(手工兜底=%d), 历史命中=%d, 历史不足=%d, 伤病排除=%d",
 			gameDate,
 			benchmarkSummary.LookbackGames,
 			benchmarkSummary.CandidateCount,
@@ -97,6 +106,7 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 			benchmarkSummary.ManualMapApplied,
 			benchmarkSummary.HistoryHitCount,
 			benchmarkSummary.InsufficientHistory,
+			benchmarkSummary.InjuryFilteredCount,
 		)
 
 		lineups := s.solveOptimalLineupAllowZero(benchmarkCandidates, defaultSalaryCap, defaultPickCount, topN)
@@ -544,11 +554,25 @@ func (s *LineupRecommendService) buildAverageRecommendationCandidates(
 		return candidates, summary, nil
 	}
 
+	filtered, filteredCount := filterBenchmarkCandidatesByInjury(candidates, injuryMap)
+	summary.InjuryFilteredCount += filteredCount
+	return filtered, summary, nil
+}
+
+func filterBenchmarkCandidatesByInjury(
+	candidates []PlayerCandidate,
+	injuryMap map[uint]crawler.InjuryReport,
+) ([]PlayerCandidate, int) {
+	if len(candidates) == 0 {
+		return candidates, 0
+	}
+
 	filtered := make([]PlayerCandidate, 0, len(candidates))
+	filteredCount := 0
 	for _, candidate := range candidates {
 		availabilityScore := resolveAvailabilityScore(candidate.Player, injuryMap)
 		if availabilityScore == 0 {
-			summary.InjuryFilteredCount++
+			filteredCount++
 			continue
 		}
 
@@ -558,7 +582,7 @@ func (s *LineupRecommendService) buildAverageRecommendationCandidates(
 		filtered = append(filtered, candidate)
 	}
 
-	return filtered, summary, nil
+	return filtered, filteredCount
 }
 
 func calcAveragePowerFromStats(stats []entity.PlayerGameStats, lookback int) float64 {

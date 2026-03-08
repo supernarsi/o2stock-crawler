@@ -1020,6 +1020,60 @@ func TestBuildBacktestRowFromCandidatesUsesBenchmarkResultTypeAndActualOverride(
 	}
 }
 
+func TestBuildAverageRecommendationCandidatesFiltersInjuryOutInBacktest(t *testing.T) {
+	outPlayer := entity.NBAGamePlayer{
+		NBAPlayerID:  1,
+		CombatPower:  30,
+		Salary:       10,
+		PlayerName:   "Out Player",
+		PlayerEnName: "Out.Player",
+	}
+	healthyPlayer := entity.NBAGamePlayer{
+		NBAPlayerID:  2,
+		CombatPower:  30,
+		Salary:       10,
+		PlayerName:   "Healthy Player",
+		PlayerEnName: "Healthy.Player",
+	}
+
+	candidates := []PlayerCandidate{
+		{
+			Player:     outPlayer,
+			Prediction: PlayerPrediction{PredictedPower: 20},
+		},
+		{
+			Player:     healthyPlayer,
+			Prediction: PlayerPrediction{PredictedPower: 25},
+		},
+	}
+
+	injuryMap := map[uint]crawler.InjuryReport{
+		1: {Status: "Out"},
+	}
+
+	filtered, filteredCount := filterBenchmarkCandidatesByInjury(candidates, injuryMap)
+	if filteredCount != 1 {
+		t.Fatalf("filteredCount=%d, want 1", filteredCount)
+	}
+	if len(filtered) != 1 {
+		t.Fatalf("len(filtered)=%d, want 1", len(filtered))
+	}
+
+	got := filtered[0]
+	if got.Player.NBAPlayerID != 2 {
+		t.Fatalf("remaining player id=%d, want 2", got.Player.NBAPlayerID)
+	}
+	if got.Prediction.BaseValue != 25 {
+		t.Fatalf("BaseValue=%.1f, want 25.0", got.Prediction.BaseValue)
+	}
+	if math.Abs(got.Prediction.AvailabilityScore-1.0) > 1e-9 {
+		t.Fatalf("AvailabilityScore=%.2f, want 1.0", got.Prediction.AvailabilityScore)
+	}
+	if got.Prediction.PredictedPower != 25 {
+		t.Fatalf("PredictedPower=%.1f, want 25.0", got.Prediction.PredictedPower)
+	}
+}
+
 func bruteForceTopLineups(candidates []PlayerCandidate, salaryCap, pickCount, topN int) []lineupState {
 	results := make([]lineupState, 0, topN)
 	indices := make([]int, 0, pickCount)
