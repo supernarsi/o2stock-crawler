@@ -90,13 +90,12 @@ func printUsage() {
 	log.Println("用法: nba-lineup <command> [args]")
 	log.Println()
 	log.Println("命令:")
-	log.Println("  import <dataDir>      导入 JSON 数据到 nba_game_player 表")
+	log.Println("  import <dataDir>      兼容旧 JSON 导入；会同时回填 nba_player_salary")
 	log.Println("                        dataDir 下需要有 today_nba_total_prepare.json")
-	log.Println("  recommend [date]      生成指定日期推荐阵容（默认明日）")
+	log.Println("  recommend [date]      自动抓官方赛程并生成指定日期推荐阵容（默认明日）")
 	log.Println("  backtest <date>       基于 player_game_stats 回测并输出真实最优 Top3")
 	log.Println()
 	log.Println("示例:")
-	log.Println("  go run ./cmd/nba-lineup import docs/data/")
 	log.Println("  go run ./cmd/nba-lineup recommend 2026-03-04")
 	log.Println("  go run ./cmd/nba-lineup backtest 2026-03-04")
 }
@@ -113,5 +112,8 @@ func parseGameDateArg(value string) (string, error) {
 }
 
 func ensureNBALineupTables(database *db.DB) error {
-	return database.AutoMigrate(&entity.NBAGameInjurySnapshot{})
+	return database.AutoMigrate(
+		&entity.NBAPlayerSalary{},
+		&entity.NBAGameInjurySnapshot{},
+	)
 }

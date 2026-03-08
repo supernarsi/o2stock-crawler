@@ -140,7 +140,7 @@ func (s *LineupRecommendService) predictPower(
 	)
 
 	// Step 5: 因素5 — 球队阵容上下文 (TeamContextFactor)
-	teamContextFactor := s.calcTeamContextFactor(player, allPlayers)
+	teamContextFactor := s.calcTeamContextFactor(player, allPlayers, injuryMap)
 
 	// Step 6: 因素6 — 主客场因子 (HomeAwayFactor)
 	homeAwayFactor := s.calcHomeAwayFactor(player, txPlayerID, gameStatsMap)
@@ -1712,13 +1712,17 @@ func adjustOptimizedPowerForArchetype(
 	return clamp(optimizedPower, predictedPower*0.62, predictedPower)
 }
 
-func (s *LineupRecommendService) calcTeamContextFactor(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer) float64 {
-	// 统计同队球员中 CombatPower=0 的工资占比
+func (s *LineupRecommendService) calcTeamContextFactor(
+	player entity.NBAGamePlayer,
+	allPlayers []entity.NBAGamePlayer,
+	injuryMap map[uint]crawler.InjuryReport,
+) float64 {
+	// 统计同队球员中“明确缺阵或极大概率缺阵”的工资占比。
 	var totalTeamSalary, absentSalary float64
 	for _, p := range allPlayers {
 		if p.NBATeamID == player.NBATeamID && p.NBAPlayerID != player.NBAPlayerID {
 			totalTeamSalary += float64(p.Salary)
-			if p.CombatPower == 0 {
+			if resolveAvailabilityScore(p, injuryMap) == 0 {
 				absentSalary += float64(p.Salary)
 			}
 		}

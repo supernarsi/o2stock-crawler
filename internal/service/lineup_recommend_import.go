@@ -169,6 +169,9 @@ func (s *LineupRecommendService) ImportGameData(ctx context.Context, dataDir str
 	if err := repo.ReplaceByGameDate(ctx, gameDate, players); err != nil {
 		return fmt.Errorf("导入球员数据失败: %w", err)
 	}
+	if _, err := s.syncPlayerSalaryLibrary(ctx); err != nil {
+		return fmt.Errorf("同步 nba_player_salary 失败: %w", err)
+	}
 
 	log.Printf("成功导入 %d 名球员到 nba_game_player 表 (日期: %s, 非法记录: %d)", len(players), gameDate, invalidCount)
 	return nil

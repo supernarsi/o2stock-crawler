@@ -16,6 +16,10 @@ import (
 func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gameDate string) error {
 	log.Printf(">>> 开始生成推荐阵容 — %s <<<", gameDate)
 
+	if err := s.ensureGamePlayersForDate(ctx, gameDate); err != nil {
+		return err
+	}
+
 	// 1. 查询候选球员
 	gamePlayerRepo := repositories.NewNBAGamePlayerRepository(s.db.DB)
 	allPlayers, err := gamePlayerRepo.GetByGameDate(ctx, gameDate)

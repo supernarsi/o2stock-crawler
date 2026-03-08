@@ -13,9 +13,10 @@ import (
 // 设计约定：该服务按“导入数据/生成推荐/赛后回测”三个阶段组织，
 // 具体实现已按职责拆分到同目录多个文件，便于维护与测试。
 type LineupRecommendService struct {
-	db           *db.DB
-	injuryClient *crawler.InjuryClient
-	txNBAClient  txTeamLineupClient
+	db             *db.DB
+	injuryClient   *crawler.InjuryClient
+	scheduleClient nbaScheduleClient
+	txNBAClient    txTeamLineupClient
 }
 
 const (
@@ -27,14 +28,19 @@ const (
 // NewLineupRecommendService 创建推荐引擎服务。
 func NewLineupRecommendService(database *db.DB) *LineupRecommendService {
 	return &LineupRecommendService{
-		db:           database,
-		injuryClient: crawler.NewInjuryClient(),
-		txNBAClient:  crawler.NewTxNBAClient(),
+		db:             database,
+		injuryClient:   crawler.NewInjuryClient(),
+		scheduleClient: crawler.NewNBAScheduleClient(),
+		txNBAClient:    crawler.NewTxNBAClient(),
 	}
 }
 
 type txTeamLineupClient interface {
 	GetTeamLineup(ctx context.Context, teamID string) (*crawler.TxTeamLineupResponse, error)
+}
+
+type nbaScheduleClient interface {
+	GetGamesByDate(ctx context.Context, gameDate string) ([]crawler.NBAScheduleGame, error)
 }
 
 // MatchData 比赛数据 JSON 结构。
