@@ -6,6 +6,20 @@ import (
 	"sort"
 )
 
+const (
+	// 阵容结构评价阈值
+	CheapSalaryThreshold         = 10
+	HighValueSalaryThreshold1    = 12
+	HighValuePowerThreshold1     = 35
+	HighValueSalaryThreshold2    = 10
+	HighValuePowerThreshold2     = 30
+	ValueRatioThreshold          = 3.0
+	ExplosiveUpsideThreshold     = 1.35
+	LineupAvgValueRatioHigh      = 3.5
+	LineupAvgValueRatioMid       = 3.2
+	LineupHighValueCountRequired = 2
+)
+
 // solveOptimalLineup 在推荐模式下求解 TopN 阵容（仅使用正战力候选）。
 func (s *LineupRecommendService) solveOptimalLineup(
 	candidates []PlayerCandidate,
@@ -13,7 +27,7 @@ func (s *LineupRecommendService) solveOptimalLineup(
 	pickCount int,
 	topN int,
 ) [][]PlayerCandidate {
-	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, false)
+	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, false, 2)
 }
 
 func (s *LineupRecommendService) solveOptimalLineupAllowZero(
@@ -22,7 +36,7 @@ func (s *LineupRecommendService) solveOptimalLineupAllowZero(
 	pickCount int,
 	topN int,
 ) [][]PlayerCandidate {
-	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, true)
+	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, true, 0)
 }
 
 func (s *LineupRecommendService) solveOptimalLineupInternal(
@@ -31,6 +45,7 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 	pickCount int,
 	topN int,
 	allowNonPositive bool,
+	minDiversity int,
 ) [][]PlayerCandidate {
 	if salaryCap <= 0 || pickCount <= 0 || topN <= 0 {
 		return nil
@@ -162,12 +177,44 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 
 	results := make([][]PlayerCandidate, 0, min(topN, len(scored)))
 	for _, item := range scored {
-		results = append(results, item.lineup)
-	}
-	if len(results) > topN {
-		results = results[:topN]
+		if minDiversity > 0 {
+			if isLineupDiverseEnough(results, item.lineup, minDiversity) {
+				results = append(results, item.lineup)
+			}
+		} else {
+			results = append(results, item.lineup)
+		}
+		if len(results) >= topN {
+			break
+		}
 	}
 	return results
+}
+
+// isLineupDiverseEnough 检查新阵容与已选阵容集合是否具有足够的差异度。
+func isLineupDiverseEnough(existing [][]PlayerCandidate, newLineup []PlayerCandidate, minDiff int) bool {
+	for _, lineup := range existing {
+		shared := countSharedPlayers(lineup, newLineup)
+		if len(lineup)-shared < minDiff {
+			return false
+		}
+	}
+	return true
+}
+
+// countSharedPlayers 计算两套阵容中相同的球员数量。
+func countSharedPlayers(l1, l2 []PlayerCandidate) int {
+	m := make(map[uint]bool)
+	for _, p := range l1 {
+		m[p.Player.NBAPlayerID] = true
+	}
+	count := 0
+	for _, p := range l2 {
+		if m[p.Player.NBAPlayerID] {
+			count++
+		}
+	}
+	return count
 }
 
 func selectionPower(candidate PlayerCandidate, allowNonPositive bool) float64 {
@@ -193,35 +240,35 @@ func calcLineupStructureFactor(lineup []PlayerCandidate) float64 {
 	totalValueRatio := 0.0
 
 	for _, c := range lineup {
-		if c.Player.Salary <= 10 {
+		if c.Player.Salary <= CheapSalaryThreshold {
 			cheapCount++
 		}
-		// 识别低薪高能球员（工资≤12 且预测战力≥35，或工资≤10 且预测战力≥30）
-		if (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
-			(c.Player.Salary <= 10 && c.Prediction.PredictedPower >= 30) {
+		// 识别低薪高能球员
+		if (c.Player.Salary <= HighValueSalaryThreshold1 && c.Prediction.PredictedPower >= HighValuePowerThreshold1) ||
+			(c.Player.Salary <= HighValueSalaryThreshold2 && c.Prediction.PredictedPower >= HighValuePowerThreshold2) {
 			lowSalaryHighPowerCount++
 		}
-		// 识别性价比球员（战力/工资比值≥3.0）
+		// 识别性价比球员
 		if c.Player.Salary > 0 {
 			valueRatio := c.Prediction.PredictedPower / float64(c.Player.Salary)
 			totalValueRatio += valueRatio
-			if valueRatio >= 3.0 {
+			if valueRatio >= ValueRatioThreshold {
 				valueRatioCount++
 			}
 		}
-		// 识别爆发型球员（Upside3≥1.35 或有爆发潜力）
-		if c.Prediction.Upside3 >= 1.35 {
+		// 识别爆发型球员
+		if c.Prediction.Upside3 >= ExplosiveUpsideThreshold {
 			explosiveCount++
 		}
 	}
 
-	avgValueRatio := totalValueRatio / 5.0
+	avgValueRatio := totalValueRatio / float64(defaultPickCount)
 
-	// 高性价比阵容：平均性价比≥3.5 且有 2 个以上高性价比球员，给予奖励
-	if avgValueRatio >= 3.5 && valueRatioCount >= 2 {
+	// 高性价比阵容
+	if avgValueRatio >= LineupAvgValueRatioHigh && valueRatioCount >= LineupHighValueCountRequired {
 		return 1.02
 	}
-	if avgValueRatio >= 3.2 && valueRatioCount >= 2 {
+	if avgValueRatio >= LineupAvgValueRatioMid && valueRatioCount >= LineupHighValueCountRequired {
 		return 1.0
 	}
 

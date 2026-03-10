@@ -1,16 +1,3 @@
-// lineup_recommend_factors.go 包含球员战力预测中使用的所有因子计算函数。
-// 每个因子返回以 1.0 为中性值的乘数：
-// - >1.0 表示正面影响（提升预测战力）
-// - <1.0 表示负面影响（降低预测战力）
-// 主要因子类别：
-// - 可用性（resolveAvailabilityScore）、状态趋势（calcStatusTrend）
-// - 对手匹配（calcMatchupFactor*, calcHistoryFactor, calcOpponentDefenseAnchorFactor）
-// - 球队上下文（calcTeamContextFactor）、主客场（calcHomeAwayFactor）
-// - 上场时间（calcMinutesFactor）、使用率（calcUsageFactor）
-// - 稳定性（calcStabilityFactor）、防守成长（calcDefenseUpsideFactor）
-// - 角色安全（calcRoleSecurityFactor）、数据可靠性（calcDataReliabilityFactor）
-// - 赛程疲劳（calcFatigueFactor）、球员原型（calcArchetypeFactor）
-// - 保守估值（calcConservativePower）、明星保底（applyStableStarLift）
 package service
 
 import (
@@ -18,6 +5,55 @@ import (
 
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/entity"
+)
+
+// 因素权重与阈值常量化
+const (
+	// 趋势相关 (Trend)
+	StatusTrendMin         = 0.88
+	StatusTrendMax         = 1.12
+	RecentStatusWeight     = 0.50
+	DBTrendSampleThreshold = 5
+	TrendRecent3Games      = 3
+	TrendRecent10Games     = 10
+
+	// 比赛匹配相关 (Matchup)
+	MatchupWeightDefRating    = 0.43
+	MatchupWeightPace         = 0.23
+	MatchupWeightHistory      = 0.16
+	MatchupWeightOpponentForm = 0.18
+	MatchupMinFactor          = 0.86
+	MatchupMaxFactor          = 1.14
+
+	// DvP 置信度相关
+	DVPMaxGames        = 24
+	TeamMetricMaxGames = 7
+	ConfidenceMin      = 0.35
+
+	// 防守压制 (Defense Impact)
+	FrontcourtRimWeight       = 0.72
+	FrontcourtPerimeterWeight = 0.28
+	BackcourtRimWeight        = 0.35
+	BackcourtPerimeterWeight  = 0.65
+	DefenseAnchorRimWeight    = 1.25
+	DefenseAnchorStealWeight  = 0.45
+	DefenseAnchorBackWeight   = 0.95
+
+	// 角色与地位
+	EliteFrontcourtBasePower = 45.0
+	EliteFrontcourtSalaryMin = 40
+	StableStarBasePower      = 46.0
+	StableStarSalaryMin      = 35
+
+	// 历史交手
+	HistoryVsGamesThreshold = 3
+	HistoryMinFactor        = 0.90
+	HistoryMaxFactor        = 1.10
+
+	// 赛程疲劳
+	FatigueB2BPenalty         = 0.06 // 1.0 - 0.94
+	FatigueRest2DaysFactor    = 0.98
+	Fatigue4Days3GamesPenalty = 0.03
 )
 
 // resolveAvailabilityScore 计算球员出场可用性分数 [0, 1]。
@@ -40,7 +76,7 @@ func resolveAvailabilityScore(
 func calcStatusTrend(dbPlayer *entity.Player, stats []entity.PlayerGameStats) float64 {
 	dbTrend := 1.0
 	if dbPlayer != nil && dbPlayer.PowerPer10 > 0 && dbPlayer.PowerPer5 > 0 {
-		dbTrend = clamp(dbPlayer.PowerPer5/dbPlayer.PowerPer10, 0.88, 1.12)
+		dbTrend = clamp(dbPlayer.PowerPer5/dbPlayer.PowerPer10, StatusTrendMin, StatusTrendMax)
 	}
 
 	recentTrend := 1.0
@@ -60,17 +96,17 @@ func calcStatusTrend(dbPlayer *entity.Player, stats []entity.PlayerGameStats) fl
 			avg3 := recent3 / float64(count3)
 			avg10 := recent10 / float64(count10)
 			if avg10 > 0 {
-				recentTrend = clamp(avg3/avg10, 0.88, 1.12)
+				recentTrend = clamp(avg3/avg10, StatusTrendMin, StatusTrendMax)
 			}
 		}
 	}
 
-	// 增加近期状态权重：从 0.40 提升到 0.50
+	// 增加近期状态权重
 	recentWeight := 0.0
-	if len(stats) >= 5 {
-		recentWeight = 0.50
+	if len(stats) >= DBTrendSampleThreshold {
+		recentWeight = RecentStatusWeight
 	}
-	return clamp(dbTrend*(1-recentWeight)+recentTrend*recentWeight, 0.88, 1.12)
+	return clamp(dbTrend*(1-recentWeight)+recentTrend*recentWeight, StatusTrendMin, StatusTrendMax)
 }
 
 // clampDynamicMultiplier 根据样本数限制动态乘数范围，样本越少限制越严。
@@ -160,7 +196,7 @@ func (s *LineupRecommendService) calcMatchupFactorWithContext(
 			perimeterImpactFactor = 1.0
 		}
 		confidence := float64(min(metric.SampleCount, teamMetricMaxGames)) / float64(teamMetricMaxGames)
-		confidence = clamp(confidence, 0.35, 1.0)
+		confidence = clamp(confidence, ConfidenceMin, 1.0)
 		defRatingFactor = shrinkTowardsOne(defRatingFactor, confidence)
 		paceFactor = shrinkTowardsOne(paceFactor, confidence)
 		opponentFormFactor = shrinkTowardsOne(opponentFormFactor, confidence)
@@ -185,14 +221,14 @@ func (s *LineupRecommendService) calcMatchupFactorWithContext(
 
 	disruptionFactor := 1.0
 	if positionGroup == 0 {
-		disruptionFactor = 0.72*rimDeterrenceFactor + 0.28*perimeterImpactFactor
+		disruptionFactor = FrontcourtRimWeight*rimDeterrenceFactor + FrontcourtPerimeterWeight*perimeterImpactFactor
 	} else {
-		disruptionFactor = 0.35*rimDeterrenceFactor + 0.65*perimeterImpactFactor
+		disruptionFactor = BackcourtRimWeight*rimDeterrenceFactor + BackcourtPerimeterWeight*perimeterImpactFactor
 	}
 	disruptionFactor = clamp(disruptionFactor, 0.90, 1.08)
 
-	baseMatchup := 0.43*defRatingFactor + 0.23*paceFactor + 0.16*historyFactor + 0.18*opponentFormFactor
-	matchupFactor := clamp(baseMatchup*dvpFactor*disruptionFactor, 0.86, 1.14)
+	baseMatchup := MatchupWeightDefRating*defRatingFactor + MatchupWeightPace*paceFactor + MatchupWeightHistory*historyFactor + MatchupWeightOpponentForm*opponentFormFactor
+	matchupFactor := clamp(baseMatchup*dvpFactor*disruptionFactor, MatchupMinFactor, MatchupMaxFactor)
 	return matchupFactorDetail{
 		MatchupFactor:         matchupFactor,
 		DefRatingFactor:       defRatingFactor,
@@ -234,7 +270,7 @@ func (s *LineupRecommendService) calcHistoryFactor(stats []entity.PlayerGameStat
 			totalPower += calcPowerFromStats(g)
 		}
 		avgPower := totalPower / float64(len(vsGames))
-		return clamp(avgPower/baseValue, 0.90, 1.10)
+		return clamp(avgPower/baseValue, HistoryMinFactor, HistoryMaxFactor)
 	}
 
 	if len(vsGames) == 2 {
@@ -310,9 +346,9 @@ func (s *LineupRecommendService) calcOpponentDefenseAnchorFactor(
 
 		impact := 0.0
 		if positionGroup == 0 {
-			impact = 1.25*blocksAvg + 0.45*stealsAvg
+			impact = DefenseAnchorRimWeight*blocksAvg + DefenseAnchorStealWeight*stealsAvg
 		} else {
-			impact = 0.45*blocksAvg + 0.95*stealsAvg
+			impact = DefenseAnchorStealWeight*blocksAvg + DefenseAnchorBackWeight*stealsAvg
 		}
 		if minutesAvg >= 30 {
 			impact += 0.20
@@ -358,7 +394,7 @@ func softenEliteFrontcourtNegativeFactors(
 	if normalizePositionGroup(player.Position) != 0 {
 		return matchupFactor, defenseAnchorFactor
 	}
-	if baseValue < 45 || minutesFactor < 1.03 || usageFactor < 1.03 {
+	if baseValue < EliteFrontcourtBasePower || minutesFactor < 1.03 || usageFactor < 1.03 {
 		return matchupFactor, defenseAnchorFactor
 	}
 
@@ -366,7 +402,7 @@ func softenEliteFrontcourtNegativeFactors(
 	if baseValue >= 50 {
 		resilience += 0.18
 	}
-	if player.Salary >= 40 {
+	if player.Salary >= EliteFrontcourtSalaryMin {
 		resilience += 0.10
 	}
 	if defenseUpsideFactor >= 1.10 {
@@ -905,9 +941,9 @@ func (s *LineupRecommendService) calcFatigueFactor(stats []entity.PlayerGameStat
 	case daysRest <= 0:
 		factor = 1.0
 	case daysRest == 1:
-		factor = 0.94
+		factor = 1.0 - FatigueB2BPenalty
 	case daysRest == 2:
-		factor = 0.98
+		factor = FatigueRest2DaysFactor
 	default:
 		factor = 1.0
 	}
@@ -920,7 +956,7 @@ func (s *LineupRecommendService) calcFatigueFactor(stats []entity.PlayerGameStat
 		}
 	}
 	if gamesIn4Days >= 3 {
-		factor -= 0.03
+		factor -= Fatigue4Days3GamesPenalty
 	}
 
 	return clamp(factor, 0.88, 1.00)
@@ -971,7 +1007,7 @@ func applyStableStarLift(
 	if positionGroup != 0 {
 		return predictedPower
 	}
-	if baseValue < 46 || player.Salary < 35 {
+	if baseValue < StableStarBasePower || player.Salary < StableStarSalaryMin {
 		return predictedPower
 	}
 

@@ -112,9 +112,7 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		if writePower < 0 {
 			writePower = 0
 		}
-		if err := gamePlayerRepo.UpdatePredictedPower(ctx, allPlayers[i].ID, writePower); err != nil {
-			log.Printf("更新 predicted_power 失败: player_id=%d err=%v", allPlayers[i].NBAPlayerID, err)
-		}
+		allPlayers[i].PredictedPower = &writePower
 
 		if pred.PredictedPower > 0 {
 			effectiveCount++
@@ -124,6 +122,10 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 			Player:     allPlayers[i],
 			Prediction: pred,
 		})
+	}
+
+	if err := gamePlayerRepo.BatchUpdatePredictedPower(ctx, allPlayers); err != nil {
+		log.Printf("批量更新 predicted_power 失败: %v", err)
 	}
 	log.Printf("有效球员: %d 人 (战力 > 0)", effectiveCount)
 

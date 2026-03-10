@@ -25,7 +25,7 @@ func TestSolveOptimalLineupMatchesBruteForceTopN(t *testing.T) {
 		{Player: entity.NBAGamePlayer{NBAPlayerID: 8, Salary: 2}, Prediction: PlayerPrediction{PredictedPower: 8}},
 	}
 
-	got := svc.solveOptimalLineup(candidates, 20, 3, 3)
+	got := svc.solveOptimalLineupInternal(candidates, 20, 3, 3, false, 0)
 	if len(got) != 3 {
 		t.Fatalf("top lineups len=%d, want 3", len(got))
 	}
