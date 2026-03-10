@@ -690,7 +690,7 @@ func TestSolveOptimalLineupAllowZero(t *testing.T) {
 }
 
 func TestBuildNBAToTxPlayerIDMap(t *testing.T) {
-	players := []entity.Player{
+	players := []entity.NBAPlayerSalary{
 		{NBAPlayerID: 2544, TxPlayerID: 1001},
 		{NBAPlayerID: 2544, TxPlayerID: 1001},
 		{NBAPlayerID: 2544, TxPlayerID: 2002},
@@ -698,7 +698,7 @@ func TestBuildNBAToTxPlayerIDMap(t *testing.T) {
 		{NBAPlayerID: 0, TxPlayerID: 4004},
 	}
 
-	got, conflictCount := buildNBAToTxPlayerIDMap(players)
+	got, conflictCount := buildNBAToTxPlayerIDMapFromSalary(players)
 	if conflictCount != 1 {
 		t.Fatalf("conflictCount=%d, want 1", conflictCount)
 	}

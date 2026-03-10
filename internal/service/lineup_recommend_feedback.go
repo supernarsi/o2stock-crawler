@@ -20,13 +20,16 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 	}
 
 	lineupRepo := repositories.NewLineupRecommendationRepository(s.db.DB)
-	recs, err := lineupRepo.GetByDate(ctx, gameDate)
+	allRecs, err := lineupRepo.GetAllByDate(ctx, gameDate)
 	if err != nil {
 		return fmt.Errorf("查询推荐阵容失败: %w", err)
 	}
-	if len(recs) == 0 {
+	if len(allRecs) == 0 {
 		return fmt.Errorf("无推荐阵容数据，请先执行 recommend: %s", gameDate)
 	}
+
+	// 仅 AI 推荐用于回测展示，其余类型仅回写实际战力
+	recs := filterRecommendationsByType(allRecs, entity.LineupRecommendationTypeAIRecommended)
 
 	gamePlayerRepo := repositories.NewNBAGamePlayerRepository(s.db.DB)
 	gamePlayers, err := gamePlayerRepo.GetByGameDate(ctx, gameDate)
@@ -61,10 +64,13 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 
 	// A. 推荐结果的实际得分（写回 lineup_recommendation.total_actual_power）
 	recRows := make([]entity.LineupBacktestResult, 0, min(topN, len(recs)))
-	rankPowerMap := make(map[uint]float64, len(recs))
+	actualPowerByLineup := make(map[[5]uint]float64, len(allRecs))
+	for _, rec := range allRecs {
+		playerIDs := pickLineupPlayerIDs(rec)
+		actualPowerByLineup[playerIDs] = calcLineupActualTotal(playerIDs, actualMap)
+	}
 	for _, rec := range recs {
-		actualTotal := calcLineupActualTotal(pickLineupPlayerIDs(rec), actualMap)
-		rankPowerMap[rec.Rank] = actualTotal
+		actualTotal := actualPowerByLineup[pickLineupPlayerIDs(rec)]
 
 		if int(rec.Rank) <= topN {
 			row, ok := s.buildBacktestRowFromRecommendation(gameDate, rec, actualTotal, playerMap)
@@ -73,7 +79,7 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 			}
 		}
 	}
-	if err := lineupRepo.BatchUpdateActualPower(ctx, gameDate, rankPowerMap); err != nil {
+	if err := lineupRepo.BatchUpdateActualPowerForAllTypes(ctx, gameDate, allRecs, actualPowerByLineup); err != nil {
 		return fmt.Errorf("回写推荐阵容实际战力失败: %w", err)
 	}
 
@@ -307,7 +313,7 @@ type backtestDetailPayload struct {
 
 const backtestTxOnlyDefaultSalary uint = 5
 
-// players 表映射缺失时的回测兜底映射（仅用于 backtest，不影响线上推荐）。
+// nba_player_salary 表映射缺失时的兜底映射（用于 recommend/backtest 的缺失补位）。
 // key: nba_player_id, value: tx_player_id
 var manualNBATxPlayerIDOverrides = map[uint]uint{
 	1631157: 196154, // Ryan Rollins（莱恩.罗林斯）
@@ -340,13 +346,13 @@ func (s *LineupRecommendService) buildBacktestActualPowerMap(
 	}
 
 	nbaPlayerIDs := collectCandidateNBAPlayerIDs(gamePlayers)
-	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-	dbPlayers, err := playerRepo.BatchGetByNBAPlayerIDs(ctx, nbaPlayerIDs)
+	salaryRepo := repositories.NewNBAPlayerSalaryRepository(s.db.DB)
+	salaryRows, err := salaryRepo.BatchGetByNBAPlayerIDs(ctx, nbaPlayerIDs)
 	if err != nil {
-		return nil, summary, fmt.Errorf("查询 NBA->TX 映射失败: %w", err)
+		return nil, summary, fmt.Errorf("查询薪资库 NBA->TX 映射失败: %w", err)
 	}
 
-	nbaToTxMap, mappingConflicts := buildNBAToTxPlayerIDMap(dbPlayers)
+	nbaToTxMap, mappingConflicts := buildNBAToTxPlayerIDMapFromSalary(salaryRows)
 	manualApplied := applyManualNBATxPlayerIDOverrides(nbaToTxMap, candidateSet)
 	summary.MappedTxCount = len(nbaToTxMap)
 	summary.ManualMapAppliedCount = manualApplied
@@ -389,12 +395,12 @@ func (s *LineupRecommendService) buildBacktestActualCandidates(
 	salaryByNBA, nameByNBA, candidateSet := buildGamePlayerMetadata(gamePlayers)
 	nbaPlayerIDs := collectCandidateNBAPlayerIDs(gamePlayers)
 
-	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-	dbPlayers, err := playerRepo.BatchGetByNBAPlayerIDs(ctx, nbaPlayerIDs)
+	salaryRepo := repositories.NewNBAPlayerSalaryRepository(s.db.DB)
+	salaryRows, err := salaryRepo.BatchGetByNBAPlayerIDs(ctx, nbaPlayerIDs)
 	if err != nil {
-		return nil, summary, fmt.Errorf("查询 NBA->TX 映射失败: %w", err)
+		return nil, summary, fmt.Errorf("查询薪资库 NBA->TX 映射失败: %w", err)
 	}
-	nbaToTxMap, _ := buildNBAToTxPlayerIDMap(dbPlayers)
+	nbaToTxMap, _ := buildNBAToTxPlayerIDMapFromSalary(salaryRows)
 	applyManualNBATxPlayerIDOverrides(nbaToTxMap, candidateSet)
 	txToNBAMap := buildTxToNBAMap(nbaToTxMap, candidateSet)
 
@@ -469,12 +475,12 @@ func (s *LineupRecommendService) buildBacktestAverageBenchmarkCandidates(
 	salaryByNBA, nameByNBA, candidateSet := buildGamePlayerMetadata(gamePlayers)
 	nbaPlayerIDs := collectCandidateNBAPlayerIDs(gamePlayers)
 
-	playerRepo := repositories.NewPlayerRepository(s.db.DB)
-	dbPlayers, err := playerRepo.BatchGetByNBAPlayerIDs(ctx, nbaPlayerIDs)
+	salaryRepo := repositories.NewNBAPlayerSalaryRepository(s.db.DB)
+	salaryRows, err := salaryRepo.BatchGetByNBAPlayerIDs(ctx, nbaPlayerIDs)
 	if err != nil {
-		return nil, summary, fmt.Errorf("查询均值基准 NBA->TX 映射失败: %w", err)
+		return nil, summary, fmt.Errorf("查询均值基准薪资库 NBA->TX 映射失败: %w", err)
 	}
-	nbaToTxMap, _ := buildNBAToTxPlayerIDMap(dbPlayers)
+	nbaToTxMap, _ := buildNBAToTxPlayerIDMapFromSalary(salaryRows)
 	summary.ManualMapApplied = applyManualNBATxPlayerIDOverrides(nbaToTxMap, candidateSet)
 	summary.MappedNBACount = len(nbaToTxMap)
 
@@ -659,22 +665,22 @@ func collectCandidateNBAPlayerIDs(players []entity.NBAGamePlayer) []uint {
 	return result
 }
 
-func buildNBAToTxPlayerIDMap(players []entity.Player) (map[uint]uint, int) {
-	nbaToTxMap := make(map[uint]uint, len(players))
+func buildNBAToTxPlayerIDMapFromSalary(rows []entity.NBAPlayerSalary) (map[uint]uint, int) {
+	nbaToTxMap := make(map[uint]uint, len(rows))
 	conflictCount := 0
-	for _, player := range players {
-		if player.NBAPlayerID == 0 || player.TxPlayerID == 0 {
+	for _, row := range rows {
+		if row.NBAPlayerID == 0 || row.TxPlayerID == 0 {
 			continue
 		}
 
-		existing, exists := nbaToTxMap[player.NBAPlayerID]
+		existing, exists := nbaToTxMap[row.NBAPlayerID]
 		if exists {
-			if existing != player.TxPlayerID {
+			if existing != row.TxPlayerID {
 				conflictCount++
 			}
 			continue
 		}
-		nbaToTxMap[player.NBAPlayerID] = player.TxPlayerID
+		nbaToTxMap[row.NBAPlayerID] = row.TxPlayerID
 	}
 	return nbaToTxMap, conflictCount
 }
@@ -973,6 +979,17 @@ func formatBacktestPlayers(ids [5]uint, playerMap map[uint]entity.NBAGamePlayer)
 		return "-"
 	}
 	return strings.Join(parts, ", ")
+}
+
+// filterRecommendationsByType 按类型过滤推荐阵容
+func filterRecommendationsByType(recs []entity.LineupRecommendation, recommendationType uint8) []entity.LineupRecommendation {
+	var result []entity.LineupRecommendation
+	for _, rec := range recs {
+		if rec.RecommendationType == recommendationType {
+			result = append(result, rec)
+		}
+	}
+	return result
 }
 
 // --- 文件读取 ---

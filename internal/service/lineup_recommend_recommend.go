@@ -70,12 +70,13 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		dbPlayerMap = stripPredictAnchors(rawDBPlayerMap)
 	}
 	log.Printf("DB 球员匹配: %d / %d", len(dbPlayerMap), len(allPlayers))
-	txPlayerIDMap, txMapSummary := s.buildRecommendTxPlayerIDMap(ctx, allPlayers, rawDBPlayerMap)
+	salaryTxMap := s.loadSalaryTxPlayerIDMap(ctx, allPlayers)
+	txPlayerIDMap, txMapSummary := s.buildRecommendTxPlayerIDMap(ctx, allPlayers, salaryTxMap)
 	log.Printf(
-		"TX 球员映射: %d / %d (DB=%d, 手工=%d, lineup=%d)",
+		"TX 球员映射: %d / %d (salary=%d, 手工=%d, lineup=%d)",
 		len(txPlayerIDMap),
 		len(allPlayers),
-		txMapSummary.DBCount,
+		txMapSummary.SalaryCount,
 		txMapSummary.ManualCount,
 		txMapSummary.LineupFallbackCount,
 	)

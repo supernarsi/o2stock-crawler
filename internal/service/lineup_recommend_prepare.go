@@ -14,6 +14,21 @@ import (
 
 func (s *LineupRecommendService) ensureGamePlayersForDate(ctx context.Context, gameDate string) error {
 	gamePlayerRepo := repositories.NewNBAGamePlayerRepository(s.db.DB)
+
+	salaryCount, err := s.syncPlayerSalaryLibrary(ctx)
+	if err != nil {
+		return err
+	}
+	log.Printf("球员薪资库: %d 名球员", salaryCount)
+
+	// 更新 nba_player_salary 表的 combat_power（最近 10 场有效比赛场均战力）
+	salaryRepo := repositories.NewNBAPlayerSalaryRepository(s.db.DB)
+	if err := salaryRepo.UpdateCombatPowerFromRecentStats(ctx); err != nil {
+		log.Printf("更新 combat_power 失败：%v", err)
+	} else {
+		log.Println("已更新 nba_player_salary.combat_power")
+	}
+
 	existingPlayers, err := gamePlayerRepo.GetByGameDate(ctx, gameDate)
 	if err != nil {
 		return fmt.Errorf("查询候选球员失败: %w", err)
@@ -21,12 +36,6 @@ func (s *LineupRecommendService) ensureGamePlayersForDate(ctx context.Context, g
 	if len(existingPlayers) > 0 {
 		return nil
 	}
-
-	salaryCount, err := s.syncPlayerSalaryLibrary(ctx)
-	if err != nil {
-		return err
-	}
-	log.Printf("球员薪资库: %d 名球员", salaryCount)
 
 	games, err := s.scheduleClient.GetGamesByDate(ctx, gameDate)
 	if err != nil {
@@ -37,7 +46,6 @@ func (s *LineupRecommendService) ensureGamePlayersForDate(ctx context.Context, g
 		return nil
 	}
 
-	salaryRepo := repositories.NewNBAPlayerSalaryRepository(s.db.DB)
 	teamIDs := collectScheduleTeamIDs(games)
 	salaryRows, err := salaryRepo.GetByTeamIDs(ctx, teamIDs)
 	if err != nil {
@@ -74,7 +82,14 @@ func (s *LineupRecommendService) syncPlayerSalaryLibrary(ctx context.Context) (i
 		if err := salaryRepo.BatchUpsert(ctx, rows); err != nil {
 			return 0, fmt.Errorf("同步 nba_player_salary 失败: %w", err)
 		}
+		if err := salaryRepo.SyncTxPlayerIDFromPlayers(ctx); err != nil {
+			log.Printf("同步 tx_player_id 失败：%v", err)
+		}
 		return len(rows), nil
+	}
+
+	if err := salaryRepo.SyncTxPlayerIDFromPlayers(ctx); err != nil {
+		log.Printf("同步 tx_player_id 失败：%v", err)
 	}
 
 	count, err := salaryRepo.Count(ctx)

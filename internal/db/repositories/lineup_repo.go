@@ -34,9 +34,19 @@ func (r *LineupRecommendationRepository) BatchSave(ctx context.Context, recs []e
 	})
 }
 
-// GetByDate 获取指定日期推荐阵容
+// GetByDate 获取指定日期推荐阵容（仅 AI 推荐）
 func (r *LineupRecommendationRepository) GetByDate(ctx context.Context, gameDate string) ([]entity.LineupRecommendation, error) {
 	return r.GetByDateAndType(ctx, gameDate, entity.LineupRecommendationTypeAIRecommended)
+}
+
+// GetAllByDate 获取指定日期所有推荐阵容（包括 AI 推荐、3 日均值、5 日均值）
+func (r *LineupRecommendationRepository) GetAllByDate(ctx context.Context, gameDate string) ([]entity.LineupRecommendation, error) {
+	var recs []entity.LineupRecommendation
+	err := r.ctx(ctx).
+		Where("game_date = ?", gameDate).
+		Order("recommendation_type, `rank` ASC").
+		Find(&recs).Error
+	return recs, err
 }
 
 // GetByDateAndType 获取指定日期、指定类型的推荐阵容
@@ -54,6 +64,7 @@ func (r *LineupRecommendationRepository) GetByDateAndType(
 }
 
 // BatchUpdateActualPower 批量更新推荐阵容的实际总战力（按 game_date + rank）
+// 仅更新 recommendation_type=1 (AI 推荐) 的数据
 func (r *LineupRecommendationRepository) BatchUpdateActualPower(
 	ctx context.Context,
 	gameDate string,
@@ -79,6 +90,39 @@ func (r *LineupRecommendationRepository) BatchUpdateActualPower(
 					rank,
 				).
 				Update("total_actual_power", rankPowerMap[rank]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// BatchUpdateActualPowerForAllTypes 批量更新所有推荐类型的实际总战力（用于回测）
+func (r *LineupRecommendationRepository) BatchUpdateActualPowerForAllTypes(
+	ctx context.Context,
+	gameDate string,
+	recs []entity.LineupRecommendation,
+	actualPowerMap map[[5]uint]float64,
+) error {
+	if len(recs) == 0 {
+		return nil
+	}
+
+	return r.ctx(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, rec := range recs {
+			playerIDs := [5]uint{rec.Player1ID, rec.Player2ID, rec.Player3ID, rec.Player4ID, rec.Player5ID}
+			actualPower, ok := actualPowerMap[playerIDs]
+			if !ok {
+				continue
+			}
+			if err := tx.Model(&entity.LineupRecommendation{}).
+				Where(
+					"game_date = ? AND recommendation_type = ? AND `rank` = ?",
+					gameDate,
+					rec.RecommendationType,
+					rec.Rank,
+				).
+				Update("total_actual_power", actualPower).Error; err != nil {
 				return err
 			}
 		}

@@ -567,6 +567,29 @@ func (s *LineupRecommendService) loadDBPlayerMap(ctx context.Context, gamePlayer
 	return result
 }
 
+func (s *LineupRecommendService) loadSalaryTxPlayerIDMap(ctx context.Context, gamePlayers []entity.NBAGamePlayer) map[uint]uint {
+	result := make(map[uint]uint)
+	nbaIDs := collectCandidateNBAPlayerIDs(gamePlayers)
+	if len(nbaIDs) == 0 {
+		return result
+	}
+
+	salaryRepo := repositories.NewNBAPlayerSalaryRepository(s.db.DB)
+	rows, err := salaryRepo.BatchGetByNBAPlayerIDs(ctx, nbaIDs)
+	if err != nil {
+		log.Printf("查询薪资库映射失败: %v", err)
+		return result
+	}
+
+	for _, row := range rows {
+		if row.NBAPlayerID == 0 || row.TxPlayerID == 0 {
+			continue
+		}
+		result[row.NBAPlayerID] = row.TxPlayerID
+	}
+	return result
+}
+
 func stripPredictAnchors(dbPlayerMap map[uint]*entity.Player) map[uint]*entity.Player {
 	if len(dbPlayerMap) == 0 {
 		return dbPlayerMap
@@ -585,7 +608,7 @@ func stripPredictAnchors(dbPlayerMap map[uint]*entity.Player) map[uint]*entity.P
 }
 
 type recommendTxMapSummary struct {
-	DBCount             int
+	SalaryCount         int
 	ManualCount         int
 	LineupFallbackCount int
 }
@@ -593,21 +616,21 @@ type recommendTxMapSummary struct {
 func (s *LineupRecommendService) buildRecommendTxPlayerIDMap(
 	ctx context.Context,
 	gamePlayers []entity.NBAGamePlayer,
-	dbPlayerMap map[uint]*entity.Player,
+	salaryTxMap map[uint]uint,
 ) (map[uint]uint, recommendTxMapSummary) {
 	result := make(map[uint]uint, len(gamePlayers))
 	summary := recommendTxMapSummary{}
 
 	for _, player := range gamePlayers {
-		dbPlayer := dbPlayerMap[player.NBAPlayerID]
-		if dbPlayer == nil || dbPlayer.TxPlayerID == 0 {
+		txPlayerID := salaryTxMap[player.NBAPlayerID]
+		if txPlayerID == 0 {
 			continue
 		}
 		if _, exists := result[player.NBAPlayerID]; exists {
 			continue
 		}
-		result[player.NBAPlayerID] = dbPlayer.TxPlayerID
-		summary.DBCount++
+		result[player.NBAPlayerID] = txPlayerID
+		summary.SalaryCount++
 	}
 
 	missingSet := make(map[uint]struct{})
