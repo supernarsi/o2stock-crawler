@@ -3,7 +3,14 @@
     "allow": [
       "Bash(go run:*)",
       "Bash(go build:*)",
-      "Bash(mysql:*)"
+      "Bash(mysql:*)",
+      "Bash(claude -m marketplace add HKUDS/CLI-Anything)",
+      "Bash(UNSET_CLAUDECODE=1 claude --version 2>/dev/null || echo \"claude CLI not found or blocked\")",
+      "Bash(claude -m add HKUDS/CLI-Anything)",
+      "Bash(unset CLAUDECODE && claude -m add HKUDS/CLI-Anything)",
+      "Bash(unset CLAUDECODE && claude mcp add HKUDS/CLI-Anything)",
+      "Bash(unset CLAUDECODE && claude mcp add --help)",
+      "WebSearch"
     ]
   }
 }

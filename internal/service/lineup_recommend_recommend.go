@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sort"
 
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db/repositories"
@@ -197,10 +196,11 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		})
 	}
 
-	// 7. 保存推荐结果
+	// 7. 按总预测战力降序、总工资升序排列后保存推荐结果
 	lineupRepo := repositories.NewLineupRecommendationRepository(s.db.DB)
 	var recs []entity.LineupRecommendation
 	for _, set := range recommendationSets {
+		sortLineupsByPowerDesc(set.lineups)
 		for rank, lineup := range set.lineups {
 			rec := s.buildRecommendation(gameDate, uint(rank+1), set.recType, set.lookback, lineup, dbPlayerMap)
 			recs = append(recs, rec)
@@ -311,224 +311,5 @@ func (s *LineupRecommendService) buildRecommendation(
 	}
 }
 
-func (s *LineupRecommendService) printRecommendations(gameDate string, title string, lineups [][]PlayerCandidate) {
-	fmt.Printf("\n>>> %s — %s <<<\n\n", title, gameDate)
-
-	medals := []string{"🏆", "🥈", "🥉"}
-	for i, lineup := range lineups {
-		var totalPower float64
-		var totalSalary uint
-		for _, c := range lineup {
-			totalPower += c.Prediction.PredictedPower
-			totalSalary += c.Player.Salary
-		}
-
-		medal := fmt.Sprintf("#%d", i+1)
-		if i < len(medals) {
-			medal = medals[i]
-		}
-		fmt.Printf("%s %s #%d (总预测战力: %.1f, 总工资: %d)\n", medal, title, i+1, totalPower, totalSalary)
-		fmt.Println("┌──────────────────────┬──────┬──────┬───────┬──────────┐")
-		fmt.Println("│ 球员                 │ 球队 │ 工资 │ 预测  │ 可用性   │")
-		fmt.Println("├──────────────────────┼──────┼──────┼───────┼──────────┤")
-		for _, c := range lineup {
-			name := padRight(c.Player.PlayerName, 20)
-			team := padRight(c.Player.TeamName, 4)
-			fmt.Printf("│ %s │ %s │  %2d  │ %5.1f │  %.2f    │\n",
-				name, team, c.Player.Salary, c.Prediction.PredictedPower, c.Prediction.AvailabilityScore)
-		}
-		fmt.Println("└──────────────────────┴──────┴──────┴───────┴──────────┘")
-		fmt.Println()
-	}
-}
-
-func recommendationTypeName(recommendationType uint8) string {
-	switch recommendationType {
-	case entity.LineupRecommendationTypeAvg3Baseline:
-		return "avg3_recommendation"
-	case entity.LineupRecommendationTypeAvg5Baseline:
-		return "avg5_recommendation"
-	default:
-		return "ai_recommendation"
-	}
-}
-
-// applyTeamExposurePenalty 对同队第 3 名及之后的候选球员施加惩罚，避免推荐阵容过度堆叠单队风险。
-func applyTeamExposurePenalty(candidates []PlayerCandidate) []PlayerCandidate {
-	if len(candidates) == 0 {
-		return candidates
-	}
-
-	teamToIndexes := make(map[string][]int)
-	for idx := range candidates {
-		teamCode := normalizeTeamCode(candidates[idx].Player.TeamName)
-		if teamCode == "" {
-			teamCode = candidates[idx].Player.NBATeamID
-		}
-		teamToIndexes[teamCode] = append(teamToIndexes[teamCode], idx)
-		candidates[idx].Prediction.TeamExposureFactor = 1.0
-	}
-
-	for _, indexes := range teamToIndexes {
-		sort.Slice(indexes, func(i, j int) bool {
-			left := candidates[indexes[i]].Prediction.OptimizedPower
-			if left <= 0 {
-				left = candidates[indexes[i]].Prediction.PredictedPower
-			}
-			right := candidates[indexes[j]].Prediction.OptimizedPower
-			if right <= 0 {
-				right = candidates[indexes[j]].Prediction.PredictedPower
-			}
-			if left == right {
-				return candidates[indexes[i]].Player.Salary < candidates[indexes[j]].Player.Salary
-			}
-			return left > right
-		})
-
-		secondPower := 0.0
-		if len(indexes) >= 2 {
-			secondPower = candidates[indexes[1]].Prediction.OptimizedPower
-			if secondPower <= 0 {
-				secondPower = candidates[indexes[1]].Prediction.PredictedPower
-			}
-		}
-		teamPressureFactor := estimateTeamPressureFactor(candidates, indexes)
-		extraSecondPenalty := 1.0
-		if teamPressureFactor < 0.88 {
-			extraSecondPenalty = 0.92
-		} else if teamPressureFactor < 0.92 {
-			extraSecondPenalty = 0.96
-		}
-
-		// 识别低薪高能球员，减少惩罚
-		// 使用动态阈值：工资≤15 且预测战力/工资比值≥3.0 视为价值球员
-		highValueCount := 0
-		for _, idx := range indexes {
-			c := candidates[idx]
-			valueRatio := 0.0
-			if c.Player.Salary > 0 {
-				valueRatio = c.Prediction.PredictedPower / float64(c.Player.Salary)
-			}
-			// 条件 1：工资≤12 且战力≥35（传统低薪高能）
-			// 条件 2：工资≤15 且战力/工资比值≥3.5（动态价值比）
-			// 条件 3：工资≤20 且战力/工资比值≥4.0（超级价值比）
-			isHighValue := (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
-				(c.Player.Salary <= 15 && valueRatio >= 3.5) ||
-				(c.Player.Salary <= 20 && valueRatio >= 4.0)
-			if isHighValue {
-				highValueCount++
-			}
-		}
-
-		for rank, idx := range indexes {
-			c := candidates[idx]
-			valueRatio := 0.0
-			if c.Player.Salary > 0 {
-				valueRatio = c.Prediction.PredictedPower / float64(c.Player.Salary)
-			}
-			// 低薪高能球员减少惩罚（使用动态阈值）
-			isHighValue := (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
-				(c.Player.Salary <= 15 && valueRatio >= 3.5) ||
-				(c.Player.Salary <= 20 && valueRatio >= 4.0)
-			// 爆发型球员识别：近期有单场爆发表现（Upside3≥1.4）
-			hasUpside := c.Prediction.Upside3 >= 1.4
-			isExplosive := isHighValue && hasUpside
-
-			penalty := 1.0
-			switch {
-			case rank <= 1:
-				if rank == 1 {
-					// 前两名球员施加轻微惩罚，但爆发型球员保持原价
-					if isExplosive {
-						penalty = 1.0
-					} else {
-						penalty = extraSecondPenalty
-					}
-				}
-			case rank == 2:
-				current := candidates[idx].Prediction.OptimizedPower
-				if current <= 0 {
-					current = candidates[idx].Prediction.PredictedPower
-				}
-				if secondPower > 0 && current/secondPower < 0.75 {
-					if isExplosive {
-						penalty = 0.98 * extraSecondPenalty // 爆发型球员惩罚更少
-					} else if isHighValue {
-						penalty = 0.97 * extraSecondPenalty
-					} else {
-						penalty = 0.96 * extraSecondPenalty
-					}
-				} else {
-					if isExplosive {
-						penalty = 1.0 // 爆发型球员不惩罚
-					} else if isHighValue {
-						penalty = 0.99 * extraSecondPenalty
-					} else {
-						penalty = 0.98 * extraSecondPenalty
-					}
-				}
-			case rank == 3:
-				if isExplosive {
-					penalty = 0.96 * extraSecondPenalty
-				} else if isHighValue {
-					penalty = 0.94 * extraSecondPenalty
-				} else {
-					penalty = 0.91 * extraSecondPenalty
-				}
-			default:
-				if isExplosive {
-					penalty = 0.92 * extraSecondPenalty
-				} else if isHighValue {
-					penalty = 0.88 * extraSecondPenalty
-				} else {
-					penalty = 0.85 * extraSecondPenalty
-				}
-			}
-
-			base := candidates[idx].Prediction.OptimizedPower
-			if base <= 0 {
-				base = candidates[idx].Prediction.PredictedPower
-			}
-			candidates[idx].Prediction.TeamExposureFactor = penalty
-			candidates[idx].Prediction.OptimizedPower = base * penalty
-		}
-	}
-
-	return candidates
-}
-
-func estimateTeamPressureFactor(candidates []PlayerCandidate, indexes []int) float64 {
-	if len(indexes) == 0 {
-		return 1.0
-	}
-
-	limit := min(2, len(indexes))
-	total := 0.0
-	count := 0
-	for i := 0; i < limit; i++ {
-		pred := candidates[indexes[i]].Prediction
-		matchup := pred.MatchupFactor
-		if matchup <= 0 {
-			matchup = 1.0
-		}
-		anchor := pred.DefenseAnchorFactor
-		if anchor <= 0 {
-			anchor = 1.0
-		}
-		rim := pred.RimDeterrenceFactor
-		if rim <= 0 {
-			rim = 1.0
-		}
-		form := pred.OpponentFormFactor
-		if form <= 0 {
-			form = 1.0
-		}
-
-		total += matchup * anchor * rim * form
-		count++
-	}
-	if count == 0 {
-		return 1.0
-	}
-	return clamp(total/float64(count), 0.75, 1.05)
-}
+// printRecommendations 和 recommendationTypeName 已迁移到 lineup_recommend_format.go
+// applyTeamExposurePenalty 和 estimateTeamPressureFactor 已迁移到 lineup_recommend_solver.go

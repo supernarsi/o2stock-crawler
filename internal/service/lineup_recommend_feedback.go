@@ -13,6 +13,8 @@ import (
 	"o2stock-crawler/internal/entity"
 )
 
+// 格式化和打印函数已迁移到 lineup_recommend_format.go
+
 // RunBacktest 基于 player_game_stats 回测推荐结果，并给出真实最优 TopN
 func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate string, topN int) error {
 	if topN <= 0 {
@@ -233,36 +235,6 @@ func backtestBenchmarkResultType(lookback int) uint8 {
 		return entity.LineupBacktestResultTypeAvg5Benchmark
 	default:
 		return 0
-	}
-}
-
-func backtestResultTypeName(resultType uint8) string {
-	switch resultType {
-	case entity.LineupBacktestResultTypeRecommendedActual:
-		return "recommended_actual"
-	case entity.LineupBacktestResultTypeActualOptimal:
-		return "actual_optimal"
-	case entity.LineupBacktestResultTypeAvg3Benchmark:
-		return "avg3_baseline"
-	case entity.LineupBacktestResultTypeAvg5Benchmark:
-		return "avg5_baseline"
-	default:
-		return "unknown"
-	}
-}
-
-func backtestResultTypeLabel(resultType uint8) string {
-	switch resultType {
-	case entity.LineupBacktestResultTypeRecommendedActual:
-		return "推荐实得"
-	case entity.LineupBacktestResultTypeActualOptimal:
-		return "真实最优"
-	case entity.LineupBacktestResultTypeAvg3Benchmark:
-		return "3日均值基准"
-	case entity.LineupBacktestResultTypeAvg5Benchmark:
-		return "5日均值基准"
-	default:
-		return fmt.Sprintf("结果类型%d", resultType)
 	}
 }
 
@@ -840,145 +812,6 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 		Player5ID:        playerIDs[4],
 		DetailJSON:       string(detail),
 	}
-}
-
-func (s *LineupRecommendService) printBacktestSummary(
-	gameDate string,
-	recRows []entity.LineupBacktestResult,
-	benchmarkRowsByType map[uint8][]entity.LineupBacktestResult,
-	optRows []entity.LineupBacktestResult,
-	playerMap map[uint]entity.NBAGamePlayer,
-) {
-	fmt.Printf("\n>>> 今日NBA回测结果 — %s <<<\n\n", gameDate)
-
-	if len(recRows) == 0 {
-		fmt.Println("无推荐回测结果")
-		return
-	}
-
-	sort.Slice(recRows, func(i, j int) bool { return recRows[i].Rank < recRows[j].Rank })
-	sort.Slice(optRows, func(i, j int) bool { return optRows[i].Rank < optRows[j].Rank })
-	for resultType := range benchmarkRowsByType {
-		rows := benchmarkRowsByType[resultType]
-		sort.Slice(rows, func(i, j int) bool { return rows[i].Rank < rows[j].Rank })
-		benchmarkRowsByType[resultType] = rows
-	}
-
-	for i := 0; i < len(recRows); i++ {
-		rec := recRows[i]
-		fmt.Printf("#%d %s %.1f", i+1, backtestResultTypeLabel(rec.ResultType), rec.TotalActualPower)
-
-		for _, benchmarkType := range []uint8{
-			entity.LineupBacktestResultTypeAvg3Benchmark,
-			entity.LineupBacktestResultTypeAvg5Benchmark,
-		} {
-			rows := benchmarkRowsByType[benchmarkType]
-			if i >= len(rows) {
-				continue
-			}
-			gap := roundTo(rec.TotalActualPower-rows[i].TotalActualPower, 1)
-			fmt.Printf(" | %s %.1f (%+.1f)", backtestResultTypeLabel(benchmarkType), rows[i].TotalActualPower, gap)
-		}
-
-		if i < len(optRows) {
-			opt := optRows[i]
-			gap := roundTo(opt.TotalActualPower-rec.TotalActualPower, 1)
-			fmt.Printf(" | %s %.1f (差距 %.1f)", backtestResultTypeLabel(opt.ResultType), opt.TotalActualPower, gap)
-			fmt.Printf("\n   %s: %s", backtestResultTypeLabel(opt.ResultType), formatBacktestPlayersFromRow(opt, playerMap))
-		}
-		fmt.Println()
-		for _, benchmarkType := range []uint8{
-			entity.LineupBacktestResultTypeAvg3Benchmark,
-			entity.LineupBacktestResultTypeAvg5Benchmark,
-		} {
-			rows := benchmarkRowsByType[benchmarkType]
-			if i >= len(rows) {
-				continue
-			}
-			fmt.Printf("   %s: %s\n", backtestResultTypeLabel(benchmarkType), formatBacktestPlayersFromRow(rows[i], playerMap))
-		}
-	}
-	fmt.Println()
-}
-
-func formatBacktestPlayersFromRow(row entity.LineupBacktestResult, playerMap map[uint]entity.NBAGamePlayer) string {
-	if slots := parseBacktestLineupSlots(row.DetailJSON); len(slots) > 0 {
-		return formatBacktestPlayersBySlots(slots, playerMap)
-	}
-	return formatBacktestPlayers(
-		[5]uint{row.Player1ID, row.Player2ID, row.Player3ID, row.Player4ID, row.Player5ID},
-		playerMap,
-	)
-}
-
-func parseBacktestLineupSlots(detailJSON string) []backtestLineupSlot {
-	if strings.TrimSpace(detailJSON) == "" {
-		return nil
-	}
-	var payload backtestDetailPayload
-	if err := json.Unmarshal([]byte(detailJSON), &payload); err != nil {
-		return nil
-	}
-	return payload.Lineup
-}
-
-func formatBacktestPlayersBySlots(slots []backtestLineupSlot, playerMap map[uint]entity.NBAGamePlayer) string {
-	parts := make([]string, 0, len(slots))
-	for _, slot := range slots {
-		if slot.NBAPlayerID == 0 && slot.TxPlayerID == 0 {
-			continue
-		}
-
-		if slot.NBAPlayerID > 0 {
-			name := resolveBacktestPlayerName(slot.NBAPlayerID, slot.PlayerName, playerMap)
-			parts = append(parts, fmt.Sprintf("%d:%s", slot.NBAPlayerID, name))
-			continue
-		}
-
-		name := strings.TrimSpace(slot.PlayerName)
-		if name == "" {
-			name = "-"
-		}
-		parts = append(parts, fmt.Sprintf("%d(tx):%s", slot.TxPlayerID, name))
-	}
-	if len(parts) == 0 {
-		return "-"
-	}
-	return strings.Join(parts, ", ")
-}
-
-func resolveBacktestPlayerName(nbaPlayerID uint, fallback string, playerMap map[uint]entity.NBAGamePlayer) string {
-	if player, ok := playerMap[nbaPlayerID]; ok {
-		if trimmed := strings.TrimSpace(player.PlayerName); trimmed != "" {
-			return trimmed
-		}
-	}
-	trimmed := strings.TrimSpace(fallback)
-	if trimmed == "" {
-		return "-"
-	}
-	return trimmed
-}
-
-func formatBacktestPlayers(ids [5]uint, playerMap map[uint]entity.NBAGamePlayer) string {
-	parts := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if id == 0 {
-			continue
-		}
-		name := "-"
-		if player, ok := playerMap[id]; ok {
-			trimmed := strings.TrimSpace(player.PlayerName)
-			if trimmed != "" {
-				name = trimmed
-			}
-		}
-		parts = append(parts, fmt.Sprintf("%d:%s", id, name))
-	}
-	if len(parts) == 0 {
-		return "-"
-	}
-	return strings.Join(parts, ", ")
 }
 
 // filterRecommendationsByType 按类型过滤推荐阵容
