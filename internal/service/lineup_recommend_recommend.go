@@ -92,20 +92,20 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	log.Printf("对手 DvP 数据: %d 支球队", len(dvpFactorMap))
 
 	// 5. 对每位球员预测战力
+	pctx := PredictionContext{
+		AllPlayers:     allPlayers,
+		InjuryMap:      injuryMap,
+		DBPlayerMap:    dbPlayerMap,
+		TxPlayerIDMap:  txPlayerIDMap,
+		GameStatsMap:   gameStatsMap,
+		SeasonStatsMap: seasonStatsMap,
+		TeamMatchupMap: teamMatchupMap,
+		DVPFactorMap:   dvpFactorMap,
+	}
 	var candidates []PlayerCandidate
 	effectiveCount := 0
 	for i := range allPlayers {
-		pred := s.predictPower(
-			allPlayers[i],
-			allPlayers,
-			injuryMap,
-			dbPlayerMap,
-			txPlayerIDMap,
-			gameStatsMap,
-			seasonStatsMap,
-			teamMatchupMap,
-			dvpFactorMap,
-		)
+		pred := s.predictPower(allPlayers[i], pctx)
 
 		// 始终覆盖预测值，避免旧值残留
 		writePower := pred.PredictedPower
@@ -251,36 +251,8 @@ func (s *LineupRecommendService) buildRecommendation(
 			CombatPower:    c.Player.CombatPower,
 			PredictedPower: c.Prediction.PredictedPower,
 			OptimizedPower: c.Prediction.OptimizedPower,
+			Factors:        c.Prediction.toDetailFactors(),
 		}
-		dp.Factors.BaseValue = c.Prediction.BaseValue
-		dp.Factors.AvailabilityScore = c.Prediction.AvailabilityScore
-		dp.Factors.StatusTrend = c.Prediction.StatusTrend
-		dp.Factors.MatchupFactor = c.Prediction.MatchupFactor
-		dp.Factors.DefRatingFactor = c.Prediction.DefRatingFactor
-		dp.Factors.PaceFactor = c.Prediction.PaceFactor
-		dp.Factors.DvPFactor = c.Prediction.DvPFactor
-		dp.Factors.HistoryFactor = c.Prediction.HistoryFactor
-		dp.Factors.OpponentFormFactor = c.Prediction.OpponentFormFactor
-		dp.Factors.RimDeterrenceFactor = c.Prediction.RimDeterrenceFactor
-		dp.Factors.DefenseAnchorFactor = c.Prediction.DefenseAnchorFactor
-		dp.Factors.HomeAwayFactor = c.Prediction.HomeAwayFactor
-		dp.Factors.TeamContextFactor = c.Prediction.TeamContextFactor
-		dp.Factors.MinutesFactor = c.Prediction.MinutesFactor
-		dp.Factors.UsageFactor = c.Prediction.UsageFactor
-		dp.Factors.StabilityFactor = c.Prediction.StabilityFactor
-		dp.Factors.DefenseUpsideFactor = c.Prediction.DefenseUpsideFactor
-		dp.Factors.ArchetypeFactor = c.Prediction.ArchetypeFactor
-		dp.Factors.RoleSecurityFactor = c.Prediction.RoleSecurityFactor
-		dp.Factors.DataReliabilityFactor = c.Prediction.DataReliabilityFactor
-		dp.Factors.TeamExposureFactor = c.Prediction.TeamExposureFactor
-		dp.Factors.FatigueFactor = c.Prediction.FatigueFactor
-		dp.Factors.GameRiskFactor = c.Prediction.GameRiskFactor
-		dp.Factors.Upside3 = c.Prediction.Upside3
-		dp.Factors.Upside5 = c.Prediction.Upside5
-		dp.Factors.VersatilityFactor = c.Prediction.VersatilityFactor
-		dp.Factors.ExplosivenessFactor = c.Prediction.ExplosivenessFactor
-		dp.Factors.StableFloorFactor = c.Prediction.StableFloorFactor
-
 		if dbP, ok := dbPlayerMap[c.Player.NBAPlayerID]; ok {
 			dp.Factors.DbPowerPer5 = dbP.PowerPer5
 			dp.Factors.DbPowerPer10 = dbP.PowerPer10

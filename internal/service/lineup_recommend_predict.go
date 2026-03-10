@@ -69,21 +69,26 @@ type recentPowerProfile struct {
 	Upside5     float64 // 近 5 场最高表现与 Avg5 的比率
 }
 
+// PredictionContext 预测流程共享上下文，避免逐层透传 map 参数。
+type PredictionContext struct {
+	AllPlayers     []entity.NBAGamePlayer
+	InjuryMap      map[uint]crawler.InjuryReport
+	DBPlayerMap    map[uint]*entity.Player
+	TxPlayerIDMap  map[uint]uint
+	GameStatsMap   map[uint][]entity.PlayerGameStats
+	SeasonStatsMap map[uint]*entity.PlayerSeasonStats
+	TeamMatchupMap map[string]teamMatchupMetric
+	DVPFactorMap   map[string]map[uint]positionDVPMetric
+}
+
 // predictPower 计算单个候选球员的预测战力及因子明细。
 func (s *LineupRecommendService) predictPower(
 	player entity.NBAGamePlayer,
-	allPlayers []entity.NBAGamePlayer,
-	injuryMap map[uint]crawler.InjuryReport,
-	dbPlayerMap map[uint]*entity.Player,
-	txPlayerIDMap map[uint]uint,
-	gameStatsMap map[uint][]entity.PlayerGameStats,
-	seasonStatsMap map[uint]*entity.PlayerSeasonStats,
-	teamMatchupMap map[string]teamMatchupMetric,
-	dvpFactorMap map[string]map[uint]positionDVPMetric,
+	pctx PredictionContext,
 ) PlayerPrediction {
 
 	// Step 1: 因素1 — 球员出场可用性 (AvailabilityScore)
-	availabilityScore := resolveAvailabilityScore(player, injuryMap)
+	availabilityScore := resolveAvailabilityScore(player, pctx.InjuryMap)
 	if availabilityScore == 0 {
 		return PlayerPrediction{AvailabilityScore: 0.0}
 	}
@@ -91,11 +96,11 @@ func (s *LineupRecommendService) predictPower(
 	// Step 2: 基础战力值 (BaseValue)
 	gamePower := player.CombatPower
 	baseValue := gamePower
-	dbPlayer := dbPlayerMap[player.NBAPlayerID]
-	txPlayerID := txPlayerIDMap[player.NBAPlayerID]
+	dbPlayer := pctx.DBPlayerMap[player.NBAPlayerID]
+	txPlayerID := pctx.TxPlayerIDMap[player.NBAPlayerID]
 	var stats []entity.PlayerGameStats
 	if txPlayerID > 0 {
-		stats = gameStatsMap[txPlayerID]
+		stats = pctx.GameStatsMap[txPlayerID]
 	}
 
 	var dbPower5, dbPower10 float64
@@ -120,14 +125,14 @@ func (s *LineupRecommendService) predictPower(
 	historyFactor := 1.0
 	opponentFormFactor := 1.0
 	rimDeterrenceFactor := 1.0
-	opponentTeam := s.getOpponentTeamCode(player, allPlayers)
+	opponentTeam := s.getOpponentTeamCode(player, pctx.AllPlayers)
 	matchupDetail := s.calcMatchupFactorWithContext(
 		stats,
 		opponentTeam,
 		baseValue,
 		player.Position,
-		teamMatchupMap,
-		dvpFactorMap,
+		pctx.TeamMatchupMap,
+		pctx.DVPFactorMap,
 	)
 	matchupFactor = matchupDetail.MatchupFactor
 	defRatingFactor = matchupDetail.DefRatingFactor
@@ -139,16 +144,16 @@ func (s *LineupRecommendService) predictPower(
 
 	defenseAnchorFactor := s.calcOpponentDefenseAnchorFactor(
 		player,
-		allPlayers,
-		txPlayerIDMap,
-		gameStatsMap,
+		pctx.AllPlayers,
+		pctx.TxPlayerIDMap,
+		pctx.GameStatsMap,
 	)
 
 	// Step 5: 因素5 — 球队阵容上下文 (TeamContextFactor)
-	teamContextFactor := s.calcTeamContextFactor(player, allPlayers, injuryMap)
+	teamContextFactor := s.calcTeamContextFactor(player, pctx.AllPlayers, pctx.InjuryMap)
 
 	// Step 6: 因素6 — 主客场因子 (HomeAwayFactor)
-	homeAwayFactor := s.calcHomeAwayFactor(player, txPlayerID, gameStatsMap)
+	homeAwayFactor := s.calcHomeAwayFactor(player, txPlayerID, pctx.GameStatsMap)
 
 	// Step 7: 额外因子 — 上场时间趋势、使用率趋势、稳定性、赛程疲劳
 	minutesFactor := 1.0
@@ -158,9 +163,9 @@ func (s *LineupRecommendService) predictPower(
 	roleSecurityFactor := 1.0
 	dataReliabilityFactor := 1.0
 	fatigueFactor := 1.0
-	seasonStats := seasonStatsMap[txPlayerID]
+	seasonStats := pctx.SeasonStatsMap[txPlayerID]
 	if txPlayerID > 0 {
-		stats := gameStatsMap[txPlayerID]
+		stats := pctx.GameStatsMap[txPlayerID]
 		minutesFactor = s.calcMinutesFactor(stats, seasonStats)
 		usageFactor = s.calcUsageFactor(stats)
 		stabilityFactor = s.calcStabilityFactor(stats)

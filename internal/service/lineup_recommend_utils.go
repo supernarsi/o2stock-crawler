@@ -176,60 +176,6 @@ func calcRecentVersatilityFactor(stats []entity.PlayerGameStats, position uint) 
 	return 0.9 + (versatilityScore-5.0)/10.0*0.25
 }
 
-// calcVersatilityScore 计算球员的多面手程度
-// 多面手球员（约基奇、东契奇、杰伦约翰逊）在篮板、助攻、抢断、盖帽都有贡献
-// 前场球员因防守数据（篮板、盖帽）更容易成为多面手
-func calcVersatilityScore(g entity.PlayerGameStats) float64 {
-	// 基础全面性：篮板 + 助攻 + 抢断 + 盖帽的加权
-	// 前场多面手通常在篮板和盖帽上有优势
-	// 后场多面手通常在助攻和抢断上有优势
-	rebounds := float64(g.Rebounds)
-	assists := float64(g.Assists)
-	steals := float64(g.Steals)
-	blocks := float64(g.Blocks)
-
-	// 多面手基准：5+5+1+1 或 10+8+1+1 等
-	// 使用几何平均避免单项过高导致虚高
-	contributions := []float64{
-		max(0, rebounds-3),   // 篮板贡献（超过 3 个才算）
-		max(0, assists-3),    // 助攻贡献（超过 3 个才算）
-		max(0, steals-0.5),   // 抢断贡献
-		max(0, blocks-0.5),   // 盖帽贡献
-	}
-
-	// 计算均衡度：如果各项数据接近，则给予更高评分
-	nonZeroCount := 0
-	sum := 0.0
-	minVal := 999.0
-	for _, v := range contributions {
-		if v > 0 {
-			nonZeroCount++
-			sum += v
-			if v < minVal {
-				minVal = v
-			}
-		}
-	}
-
-	if nonZeroCount < 2 {
-		return 0.8 // 单项球员
-	}
-
-	// 均衡度因子：最弱项与最强项的比率
-	avg := sum / float64(nonZeroCount)
-	balanceFactor := minVal / avg
-	if balanceFactor > 1 {
-		balanceFactor = 1
-	}
-
-	// 多面手得分：总和 * 均衡度
-	versatilityScore := sum * (0.5 + 0.5*balanceFactor)
-
-	// 标准化到 0.8-1.2 范围
-	score := 0.9 + clamp(versatilityScore/15.0, 0.0, 0.3)
-	return clamp(score, 0.8, 1.2)
-}
-
 // calcExplosivenessFactor 计算球员的爆发力
 // 爆发力强的球员：有单场砍下高分的能力（如米切尔、亚历山大）
 // 与稳定性因子形成对比
