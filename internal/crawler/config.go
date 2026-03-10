@@ -24,7 +24,7 @@ type Config struct {
 //
 // Optional:
 //   - OL2_NONSE_STR (default "VKE5z")
-//   - OL2_BASE_URL (default "https://nba2k2app.game.qq.com/game/trade/rosterList")
+//   - OL2_BASE_URL
 func LoadConfigFromEnv() (*Config, error) {
 	openID := os.Getenv("OL2_OPENID")
 	accessToken := os.Getenv("OL2_ACCESS_TOKEN")

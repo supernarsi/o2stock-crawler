@@ -86,7 +86,7 @@ CREATE TABLE `u_p_own` (
 - **OL2_SIGN**：接口中使用的 `sign`。
 - **OL2_LOGIN_CHANNEL**：登录渠道，默认 `qq`。
 - **OL2_NONSE_STR**：`nonseStr`。
-- **OL2_BASE_URL**：接口地址，默认 `https://nba2k2app.game.qq.com/user/favorite/rosters`。
+- **OL2_BASE_URL**：接口 URL，详见 .env 配置文件。
 
 示例（请根据自己的实际账号信息修改）：
 
@@ -96,7 +96,7 @@ OL2_ACCESS_TOKEN=
 OL2_SIGN=
 OL2_LOGIN_CHANNEL=
 OL2_NONSE_STR=
-OL2_BASE_URL=https://nba2k2app.game.qq.com/user/favorite/rosters
+OL2_BASE_URL=https://nba2k2app.com/
 ```
 
 #### 数据库配置

@@ -116,7 +116,7 @@ go build -ldflags "-X 'o2stock-crawler/internal/config.EmbeddedEnv=<content>'"
 
 ### OL2 接口配置
 - `OL2_OPENID`, `OL2_ACCESS_TOKEN`, `OL2_SIGN`, `OL2_LOGIN_CHANNEL`, `OL2_NONSE_STR`
-- `OL2_BASE_URL`: 默认 `https://nba2k2app.game.qq.com/user/favorite/rosters`
+- `OL2_BASE_URL`: 接口 URL，详见 .env 配置文件
 
 ### 数据库配置
 - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME`

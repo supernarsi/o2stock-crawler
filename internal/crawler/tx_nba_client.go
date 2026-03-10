@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
@@ -15,6 +16,52 @@ import (
 // TxNBAClient wraps HTTP calls to the Tencent Sports NBA API.
 type TxNBAClient struct {
 	client *http.Client
+	config *TxNBAConfig
+}
+
+// TxNBAConfig holds URLs for the TxNBAClient.
+type TxNBAConfig struct {
+	MatchListURL   string
+	MatchStatURL   string
+	TeamLineupURL  string
+	PlayerInfoURL  string
+	PlayerStatsURL string
+}
+
+// LoadTxNBAConfigFromEnv loads TxNBA API URLs from environment variables.
+func LoadTxNBAConfigFromEnv() *TxNBAConfig {
+	matchListURL := os.Getenv("TX_NBA_MATCH_LIST_URL")
+	if matchListURL == "" {
+		matchListURL = "https://app.sports.qq.com/match/list?columnId=100000&unitType=&appvid=&flag=%d&date=%s"
+	}
+
+	matchStatURL := os.Getenv("TX_NBA_MATCH_STAT_URL")
+	if matchStatURL == "" {
+		matchStatURL = "https://app.sports.qq.com/stats/matchStat?mid=%s&appvid=&from=videoApp"
+	}
+
+	teamLineupURL := os.Getenv("TX_NBA_TEAM_LINEUP_URL")
+	if teamLineupURL == "" {
+		teamLineupURL = "https://matchweb.sports.qq.com/match/api/v2/team/lineup?competitionId=100000&teamId=%s"
+	}
+
+	playerInfoURL := os.Getenv("TX_NBA_PLAYER_INFO_URL")
+	if playerInfoURL == "" {
+		playerInfoURL = "https://matchweb.sports.qq.com/playerUtil/playerInfo?competitionId=100000&playerId=%s"
+	}
+
+	playerStatsURL := os.Getenv("TX_NBA_PLAYER_STATS_URL")
+	if playerStatsURL == "" {
+		playerStatsURL = "https://app.sports.qq.com/match/api/v2/player/stats?playerId=%s&competitionId=100000&moduleIds=statList&appvid="
+	}
+
+	return &TxNBAConfig{
+		MatchListURL:   matchListURL,
+		MatchStatURL:   matchStatURL,
+		TeamLineupURL:  teamLineupURL,
+		PlayerInfoURL:  playerInfoURL,
+		PlayerStatsURL: playerStatsURL,
+	}
 }
 
 // NewTxNBAClient creates a new TxNBAClient.
@@ -38,6 +85,7 @@ func NewTxNBAClient() *TxNBAClient {
 
 	return &TxNBAClient{
 		client: httpClient,
+		config: LoadTxNBAConfigFromEnv(),
 	}
 }
 
@@ -140,7 +188,7 @@ type TxPlayerStatsResponse struct {
 
 // GetMatchList 获取指定日期的比赛列表
 func (c *TxNBAClient) GetMatchList(ctx context.Context, date string, flag int) (*TxMatchListResponse, error) {
-	url := fmt.Sprintf("https://app.sports.qq.com/match/list?columnId=100000&unitType=&appvid=&flag=%d&date=%s", flag, date)
+	url := fmt.Sprintf(c.config.MatchListURL, flag, date)
 
 	log.Printf("获取比赛列表: %s", url)
 
@@ -171,7 +219,7 @@ func (c *TxNBAClient) GetMatchList(ctx context.Context, date string, flag int) (
 
 // GetMatchStat 获取指定比赛的统计数据
 func (c *TxNBAClient) GetMatchStat(ctx context.Context, mid string) (*TxMatchStatResponse, error) {
-	url := fmt.Sprintf("https://app.sports.qq.com/stats/matchStat?mid=%s&appvid=&from=videoApp", mid)
+	url := fmt.Sprintf(c.config.MatchStatURL, mid)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -200,7 +248,7 @@ func (c *TxNBAClient) GetMatchStat(ctx context.Context, mid string) (*TxMatchSta
 
 // GetTeamLineup 获取球队球员阵容
 func (c *TxNBAClient) GetTeamLineup(ctx context.Context, teamID string) (*TxTeamLineupResponse, error) {
-	url := fmt.Sprintf("https://matchweb.sports.qq.com/match/api/v2/team/lineup?competitionId=100000&teamId=%s", teamID)
+	url := fmt.Sprintf(c.config.TeamLineupURL, teamID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -248,7 +296,7 @@ type TxPlayerInfoResponse struct {
 
 // GetPlayerInfo 获取球员详情（含年龄等基础信息）
 func (c *TxNBAClient) GetPlayerInfo(ctx context.Context, txPlayerID string) (*TxPlayerInfoResponse, error) {
-	url := fmt.Sprintf("https://matchweb.sports.qq.com/playerUtil/playerInfo?competitionId=100000&playerId=%s", txPlayerID)
+	url := fmt.Sprintf(c.config.PlayerInfoURL, txPlayerID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -277,7 +325,7 @@ func (c *TxNBAClient) GetPlayerInfo(ctx context.Context, txPlayerID string) (*Tx
 
 // GetPlayerStats 获取球员统计数据 (含赛季场均)
 func (c *TxNBAClient) GetPlayerStats(ctx context.Context, txPlayerID string) (*TxPlayerStatsResponse, error) {
-	url := fmt.Sprintf("https://app.sports.qq.com/match/api/v2/player/stats?playerId=%s&competitionId=100000&moduleIds=statList&appvid=", txPlayerID)
+	url := fmt.Sprintf(c.config.PlayerStatsURL, txPlayerID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
