@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"testing"
 	"time"
 
@@ -1083,7 +1084,7 @@ func bruteForceTopLineups(candidates []PlayerCandidate, salaryCap, pickCount, to
 	var dfs func(start, picked, salary int, score float64)
 	dfs = func(start, picked, salary int, score float64) {
 		if picked == pickCount {
-			results = insertLineupState(results, lineupState{
+			results = insertLineupStateTest(results, lineupState{
 				score:   score,
 				salary:  salary,
 				indices: append([]int{}, indices...),
@@ -1111,4 +1112,42 @@ func bruteForceTopLineups(candidates []PlayerCandidate, salaryCap, pickCount, to
 
 	dfs(0, 0, 0, 0)
 	return results
+}
+
+func insertLineupStateTest(states []lineupState, candidate lineupState, limit int) []lineupState {
+	for i := range states {
+		if sameLineupIndicesTest(states[i].indices, candidate.indices) {
+			if lineupStateLess(candidate, states[i]) {
+				states[i] = candidate
+			}
+			sort.Slice(states, func(a, b int) bool {
+				return lineupStateLess(states[a], states[b])
+			})
+			if len(states) > limit {
+				states = states[:limit]
+			}
+			return states
+		}
+	}
+
+	states = append(states, candidate)
+	sort.Slice(states, func(i, j int) bool {
+		return lineupStateLess(states[i], states[j])
+	})
+	if len(states) > limit {
+		states = states[:limit]
+	}
+	return states
+}
+
+func sameLineupIndicesTest(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

@@ -99,27 +99,41 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 					continue
 				}
 
-				nextStates := dp[j][k]
+				var newStates []lineupState
 				for _, prev := range prevStates {
-					nextIdx := append([]int{}, prev.indices...)
+					nextIdx := make([]int, len(prev.indices), len(prev.indices)+1)
+					copy(nextIdx, prev.indices)
 					nextIdx = append(nextIdx, i)
-					nextStates = insertLineupState(nextStates, lineupState{
+					newStates = append(newStates, lineupState{
 						score:   prev.score + power,
 						salary:  k,
 						indices: nextIdx,
-					}, stateLimit)
+					})
 				}
-				dp[j][k] = nextStates
+
+				combined := append(dp[j][k], newStates...)
+				sort.Slice(combined, func(a, b int) bool {
+					return lineupStateLess(combined[a], combined[b])
+				})
+				if len(combined) > stateLimit {
+					combined = combined[:stateLimit]
+				}
+				dp[j][k] = combined
 			}
 		}
 	}
 
-	bestStates := make([]lineupState, 0, stateLimit)
+	bestStates := make([]lineupState, 0)
 	for k := 0; k <= salaryCap; k++ {
-		for _, st := range dp[pickCount][k] {
-			bestStates = insertLineupState(bestStates, st, stateLimit)
-		}
+		bestStates = append(bestStates, dp[pickCount][k]...)
 	}
+	sort.Slice(bestStates, func(a, b int) bool {
+		return lineupStateLess(bestStates[a], bestStates[b])
+	})
+	if len(bestStates) > stateLimit {
+		bestStates = bestStates[:stateLimit]
+	}
+
 	if len(bestStates) == 0 {
 		return nil
 	}
@@ -314,32 +328,6 @@ type lineupState struct {
 	indices []int
 }
 
-func insertLineupState(states []lineupState, candidate lineupState, limit int) []lineupState {
-	for i := range states {
-		if sameLineupIndices(states[i].indices, candidate.indices) {
-			if lineupStateLess(candidate, states[i]) {
-				states[i] = candidate
-			}
-			sort.Slice(states, func(a, b int) bool {
-				return lineupStateLess(states[a], states[b])
-			})
-			if len(states) > limit {
-				states = states[:limit]
-			}
-			return states
-		}
-	}
-
-	states = append(states, candidate)
-	sort.Slice(states, func(i, j int) bool {
-		return lineupStateLess(states[i], states[j])
-	})
-	if len(states) > limit {
-		states = states[:limit]
-	}
-	return states
-}
-
 func lineupStateLess(a, b lineupState) bool {
 	if math.Abs(a.score-b.score) > 1e-9 {
 		return a.score > b.score
@@ -348,18 +336,6 @@ func lineupStateLess(a, b lineupState) bool {
 		return a.salary < b.salary
 	}
 	return lexicographicallyLess(a.indices, b.indices)
-}
-
-func sameLineupIndices(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func lexicographicallyLess(a, b []int) bool {
