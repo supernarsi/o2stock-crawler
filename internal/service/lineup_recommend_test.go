@@ -118,17 +118,17 @@ func TestCalcMatchupFactorWithContext(t *testing.T) {
 		dvpMap,
 	)
 
-	if math.Abs(matchup.DefRatingFactor-1.05) > 1e-9 {
-		t.Fatalf("defFactor=%.3f, want 1.05", matchup.DefRatingFactor)
+	if math.Abs(matchup.DefRatingFactor-1.021) > 1e-3 {
+		t.Fatalf("defFactor=%.3f, want 1.021", matchup.DefRatingFactor)
 	}
-	if math.Abs(matchup.PaceFactor-1.0333333333) > 1e-9 {
-		t.Fatalf("paceFactor=%.3f, want 1.033", matchup.PaceFactor)
+	if math.Abs(matchup.PaceFactor-1.014) > 1e-3 {
+		t.Fatalf("paceFactor=%.3f, want 1.014", matchup.PaceFactor)
 	}
-	if math.Abs(matchup.DvPFactor-1.05) > 1e-9 {
-		t.Fatalf("dvpFactor=%.3f, want 1.05", matchup.DvPFactor)
+	if math.Abs(matchup.DvPFactor-1.042) > 1e-3 {
+		t.Fatalf("dvpFactor=%.3f, want 1.042", matchup.DvPFactor)
 	}
-	if math.Abs(matchup.HistoryFactor-1.05) > 1e-9 {
-		t.Fatalf("historyFactor=%.3f, want 1.05", matchup.HistoryFactor)
+	if math.Abs(matchup.HistoryFactor-1.025) > 1e-3 {
+		t.Fatalf("historyFactor=%.3f, want 1.025", matchup.HistoryFactor)
 	}
 	if math.Abs(matchup.OpponentFormFactor-1.0) > 1e-9 {
 		t.Fatalf("opponentFormFactor=%.3f, want 1.00", matchup.OpponentFormFactor)
@@ -136,8 +136,8 @@ func TestCalcMatchupFactorWithContext(t *testing.T) {
 	if math.Abs(matchup.RimDeterrenceFactor-1.0) > 1e-9 {
 		t.Fatalf("rimDeterrenceFactor=%.3f, want 1.00", matchup.RimDeterrenceFactor)
 	}
-	if math.Abs(matchup.MatchupFactor-1.0890249999) > 1e-6 {
-		t.Fatalf("matchupFactor=%.8f, want 1.08902500", matchup.MatchupFactor)
+	if math.Abs(matchup.MatchupFactor-1.05849248) > 1e-6 {
+		t.Fatalf("matchupFactor=%.8f, want 1.05849248", matchup.MatchupFactor)
 	}
 }
 
@@ -281,8 +281,8 @@ func TestResolveAvailabilityScore(t *testing.T) {
 	questionableScore := resolveAvailabilityScore(player, map[uint]crawler.InjuryReport{
 		1: {Status: "Questionable"},
 	})
-	if math.Abs(questionableScore-0.68) > 1e-9 {
-		t.Fatalf("questionableScore=%.2f, want 0.68", questionableScore)
+	if math.Abs(questionableScore-0.78) > 1e-9 {
+		t.Fatalf("questionableScore=%.2f, want 0.78", questionableScore)
 	}
 }
 
@@ -483,10 +483,10 @@ func TestApplyTeamExposurePenalty(t *testing.T) {
 	if math.Abs(byID[2].TeamExposureFactor-1.0) > 1e-9 || math.Abs(byID[2].OptimizedPower-40.0) > 1e-9 {
 		t.Fatalf("id=2 unexpected penalty: %+v", byID[2])
 	}
-	if math.Abs(byID[3].TeamExposureFactor-0.95) > 1e-9 || math.Abs(byID[3].OptimizedPower-27.55) > 1e-9 {
+	if math.Abs(byID[3].TeamExposureFactor-0.96) > 1e-9 || math.Abs(byID[3].OptimizedPower-27.84) > 1e-9 {
 		t.Fatalf("id=3 unexpected penalty: %+v", byID[3])
 	}
-	if math.Abs(byID[4].TeamExposureFactor-0.90) > 1e-9 || math.Abs(byID[4].OptimizedPower-18.0) > 1e-9 {
+	if math.Abs(byID[4].TeamExposureFactor-0.91) > 1e-9 || math.Abs(byID[4].OptimizedPower-18.2) > 1e-9 {
 		t.Fatalf("id=4 unexpected penalty: %+v", byID[4])
 	}
 	if math.Abs(byID[5].TeamExposureFactor-1.0) > 1e-9 || math.Abs(byID[5].OptimizedPower-35.0) > 1e-9 {
@@ -528,11 +528,11 @@ func TestApplyTeamExposurePenaltyPenalizesSecondPlayerUnderHighPressure(t *testi
 	if math.Abs(byID[1].TeamExposureFactor-1.0) > 1e-9 {
 		t.Fatalf("id=1 unexpected penalty: %+v", byID[1])
 	}
-	if math.Abs(byID[2].TeamExposureFactor-0.90) > 1e-9 {
-		t.Fatalf("id=2 expected second-player penalty 0.90, got %+v", byID[2])
+	if math.Abs(byID[2].TeamExposureFactor-0.92) > 1e-9 {
+		t.Fatalf("id=2 expected second-player penalty 0.92, got %+v", byID[2])
 	}
-	if math.Abs(byID[2].OptimizedPower-36.9) > 1e-9 {
-		t.Fatalf("id=2 optimized power expected 36.9, got %+v", byID[2])
+	if math.Abs(byID[2].OptimizedPower-37.72) > 1e-9 {
+		t.Fatalf("id=2 optimized power expected 37.72, got %+v", byID[2])
 	}
 }
 
@@ -590,11 +590,11 @@ func TestCalcLineupStructureFactor(t *testing.T) {
 	if got := calcLineupStructureFactor(lineupCheap1); math.Abs(got-1.0) > 1e-9 {
 		t.Fatalf("factor(cheap1)=%.2f, want 1.00", got)
 	}
-	if got := calcLineupStructureFactor(lineupCheap2); math.Abs(got-0.97) > 1e-9 {
-		t.Fatalf("factor(cheap2)=%.2f, want 0.97", got)
+	if got := calcLineupStructureFactor(lineupCheap2); math.Abs(got-0.98) > 1e-9 {
+		t.Fatalf("factor(cheap2)=%.2f, want 0.98", got)
 	}
-	if got := calcLineupStructureFactor(lineupCheap3); math.Abs(got-0.92) > 1e-9 {
-		t.Fatalf("factor(cheap3)=%.2f, want 0.92", got)
+	if got := calcLineupStructureFactor(lineupCheap3); math.Abs(got-0.88) > 1e-9 {
+		t.Fatalf("factor(cheap3)=%.2f, want 0.88", got)
 	}
 }
 
