@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/rand/v2"
 	"o2stock-crawler/internal/crawler"
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/db/repositories"
@@ -136,7 +136,7 @@ func (s *TxNBAService) CrawlDailyStats(ctx context.Context, targetDate string, f
 			log.Printf(" ==> 处理比赛: %s (%s vs %s)", m.MatchInfo.Mid, m.MatchInfo.LeftName, m.MatchInfo.RightName)
 
 			// 避免抓取过快
-			time.Sleep(time.Duration(rand.Intn(2)+1) * time.Second)
+			time.Sleep(time.Duration(rand.IntN(2)+1) * time.Second)
 
 			pids, err := s.crawlMatchStat(ctx, m.MatchInfo.Mid, matchDate)
 			if err != nil {
@@ -174,7 +174,7 @@ func (s *TxNBAService) SyncPlayerSeasonStats(ctx context.Context, txPlayerIDs []
 		playerName = player.EnName
 
 		// 避免请求过快
-		time.Sleep(time.Duration(rand.Intn(3)+2) * time.Second)
+		time.Sleep(time.Duration(rand.IntN(3)+2) * time.Second)
 
 		log.Printf("开始获取球员 %s (%d) 赛季统计数据", playerName, pid)
 		pidStr := strconv.Itoa(int(pid))
@@ -284,7 +284,7 @@ func (s *TxNBAService) SyncPlayerAge(ctx context.Context, playerIDs []uint) erro
 
 	updated := 0
 	for _, p := range players {
-		time.Sleep(time.Duration(rand.Intn(2)+1) * time.Second)
+		time.Sleep(time.Duration(rand.IntN(2)+1) * time.Second)
 
 		pidStr := strconv.Itoa(int(p.TxPlayerID))
 		log.Printf("获取球员 %s (%s) 年龄信息", p.ShowName, pidStr)

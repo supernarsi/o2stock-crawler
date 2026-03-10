@@ -96,14 +96,25 @@ func runLoop(ctx context.Context, client *crawler.Client, database *db.DB, inter
 		if utils.IsOl2CrawlerSleepTime(now) {
 			nextRun := getNextRunTime(now)
 			log.Printf("当前在禁止抓取时段，下次抓取时间: %s", nextRun.Format("15:04:05"))
-			time.Sleep(time.Until(nextRun))
+			select {
+			case <-ctx.Done():
+				log.Printf("循环抓取因收到取消信号而终止")
+				return
+			case <-time.After(time.Until(nextRun)):
+			}
 			continue
 		}
 
 		if err := runOnce(ctx, client, database); err != nil {
 			log.Printf("循环抓取失败: %v", err)
 		}
-		time.Sleep(interval)
+
+		select {
+		case <-ctx.Done():
+			log.Printf("循环抓取因收到取消信号而终止")
+			return
+		case <-time.After(interval):
+		}
 	}
 }
 
