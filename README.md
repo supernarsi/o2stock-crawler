@@ -301,3 +301,12 @@ journalctl -u o2stock-api -n 100
 - 添加更多的数据统计和分析接口。
 
 
+## Maintainer
+
+This project is actively maintained by @supernarsi.
+
+## Roadmap
+
+- Improve data reliability
+- Add automated data validation
+- Improve developer documentation

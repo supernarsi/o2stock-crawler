@@ -115,6 +115,21 @@ func (r *PlayerRepository) BatchGetByIDs(ctx context.Context, playerIDs []uint) 
 	return players, err
 }
 
+// BatchGetByNBAPlayerIDs 按 nba_player_id 批量获取球员映射（仅返回 tx_player_id > 0 的记录）。
+// 同一 nba_player_id 可能存在多条版本卡数据，按 update_at/id 倒序返回，调用方可取首条作为最新映射。
+func (r *PlayerRepository) BatchGetByNBAPlayerIDs(ctx context.Context, nbaPlayerIDs []uint) ([]entity.Player, error) {
+	var players []entity.Player
+	if len(nbaPlayerIDs) == 0 {
+		return players, nil
+	}
+
+	err := r.ctx(ctx).
+		Where("nba_player_id IN ? AND tx_player_id > 0", nbaPlayerIDs).
+		Order("update_at DESC, id DESC").
+		Find(&players).Error
+	return players, err
+}
+
 func (r *PlayerRepository) GetExtraByPlayerIDs(ctx context.Context, playerIDs []uint) ([]entity.PlayerExtra, error) {
 	var extras []entity.PlayerExtra
 	err := r.ctx(ctx).Model(&entity.PlayerExtra{}).Where("player_id IN ?", playerIDs).Find(&extras).Error
@@ -155,6 +170,13 @@ func (r *PlayerRepository) UpdatePriceChanges(ctx context.Context, playerID uint
 			"price_change_1d": pc1d,
 			"price_change_7d": pc7d,
 		}).Error
+}
+
+func (r *PlayerRepository) UpdateDetailJSON(ctx context.Context, playerID uint, detailJSON string) (int64, error) {
+	result := r.model(ctx).
+		Where("player_id = ?", playerID).
+		Update("detail_json", detailJSON)
+	return result.RowsAffected, result.Error
 }
 
 // GetAllTxPlayers 返回参与 IPI 计算的球员：tx_player_id > 0 且非自由球员（用于排名、批量 IPI 等）
