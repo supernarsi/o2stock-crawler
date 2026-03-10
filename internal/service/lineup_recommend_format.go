@@ -1,3 +1,8 @@
+// lineup_recommend_format.go 负责推荐和回测结果的格式化输出，包括：
+// - 推荐阵容打印（printRecommendations）
+// - 回测结果打印（printBacktestSummary）
+// - 阵容排序（sortLineupsByPowerDesc）
+// - 球员名称解析和格式化辅助函数
 package service
 
 import (
@@ -11,6 +16,7 @@ import (
 
 // --- 推荐结果输出 ---
 
+// printRecommendations 以表格形式打印推荐阵容列表。
 func (s *LineupRecommendService) printRecommendations(gameDate string, title string, lineups [][]PlayerCandidate) {
 	fmt.Printf("\n>>> %s — %s <<<\n\n", title, gameDate)
 
@@ -87,6 +93,7 @@ func backtestResultTypeLabel(resultType uint8) string {
 	}
 }
 
+// printBacktestSummary 打印回测结果摘要，包括推荐实得、基准对比和真实最优。
 func (s *LineupRecommendService) printBacktestSummary(
 	gameDate string,
 	recRows []entity.LineupBacktestResult,

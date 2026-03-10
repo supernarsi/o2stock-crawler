@@ -1,3 +1,7 @@
+// lineup_recommend_predict.go 包含球员战力预测的核心入口 predictPower，
+// 以及近期战力分析（calcRecentPowerProfile）和预测值校准（calibratePredictedPower）逻辑。
+// 数据加载见 lineup_recommend_data.go，ID 映射见 lineup_recommend_mapping.go，
+// 因子计算见 lineup_recommend_factors.go。
 package service
 
 import (
@@ -8,37 +12,42 @@ import (
 	"o2stock-crawler/internal/entity"
 )
 
+// 预测相关全局常量。
 const (
-	matchupLookbackDays    = 120
-	teamMetricMaxGames     = 24
-	teamMetricMinGames     = 6
-	teamTrendRecentGames   = 6
-	dvpMetricMinSampleSize = 8
-	recentBaseMinGames     = 3
+	matchupLookbackDays    = 120 // 对手指标回溯天数
+	teamMetricMaxGames     = 24  // 球队指标最大样本场次
+	teamMetricMinGames     = 6   // 球队指标最小有效场次
+	teamTrendRecentGames   = 6   // 球队近期趋势窗口
+	dvpMetricMinSampleSize = 8   // DVP 因子最小样本量
+	recentBaseMinGames     = 3   // 近期基础值最小样本量
 )
 
+// teamMatchupMetric 球队防守端对手匹配指标。
 type teamMatchupMetric struct {
-	DefRatingFactor       float64
-	PaceFactor            float64
-	OpponentFormFactor    float64
-	RimDeterrenceFactor   float64
-	PerimeterImpactFactor float64
-	SampleCount           int
+	DefRatingFactor       float64 // 防守效率因子
+	PaceFactor            float64 // 比赛节奏因子
+	OpponentFormFactor    float64 // 对手近期状态因子
+	RimDeterrenceFactor   float64 // 篮下威慑因子（盖帽相关）
+	PerimeterImpactFactor float64 // 外线干扰因子（抢断相关）
+	SampleCount           int     // 样本场次数
 }
 
+// positionDVPMetric 按位置的对手防守价值指标（Defensive Value Per position）。
 type positionDVPMetric struct {
-	Factor      float64
-	SampleCount int
+	Factor      float64 // DVP 因子，>1 表示该对手该位置防守薄弱
+	SampleCount int     // 样本数
 }
 
+// txLineupPlayer 腾讯体育阵容球员简要信息，用于 ID 映射。
 type txLineupPlayer struct {
 	ID     uint
 	CnName string
 	EnName string
 }
 
+// matchupFactorDetail 对手匹配因子的分项明细。
 type matchupFactorDetail struct {
-	MatchupFactor         float64
+	MatchupFactor         float64 // 综合匹配因子
 	DefRatingFactor       float64
 	PaceFactor            float64
 	DvPFactor             float64
@@ -48,13 +57,14 @@ type matchupFactorDetail struct {
 	PerimeterImpactFactor float64
 }
 
+// recentPowerProfile 近期战力分布画像，用于校准预测值和评估数据可信度。
 type recentPowerProfile struct {
-	Avg3        float64
-	Avg5        float64
-	Avg10       float64
-	Median5     float64
-	Volatility  float64
-	SampleCount int
+	Avg3        float64 // 近 3 场平均战力
+	Avg5        float64 // 近 5 场平均战力
+	Avg10       float64 // 近 10 场平均战力
+	Median5     float64 // 近 5 场中位数战力
+	Volatility  float64 // 近 5 场变异系数（标准差/均值）
+	SampleCount int     // 有效样本数
 	Upside3     float64 // 近 3 场最高表现与 Avg3 的比率
 	Upside5     float64 // 近 5 场最高表现与 Avg5 的比率
 }
@@ -214,8 +224,7 @@ func (s *LineupRecommendService) predictPower(
 	// Step 8: 因素2 — 比赛取消风险 (GameRiskFactor)
 	gameRiskFactor := 1.0 // NBA 室内运动，默认无风险
 
-	// Step 9: 综合计算
-	// 新增因子：多面手、爆发力、稳定保底
+	// Step 9: 综合计算（所有因子连乘）
 	dynamicMultiplier := statusTrend * matchupFactor * homeAwayFactor * teamContextFactor *
 		minutesFactor * usageFactor * stabilityFactor * defenseUpsideFactor *
 		archetypeFactor * roleSecurityFactor * dataReliabilityFactor *
@@ -300,7 +309,7 @@ func calcRecentPowerAverages(stats []entity.PlayerGameStats) (float64, float64) 
 
 	sum5 := 0.0
 	sum10 := 0.0
-	for i := 0; i < count10; i++ {
+	for i := range count10 {
 		power := calcPowerFromStats(stats[i])
 		sum10 += power
 		if i < count5 {

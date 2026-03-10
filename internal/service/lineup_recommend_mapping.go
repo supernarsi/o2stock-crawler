@@ -1,3 +1,7 @@
+// lineup_recommend_mapping.go 负责 NBA 球员与腾讯体育（TX）球员之间的 ID 映射，包括：
+// - 推荐流程专用的三级映射构建（薪资表→手工兜底→腾讯阵容 API 回退）
+// - 球员名称匹配（英文精确/中文精确/模糊匹配）
+// - DVP（Defensive Value Per position）因子映射构建
 package service
 
 import (
@@ -10,12 +14,15 @@ import (
 	"o2stock-crawler/internal/entity"
 )
 
+// recommendTxMapSummary 汇总推荐流程中 NBA→TX 映射的来源统计。
 type recommendTxMapSummary struct {
-	SalaryCount         int
-	ManualCount         int
-	LineupFallbackCount int
+	SalaryCount         int // 通过薪资表匹配的数量
+	ManualCount         int // 通过手工兜底列表匹配的数量
+	LineupFallbackCount int // 通过腾讯阵容 API 回退匹配的数量
 }
 
+// buildRecommendTxPlayerIDMap 构建推荐流程专用的 NBAPlayerID → TxPlayerID 映射。
+// 优先级：nba_player_salary 表 > 手工兜底列表 > 腾讯阵容 API 回退。
 func (s *LineupRecommendService) buildRecommendTxPlayerIDMap(
 	ctx context.Context,
 	gamePlayers []entity.NBAGamePlayer,
@@ -84,6 +91,8 @@ func (s *LineupRecommendService) buildRecommendTxPlayerIDMap(
 	return result, summary
 }
 
+// matchNBAGamePlayerToTxLineupPlayer 将 NBA 球员与腾讯阵容中的球员匹配。
+// 优先英文名精确匹配，其次中文名精确匹配，最后模糊匹配。
 func matchNBAGamePlayerToTxLineupPlayer(
 	player entity.NBAGamePlayer,
 	lineupPlayers []struct {
@@ -136,6 +145,7 @@ func matchNBAGamePlayerToTxLineupPlayer(
 	return 0, false
 }
 
+// normalizeLocalizedPlayerName 标准化中文版球员姓名（去除标点和空格）。
 func normalizeLocalizedPlayerName(name string) string {
 	replacer := strings.NewReplacer(
 		".", "",
@@ -146,6 +156,7 @@ func normalizeLocalizedPlayerName(name string) string {
 	return strings.ToLower(strings.TrimSpace(replacer.Replace(name)))
 }
 
+// parseUintOrZero 将字符串解析为 uint，解析失败返回 0。
 func parseUintOrZero(value string) uint {
 	n, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
 	if err != nil {
@@ -154,6 +165,8 @@ func parseUintOrZero(value string) uint {
 	return uint(n)
 }
 
+// buildDVPFactorMap 构建 DVP（Defensive Value Per position）因子映射。
+// 统计每支球队面对各位置球员时的历史战力均值，与联盟均值对比得出 DVP 因子。
 func (s *LineupRecommendService) buildDVPFactorMap(
 	allPlayers []entity.NBAGamePlayer,
 	txPlayerIDMap map[uint]uint,
@@ -226,6 +239,7 @@ func (s *LineupRecommendService) buildDVPFactorMap(
 	return result
 }
 
+// getOpponentTeamCode 获取球员在同一场比赛中的对手球队代码。
 func (s *LineupRecommendService) getOpponentTeamCode(player entity.NBAGamePlayer, allPlayers []entity.NBAGamePlayer) string {
 	for _, p := range allPlayers {
 		if p.MatchID == player.MatchID && p.NBATeamID != player.NBATeamID {

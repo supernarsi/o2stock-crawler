@@ -1,3 +1,16 @@
+// lineup_recommend_factors.go 包含球员战力预测中使用的所有因子计算函数。
+// 每个因子返回以 1.0 为中性值的乘数：
+// - >1.0 表示正面影响（提升预测战力）
+// - <1.0 表示负面影响（降低预测战力）
+// 主要因子类别：
+// - 可用性（resolveAvailabilityScore）、状态趋势（calcStatusTrend）
+// - 对手匹配（calcMatchupFactor*, calcHistoryFactor, calcOpponentDefenseAnchorFactor）
+// - 球队上下文（calcTeamContextFactor）、主客场（calcHomeAwayFactor）
+// - 上场时间（calcMinutesFactor）、使用率（calcUsageFactor）
+// - 稳定性（calcStabilityFactor）、防守成长（calcDefenseUpsideFactor）
+// - 角色安全（calcRoleSecurityFactor）、数据可靠性（calcDataReliabilityFactor）
+// - 赛程疲劳（calcFatigueFactor）、球员原型（calcArchetypeFactor）
+// - 保守估值（calcConservativePower）、明星保底（applyStableStarLift）
 package service
 
 import (
@@ -7,6 +20,8 @@ import (
 	"o2stock-crawler/internal/entity"
 )
 
+// resolveAvailabilityScore 计算球员出场可用性分数 [0, 1]。
+// CombatPower 为 0 直接返回 0（未上场），否则根据伤病状态调整。
 func resolveAvailabilityScore(
 	player entity.NBAGamePlayer,
 	injuryMap map[uint]crawler.InjuryReport,
@@ -21,6 +36,7 @@ func resolveAvailabilityScore(
 	return 1.0
 }
 
+// calcStatusTrend 计算近期状态趋势因子，综合 DB 历史均值和近期比赛数据。
 func calcStatusTrend(dbPlayer *entity.Player, stats []entity.PlayerGameStats) float64 {
 	dbTrend := 1.0
 	if dbPlayer != nil && dbPlayer.PowerPer10 > 0 && dbPlayer.PowerPer5 > 0 {
@@ -57,6 +73,7 @@ func calcStatusTrend(dbPlayer *entity.Player, stats []entity.PlayerGameStats) fl
 	return clamp(dbTrend*(1-recentWeight)+recentTrend*recentWeight, 0.88, 1.12)
 }
 
+// clampDynamicMultiplier 根据样本数限制动态乘数范围，样本越少限制越严。
 func clampDynamicMultiplier(multiplier float64, statCount int) float64 {
 	if statCount >= 8 {
 		return clamp(multiplier, 0.80, 1.18)
@@ -70,6 +87,8 @@ func clampDynamicMultiplier(multiplier float64, statCount int) float64 {
 	return clamp(multiplier, 0.58, 1.05)
 }
 
+// shrinkTowardsOne 将因子值向 1.0 收缩，收缩程度由信心度 confidence 控制。
+// confidence=0 时完全收缩到 1.0，confidence=1 时保持原值。使用平方压缩低信心区域。
 func shrinkTowardsOne(value, confidence float64) float64 {
 	// 调整收缩逻辑：高信心时保持更多原始值
 	conf := clamp(confidence, 0.0, 1.0)
@@ -77,6 +96,7 @@ func shrinkTowardsOne(value, confidence float64) float64 {
 	return 1.0 + (value-1.0)*conf*conf
 }
 
+// calcMatchupFactor 计算简化版对手匹配因子（仅使用历史交手数据）。
 func (s *LineupRecommendService) calcMatchupFactor(stats []entity.PlayerGameStats, opponentTeam string, baseValue float64) float64 {
 	targetTeam := normalizeTeamCode(opponentTeam)
 	if targetTeam == "" {
@@ -88,6 +108,8 @@ func (s *LineupRecommendService) calcMatchupFactor(stats []entity.PlayerGameStat
 	return s.calcHistoryFactor(stats, opponentTeam, baseValue)
 }
 
+// calcMatchupFactorWithContext 计算综合对手匹配因子，融合防守效率、节奏、DVP、历史交手、
+// 近期状态、篮下威慑和外线干扰等多维度指标。
 func (s *LineupRecommendService) calcMatchupFactorWithContext(
 	stats []entity.PlayerGameStats,
 	opponentTeam string,
@@ -183,6 +205,7 @@ func (s *LineupRecommendService) calcMatchupFactorWithContext(
 	}
 }
 
+// normalizePositionGroup 将位置编号标准化为组：0=前场（中锋/前锋），1=后场（后卫）。
 func normalizePositionGroup(position uint) uint {
 	if position == 1 {
 		return 1
@@ -190,6 +213,8 @@ func normalizePositionGroup(position uint) uint {
 	return 0
 }
 
+// calcHistoryFactor 根据球员对阵特定对手的历史战力表现计算因子。
+// 样本数越多置信度越高，因子范围越宽。
 func (s *LineupRecommendService) calcHistoryFactor(stats []entity.PlayerGameStats, opponentTeam string, baseValue float64) float64 {
 	if len(stats) == 0 || baseValue <= 0 {
 		return 1.0
@@ -240,6 +265,8 @@ func countVsTeamGames(stats []entity.PlayerGameStats, targetTeam string) int {
 	return len(filterVsTeamGames(stats, targetTeam))
 }
 
+// calcOpponentDefenseAnchorFactor 评估对手阵中防守核心球员对当前球员的压制效果。
+// 根据对手的盖帽、抢断、上场时间等判断防守锚点强度。
 func (s *LineupRecommendService) calcOpponentDefenseAnchorFactor(
 	player entity.NBAGamePlayer,
 	allPlayers []entity.NBAGamePlayer,
@@ -317,6 +344,8 @@ func (s *LineupRecommendService) calcOpponentDefenseAnchorFactor(
 	return clamp(1.0-penalty, 0.88, 1.02)
 }
 
+// softenEliteFrontcourtNegativeFactors 对高价值前场球员软化负面匹配因子和防守锚点因子。
+// 当前场球员基础值高、上场时间多、使用率高时，减少负面因子的惩罚力度。
 func softenEliteFrontcourtNegativeFactors(
 	player entity.NBAGamePlayer,
 	baseValue float64,
@@ -356,6 +385,8 @@ func softenEliteFrontcourtNegativeFactors(
 	return clamp(matchupFactor, 0.90, 1.14), clamp(defenseAnchorFactor, 0.90, 1.03)
 }
 
+// calcArchetypeFactor 根据球员原型（前场廉价工兵、后场低薪球员等）调整预测值。
+// 识别不同类型球员的价值特征，给予相应的加成或惩罚。
 func calcArchetypeFactor(
 	player entity.NBAGamePlayer,
 	baseValue float64,
@@ -421,6 +452,8 @@ func calcArchetypeFactor(
 	return clamp(factor, 0.90, 1.08)
 }
 
+// adjustOptimizedPowerForArchetype 根据球员原型调整保守估值与预测值之间的差距。
+// 高价值前场球员在满足条件时可获得更多预测上行空间。
 func adjustOptimizedPowerForArchetype(
 	player entity.NBAGamePlayer,
 	predictedPower float64,
@@ -448,6 +481,8 @@ func adjustOptimizedPowerForArchetype(
 	return clamp(optimizedPower, predictedPower*0.62, predictedPower)
 }
 
+// calcTeamContextFactor 计算球队阵容上下文因子。
+// 当同队核心球员缺阵时，在场球员可能获得更多使用机会（正面影响）。
 func (s *LineupRecommendService) calcTeamContextFactor(
 	player entity.NBAGamePlayer,
 	allPlayers []entity.NBAGamePlayer,
@@ -474,6 +509,8 @@ func (s *LineupRecommendService) calcTeamContextFactor(
 	return clamp(1.0+absentRatio*0.25, 1.0, 1.15)
 }
 
+// calcHomeAwayFactor 计算主客场因子。
+// 优先使用该球员历史主客场战力差异，样本不足时使用默认值（主场+2%/客场-2%）。
 func (s *LineupRecommendService) calcHomeAwayFactor(player entity.NBAGamePlayer, txPlayerID uint, gameStatsMap map[uint][]entity.PlayerGameStats) float64 {
 	defaultFactor := 1.0
 	if player.IsHome {
@@ -519,6 +556,8 @@ func (s *LineupRecommendService) calcHomeAwayFactor(player entity.NBAGamePlayer,
 	return defaultFactor
 }
 
+// calcMinutesFactor 计算上场时间趋势因子。
+// 比较近 3 场与赛季/长期均值，判断上场时间分配是否增加。
 func (s *LineupRecommendService) calcMinutesFactor(stats []entity.PlayerGameStats, seasonStats *entity.PlayerSeasonStats) float64 {
 	if len(stats) == 0 {
 		return 1.0
@@ -554,6 +593,8 @@ func (s *LineupRecommendService) calcMinutesFactor(stats []entity.PlayerGameStat
 	return clamp(recentAvg/baseline, 0.90, 1.10)
 }
 
+// calcUsageFactor 计算使用率趋势因子。
+// 使用代理指标（出手+罚球+助攻）比较近 3 场与近 10 场均值。
 func (s *LineupRecommendService) calcUsageFactor(stats []entity.PlayerGameStats) float64 {
 	if len(stats) < 3 {
 		return 1.0
@@ -580,6 +621,8 @@ func (s *LineupRecommendService) calcUsageFactor(stats []entity.PlayerGameStats)
 	return clamp(recentAvg/totalAvg, 0.92, 1.10)
 }
 
+// calcDefenseUpsideFactor 计算防守成长因子。
+// 比较近期 stocks（盖帽+抢断）与赛季基线，前场球员权重偏向盖帽。
 func (s *LineupRecommendService) calcDefenseUpsideFactor(
 	stats []entity.PlayerGameStats,
 	seasonStats *entity.PlayerSeasonStats,
@@ -632,6 +675,8 @@ func (s *LineupRecommendService) calcDefenseUpsideFactor(
 	return ratio
 }
 
+// calcRoleSecurityFactor 计算角色安全因子。
+// 评估球员在轮换中的地位稳定性：上场时间波动大、频繁低上场时间意味着角色不安全。
 func (s *LineupRecommendService) calcRoleSecurityFactor(
 	stats []entity.PlayerGameStats,
 	seasonStats *entity.PlayerSeasonStats,
@@ -707,6 +752,8 @@ func (s *LineupRecommendService) calcRoleSecurityFactor(
 	return clamp(factor, 0.72, 1.05)
 }
 
+// calcDataReliabilityFactor 计算数据可靠性因子。
+// 综合历史比赛样本数、DB 锚定数据和赛季数据的可用性评估预测可信度。
 func calcDataReliabilityFactor(
 	statCount int,
 	dbPlayer *entity.Player,
@@ -757,6 +804,8 @@ func calcDataReliabilityFactor(
 	return clamp(factor, 0.42, 1.02)
 }
 
+// calcConservativePower 计算保守估值，融合预测值与历史下限（均值-0.85*标准差）。
+// 用于阵容优化时提供更稳健的选人依据。
 func (s *LineupRecommendService) calcConservativePower(
 	predicted float64,
 	stats []entity.PlayerGameStats,
@@ -797,6 +846,8 @@ func (s *LineupRecommendService) calcConservativePower(
 	return clamp(conservative, predicted*0.60, predicted*1.02)
 }
 
+// calcStabilityFactor 计算表现稳定性因子。
+// 基于近 5 场变异系数（CV），CV 越低越稳定、因子越高。
 func (s *LineupRecommendService) calcStabilityFactor(stats []entity.PlayerGameStats) float64 {
 	window := min(5, len(stats))
 	if window < 3 {
@@ -834,6 +885,8 @@ func (s *LineupRecommendService) calcStabilityFactor(stats []entity.PlayerGameSt
 	}
 }
 
+// calcFatigueFactor 计算赛程疲劳因子。
+// 背靠背（间隔1天）时施加最大惩罚，4天内3场也给予额外惩罚。
 func (s *LineupRecommendService) calcFatigueFactor(stats []entity.PlayerGameStats, gameDate string) float64 {
 	if len(stats) == 0 {
 		return 1.0
@@ -873,6 +926,8 @@ func (s *LineupRecommendService) calcFatigueFactor(stats []entity.PlayerGameStat
 	return clamp(factor, 0.88, 1.00)
 }
 
+// calcPredictiveFactorConfidence 计算因子系统整体置信度 [0.24, 0.94]。
+// 综合样本数、波动性、稳定性、角色安全性和数据可靠性。
 func calcPredictiveFactorConfidence(
 	profile recentPowerProfile,
 	stabilityFactor float64,
@@ -894,6 +949,8 @@ func calcPredictiveFactorConfidence(
 	return clamp(confidence, 0.24, 0.94)
 }
 
+// applyStableStarLift 对满足条件的稳定高薪前场明星球员施加保底提升。
+// 基础值≥46、工资≥35、多项因子达标时，将预测值提升至基础值附近。
 func applyStableStarLift(
 	player entity.NBAGamePlayer,
 	predictedPower float64,

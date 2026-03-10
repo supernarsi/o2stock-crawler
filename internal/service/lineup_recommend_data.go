@@ -1,3 +1,9 @@
+// lineup_recommend_data.go 负责推荐流程所需的数据加载层，包括：
+// - 伤病数据获取与快照持久化（fetchInjuryMap, persistInjurySnapshots）
+// - DB 球员信息加载（loadDBPlayerMap）
+// - NBA↔TX 薪资表球员 ID 映射（loadSalaryTxPlayerIDMap）
+// - 历史比赛数据批量加载（loadGameStatsMap, loadSeasonStatsMap）
+// - 球队防守指标聚合（loadTeamMatchupMetrics, buildTeamMatchupMetricsFromAggregates）
 package service
 
 import (
@@ -14,7 +20,8 @@ import (
 	"o2stock-crawler/internal/entity"
 )
 
-// 预测流程所需的数据准备与因子计算函数。
+// fetchInjuryMap 从 ESPN 获取实时伤病报告，并与候选球员列表匹配构建 NBAPlayerID → InjuryReport 映射。
+// 同时返回快照行用于后续持久化。
 func (s *LineupRecommendService) fetchInjuryMap(
 	ctx context.Context,
 	players []entity.NBAGamePlayer,
@@ -56,6 +63,7 @@ func (s *LineupRecommendService) fetchInjuryMap(
 	return result, snapshots, nil
 }
 
+// loadInjurySnapshotMap 从数据库加载历史伤病快照（用于历史日期推荐模式）。
 func (s *LineupRecommendService) loadInjurySnapshotMap(
 	ctx context.Context,
 	gameDate string,
@@ -86,6 +94,7 @@ func (s *LineupRecommendService) loadInjurySnapshotMap(
 	return result, true
 }
 
+// persistInjurySnapshots 将当日伤病快照替换保存到数据库。
 func (s *LineupRecommendService) persistInjurySnapshots(
 	ctx context.Context,
 	gameDate string,
@@ -100,6 +109,7 @@ func (s *LineupRecommendService) persistInjurySnapshots(
 	return repo.ReplaceByGameDate(ctx, gameDate, rows)
 }
 
+// pickInjuryMatchedPlayer 将伤病报告与候选球员匹配，优先精确匹配英文名，其次模糊匹配。
 func pickInjuryMatchedPlayer(
 	report crawler.InjuryReport,
 	players []entity.NBAGamePlayer,
@@ -132,6 +142,7 @@ func pickInjuryMatchedPlayer(
 	return fuzzyMatches[0].NBAPlayerID, true
 }
 
+// selectPlayerByTeamCode 从候选球员中按球队代码选择第一个匹配的球员。
 func selectPlayerByTeamCode(players []entity.NBAGamePlayer, teamCode string) (uint, bool) {
 	if teamCode == "" {
 		return 0, false
@@ -144,6 +155,7 @@ func selectPlayerByTeamCode(players []entity.NBAGamePlayer, teamCode string) (ui
 	return 0, false
 }
 
+// rebalanceAvailabilityScore 根据伤病状态微调可用性分数，避免某些状态被过度惩罚。
 func rebalanceAvailabilityScore(status string, availabilityScore float64) float64 {
 	if availabilityScore <= 0 || availabilityScore >= 1 {
 		return availabilityScore
@@ -165,6 +177,7 @@ func rebalanceAvailabilityScore(status string, availabilityScore float64) float6
 	}
 }
 
+// loadDBPlayerMap 从 players 表批量加载 DB 球员记录（含历史场均战力等锚定数据）。
 func (s *LineupRecommendService) loadDBPlayerMap(ctx context.Context, gamePlayers []entity.NBAGamePlayer) map[uint]*entity.Player {
 	result := make(map[uint]*entity.Player)
 
@@ -199,6 +212,7 @@ func (s *LineupRecommendService) loadDBPlayerMap(ctx context.Context, gamePlayer
 	return result
 }
 
+// loadSalaryTxPlayerIDMap 从 nba_player_salary 表加载 NBAPlayerID → TxPlayerID 映射。
 func (s *LineupRecommendService) loadSalaryTxPlayerIDMap(ctx context.Context, gamePlayers []entity.NBAGamePlayer) map[uint]uint {
 	result := make(map[uint]uint)
 	nbaIDs := collectCandidateNBAPlayerIDs(gamePlayers)
@@ -222,6 +236,7 @@ func (s *LineupRecommendService) loadSalaryTxPlayerIDMap(ctx context.Context, ga
 	return result
 }
 
+// stripPredictAnchors 清除 DB 球员的 PowerPer5/PowerPer10 锚定数据（用于回测场景禁用锚定）。
 func stripPredictAnchors(dbPlayerMap map[uint]*entity.Player) map[uint]*entity.Player {
 	if len(dbPlayerMap) == 0 {
 		return dbPlayerMap
@@ -239,6 +254,8 @@ func stripPredictAnchors(dbPlayerMap map[uint]*entity.Player) map[uint]*entity.P
 	return result
 }
 
+// loadGameStatsMap 批量加载 TX 球员近 10 场比赛数据，按比赛日期倒序排列。
+// 支持历史模式（仅查询 gameDate 之前的数据）。
 func (s *LineupRecommendService) loadGameStatsMap(
 	ctx context.Context,
 	repo *repositories.StatsRepository,
@@ -289,6 +306,7 @@ func (s *LineupRecommendService) loadGameStatsMap(
 	return statsMap
 }
 
+// loadSeasonStatsMap 批量加载 TX 球员本赛季汇总数据。历史模式下跳过。
 func (s *LineupRecommendService) loadSeasonStatsMap(
 	ctx context.Context,
 	repo *repositories.StatsRepository,
@@ -326,6 +344,7 @@ func (s *LineupRecommendService) loadSeasonStatsMap(
 	return seasonStatsMap
 }
 
+// loadTeamMatchupMetrics 加载球队防守效率/节奏/近期状态/篮下威慑/外线干扰指标。
 func (s *LineupRecommendService) loadTeamMatchupMetrics(
 	ctx context.Context,
 	repo *repositories.StatsRepository,
@@ -352,6 +371,8 @@ func (s *LineupRecommendService) loadTeamMatchupMetrics(
 	return buildTeamMatchupMetricsFromAggregates(rows)
 }
 
+// buildTeamMatchupMetricsFromAggregates 从聚合数据构建球队防守指标映射。
+// 计算每支球队的场均失分、节奏、近期趋势、盖帽威慑和抢断干扰与联盟均值的比率。
 func buildTeamMatchupMetricsFromAggregates(rows []repositories.TeamGameAggregate) map[string]teamMatchupMetric {
 	type teamGameSample struct {
 		Date          time.Time
