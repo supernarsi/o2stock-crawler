@@ -31,29 +31,10 @@ type TxNBAConfig struct {
 // LoadTxNBAConfigFromEnv loads TxNBA API URLs from environment variables.
 func LoadTxNBAConfigFromEnv() *TxNBAConfig {
 	matchListURL := os.Getenv("TX_NBA_MATCH_LIST_URL")
-	if matchListURL == "" {
-		matchListURL = "https://app.sports.qq.com/match/list?columnId=100000&unitType=&appvid=&flag=%d&date=%s"
-	}
-
 	matchStatURL := os.Getenv("TX_NBA_MATCH_STAT_URL")
-	if matchStatURL == "" {
-		matchStatURL = "https://app.sports.qq.com/stats/matchStat?mid=%s&appvid=&from=videoApp"
-	}
-
 	teamLineupURL := os.Getenv("TX_NBA_TEAM_LINEUP_URL")
-	if teamLineupURL == "" {
-		teamLineupURL = "https://matchweb.sports.qq.com/match/api/v2/team/lineup?competitionId=100000&teamId=%s"
-	}
-
 	playerInfoURL := os.Getenv("TX_NBA_PLAYER_INFO_URL")
-	if playerInfoURL == "" {
-		playerInfoURL = "https://matchweb.sports.qq.com/playerUtil/playerInfo?competitionId=100000&playerId=%s"
-	}
-
 	playerStatsURL := os.Getenv("TX_NBA_PLAYER_STATS_URL")
-	if playerStatsURL == "" {
-		playerStatsURL = "https://app.sports.qq.com/match/api/v2/player/stats?playerId=%s&competitionId=100000&moduleIds=statList&appvid="
-	}
 
 	return &TxNBAConfig{
 		MatchListURL:   matchListURL,
