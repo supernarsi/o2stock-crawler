@@ -20,8 +20,9 @@ type Config struct {
 	JWTSecret   string
 
 	// Signature config
-	SignatureSecret string
-	EnableSignature bool
+	SignatureSecret   string
+	EnableSignature   bool
+	SignatureDebugKey string
 
 	// Debug mode for SQL logging
 	Debug bool
@@ -53,7 +54,8 @@ func LoadConfigFromEnv() (*Config, error) {
 	jwtSecret := getenvDefault("JWT_SECRET", "default_secret")
 
 	signatureSecret := getenvDefault("SIGNATURE_SECRET", "default_sig_secret")
-	enableSignature := getenvDefault("ENABLE_SIGNATURE", "false") == "true"
+	enableSignature := getenvDefault("ENABLE_SIGNATURE", "true") == "true"
+	signatureDebugKey := getenvDefault("SIGNATURE_DEBUG_KEY", "")
 	debug := getenvDefault("DEBUG", "false") == "true"
 
 	if host == "" || port == "" || user == "" || dbname == "" {
@@ -61,17 +63,18 @@ func LoadConfigFromEnv() (*Config, error) {
 	}
 
 	return &Config{
-		Host:            host,
-		Port:            port,
-		User:            user,
-		Password:        pass,
-		DBName:          dbname,
-		WxAppID:         wxAppID,
-		WxAppSecret:     wxAppSecret,
-		JWTSecret:       jwtSecret,
-		SignatureSecret: signatureSecret,
-		EnableSignature: enableSignature,
-		Debug:           debug,
+		Host:              host,
+		Port:              port,
+		User:              user,
+		Password:          pass,
+		DBName:            dbname,
+		WxAppID:           wxAppID,
+		WxAppSecret:       wxAppSecret,
+		JWTSecret:         jwtSecret,
+		SignatureSecret:   signatureSecret,
+		EnableSignature:   enableSignature,
+		SignatureDebugKey: signatureDebugKey,
+		Debug:             debug,
 	}, nil
 }
 

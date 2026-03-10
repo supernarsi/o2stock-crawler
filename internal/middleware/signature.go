@@ -66,7 +66,7 @@ func SignatureMiddleware(cfg *db.Config) Middleware {
 			}
 
 			// Debug bypass
-			if r.Header.Get("x-debug") == "42" {
+			if cfg.SignatureDebugKey != "" && r.Header.Get("x-debug") == cfg.SignatureDebugKey {
 				log.Println("[DEBUG] Signature verification skipped due to xdebug header")
 				next(w, r)
 				return
