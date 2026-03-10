@@ -33,7 +33,7 @@ func main() {
 	}
 	defer database.Close()
 
-	apiCtl := controller.NewAPI(database)
+	apiCtl := controller.NewAPI(database, dbCfg)
 	authCtl := controller.NewAuthController(database, dbCfg)
 
 	// 定义全局中间件（Client 最先执行，便于后续从 ctx 获取）
@@ -60,7 +60,7 @@ func main() {
 	router.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)
 	router.RegisterAPI("/ipi/player", apiCtl.IPIPlayer(), http.MethodGet)
 
-	// 内部调试：推送指定用户的球员回本订阅消息（需要 DEBUG=true 且 Header: x-debug=42）
+	// 内部调试：推送指定用户的球员回本订阅消息（需要 DEBUG=true 且 Header: x-debug=SIGNATURE_DEBUG_KEY）
 	router.RegisterAPI("/debug/wechat/breakeven", apiCtl.DebugSendPlayerBreakEvenNotify(), http.MethodPost)
 
 	// --- 需要鉴权的接口 --- //

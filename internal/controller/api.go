@@ -9,6 +9,7 @@ import (
 // API 是控制器的主要结构体
 type API struct {
 	db                *db.DB
+	cfg               *db.Config
 	playersService    *service.PlayersService
 	userPlayerService *service.UserPlayerService
 	userItemService   *service.UserItemService
@@ -19,9 +20,10 @@ type API struct {
 }
 
 // NewAPI 创建新的 API 控制器实例
-func NewAPI(database *db.DB) *API {
+func NewAPI(database *db.DB, cfg *db.Config) *API {
 	return &API{
 		db:             database,
+		cfg:            cfg,
 		playersService: service.NewPlayersService(database),
 		userPlayerService: service.NewUserPlayerService(
 			database,
