@@ -53,9 +53,12 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 
 	valid := allValid
 
+	// 增加状态保留数量，提升阵容多样性
+	// 推荐场景：保留更多状态以探索不同组合
+	// 回测场景：保持较小状态限制以提高性能
 	stateLimit := topN
 	if !allowNonPositive {
-		stateLimit = max(topN*12, 36)
+		stateLimit = max(topN*18, 54) // 从 topN*12 提升到 topN*18
 	}
 
 	log.Printf("DP 求解: 候选球员 %d 人, 工资帽 %d, 选 %d 人, 输出 Top %d", len(valid), salaryCap, pickCount, topN)
@@ -184,9 +187,65 @@ func calcLineupStructureFactor(lineup []PlayerCandidate) float64 {
 	}
 
 	cheapCount := 0
+	lowSalaryHighPowerCount := 0
+	explosiveCount := 0
+	valueRatioCount := 0
+	totalValueRatio := 0.0
+
 	for _, c := range lineup {
 		if c.Player.Salary <= 10 {
 			cheapCount++
+		}
+		// 识别低薪高能球员（工资≤12 且预测战力≥35，或工资≤10 且预测战力≥30）
+		if (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
+			(c.Player.Salary <= 10 && c.Prediction.PredictedPower >= 30) {
+			lowSalaryHighPowerCount++
+		}
+		// 识别性价比球员（战力/工资比值≥3.0）
+		if c.Player.Salary > 0 {
+			valueRatio := c.Prediction.PredictedPower / float64(c.Player.Salary)
+			totalValueRatio += valueRatio
+			if valueRatio >= 3.0 {
+				valueRatioCount++
+			}
+		}
+		// 识别爆发型球员（Upside3≥1.35 或有爆发潜力）
+		if c.Prediction.Upside3 >= 1.35 {
+			explosiveCount++
+		}
+	}
+
+	avgValueRatio := totalValueRatio / 5.0
+
+	// 高性价比阵容：平均性价比≥3.5 且有 2 个以上高性价比球员，给予奖励
+	if avgValueRatio >= 3.5 && valueRatioCount >= 2 {
+		return 1.02
+	}
+	if avgValueRatio >= 3.2 && valueRatioCount >= 2 {
+		return 1.0
+	}
+
+	// 有爆发型球员或高性价比球员时，减少惩罚（这些是潜在的价值 picks）
+	if explosiveCount > 0 || valueRatioCount >= 2 {
+		switch {
+		case cheapCount <= 2:
+			return 1.0
+		case cheapCount == 3:
+			return 0.98
+		default:
+			return 0.95
+		}
+	}
+
+	// 有低薪高能球员时，减少惩罚（这些是价值 picks）
+	if lowSalaryHighPowerCount > 0 {
+		switch {
+		case cheapCount <= 2:
+			return 1.0
+		case cheapCount == 3:
+			return 0.97
+		default:
+			return 0.93
 		}
 	}
 
@@ -194,9 +253,11 @@ func calcLineupStructureFactor(lineup []PlayerCandidate) float64 {
 	case cheapCount <= 1:
 		return 1.0
 	case cheapCount == 2:
-		return 0.97
+		return 0.98
+	case cheapCount == 3:
+		return 0.95
 	default:
-		return 0.92
+		return 0.88
 	}
 }
 

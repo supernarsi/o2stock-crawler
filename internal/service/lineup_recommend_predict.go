@@ -62,6 +62,8 @@ type recentPowerProfile struct {
 	Median5     float64
 	Volatility  float64
 	SampleCount int
+	Upside3     float64 // 近 3 场最高表现与 Avg3 的比率
+	Upside5     float64 // 近 5 场最高表现与 Avg5 的比率
 }
 
 // predictPower 计算单个候选球员的预测战力及因子明细。
@@ -164,6 +166,20 @@ func (s *LineupRecommendService) predictPower(
 		fatigueFactor = s.calcFatigueFactor(stats, player.GameDate)
 	}
 	dataReliabilityFactor = calcDataReliabilityFactor(len(stats), dbPlayer, seasonStats, player.Salary)
+
+	// 新增因子：多面手、爆发力、稳定保底
+	versatilityFactor := 1.0
+	explosivenessFactor := 1.0
+	stableFloorFactor := 1.0
+	if txPlayerID > 0 && len(stats) > 0 {
+		// 多面手因子：基于最近 5 场场均数据
+		versatilityFactor = calcRecentVersatilityFactor(stats, player.Position)
+		// 爆发力因子：基于历史表现
+		explosivenessFactor = calcExplosivenessFactor(stats)
+		// 稳定保底因子：识别稳定但上限低的球员
+		stableFloorFactor = calcStableFloorFactor(stats)
+	}
+
 	factorConfidence := calcPredictiveFactorConfidence(recentProfile, stabilityFactor, roleSecurityFactor, dataReliabilityFactor)
 
 	statusTrend = shrinkTowardsOne(statusTrend, factorConfidence*0.65)
@@ -175,6 +191,9 @@ func (s *LineupRecommendService) predictPower(
 	defenseUpsideFactor = shrinkTowardsOne(defenseUpsideFactor, factorConfidence*0.52)
 	defenseAnchorFactor = shrinkTowardsOne(defenseAnchorFactor, factorConfidence*0.75)
 	fatigueFactor = shrinkTowardsOne(fatigueFactor, factorConfidence*0.78)
+	versatilityFactor = shrinkTowardsOne(versatilityFactor, factorConfidence*0.55)
+	explosivenessFactor = shrinkTowardsOne(explosivenessFactor, factorConfidence*0.50)
+	stableFloorFactor = shrinkTowardsOne(stableFloorFactor, factorConfidence*0.60)
 
 	matchupFactor, defenseAnchorFactor = softenEliteFrontcourtNegativeFactors(
 		player,
@@ -195,6 +214,7 @@ func (s *LineupRecommendService) predictPower(
 		roleSecurityFactor,
 		dataReliabilityFactor,
 		teamContextFactor,
+		recentProfile,
 	)
 	archetypeFactor = shrinkTowardsOne(archetypeFactor, factorConfidence*0.48)
 
@@ -202,10 +222,12 @@ func (s *LineupRecommendService) predictPower(
 	gameRiskFactor := 1.0 // NBA 室内运动，默认无风险
 
 	// Step 9: 综合计算
+	// 新增因子：多面手、爆发力、稳定保底
 	dynamicMultiplier := statusTrend * matchupFactor * homeAwayFactor * teamContextFactor *
 		minutesFactor * usageFactor * stabilityFactor * defenseUpsideFactor *
 		archetypeFactor * roleSecurityFactor * dataReliabilityFactor *
-		defenseAnchorFactor * fatigueFactor
+		defenseAnchorFactor * fatigueFactor * versatilityFactor *
+		explosivenessFactor * stableFloorFactor
 	dynamicMultiplier = clampDynamicMultiplier(dynamicMultiplier, len(stats))
 
 	predictedPower := baseValue * availabilityScore * dynamicMultiplier * gameRiskFactor
@@ -266,6 +288,11 @@ func (s *LineupRecommendService) predictPower(
 		TeamExposureFactor:    1.0,
 		FatigueFactor:         roundTo(fatigueFactor, 2),
 		GameRiskFactor:        roundTo(gameRiskFactor, 2),
+		Upside3:               recentProfile.Upside3,
+		Upside5:               recentProfile.Upside5,
+		VersatilityFactor:     roundTo(versatilityFactor, 2),
+		ExplosivenessFactor:   roundTo(explosivenessFactor, 2),
+		StableFloorFactor:     roundTo(stableFloorFactor, 2),
 	}
 }
 
@@ -423,9 +450,14 @@ func rebalanceAvailabilityScore(status string, availabilityScore float64) float6
 	normalized := strings.ToLower(strings.TrimSpace(status))
 	switch {
 	case normalized == "day-to-day":
-		return clamp(math.Max(availabilityScore, 0.78), 0.0, 1.0)
+		// 上调下限，避免过度悲观
+		return clamp(math.Max(availabilityScore, 0.85), 0.0, 1.0)
 	case strings.Contains(normalized, "questionable"):
-		return clamp(math.Max(availabilityScore, 0.68), 0.0, 1.0)
+		// 上调下限，减少过度折扣
+		return clamp(math.Max(availabilityScore, 0.78), 0.0, 1.0)
+	case strings.Contains(normalized, "probable"):
+		// probable 状态给予更高下限
+		return clamp(math.Max(availabilityScore, 0.92), 0.0, 1.0)
 	default:
 		return availabilityScore
 	}
@@ -1102,6 +1134,30 @@ func calcRecentPowerProfile(stats []entity.PlayerGameStats) recentPowerProfile {
 		profile.Volatility = math.Sqrt(variance/float64(len(window))) / mean
 	}
 
+	// 计算爆发系数：近 3 场/近 5 场最高表现与均值的比率
+	if len(powers) >= 3 {
+		max3 := powers[0]
+		for _, p := range powers[:min(3, len(powers))] {
+			if p > max3 {
+				max3 = p
+			}
+		}
+		if profile.Avg3 > 0 {
+			profile.Upside3 = max3 / profile.Avg3
+		}
+	}
+	if len(powers) >= 5 {
+		max5 := powers[0]
+		for _, p := range powers[:min(5, len(powers))] {
+			if p > max5 {
+				max5 = p
+			}
+		}
+		if profile.Avg5 > 0 {
+			profile.Upside5 = max5 / profile.Avg5
+		}
+	}
+
 	return profile
 }
 
@@ -1232,14 +1288,15 @@ func calcStatusTrend(dbPlayer *entity.Player, stats []entity.PlayerGameStats) fl
 			avg3 := recent3 / float64(count3)
 			avg10 := recent10 / float64(count10)
 			if avg10 > 0 {
-				recentTrend = clamp(avg3/avg10, 0.90, 1.10)
+				recentTrend = clamp(avg3/avg10, 0.88, 1.12)
 			}
 		}
 	}
 
+	// 增加近期状态权重：从 0.40 提升到 0.50
 	recentWeight := 0.0
 	if len(stats) >= 5 {
-		recentWeight = 0.40
+		recentWeight = 0.50
 	}
 	return clamp(dbTrend*(1-recentWeight)+recentTrend*recentWeight, 0.88, 1.12)
 }
@@ -1279,14 +1336,15 @@ func calibratePredictedPower(predicted, baseValue float64, profile recentPowerPr
 		return modelWeight*predicted + (1-modelWeight)*baseValue
 	}
 
-	robustAnchor := 0.60*anchor + 0.25*profile.Median5 + 0.15*baseValue
+	// 增加近期 3 场 avg 的权重，减少 10 场 avg 的权重
+	robustAnchor := 0.50*anchor + 0.35*profile.Avg3 + 0.15*profile.Median5
 	reliability := clamp(float64(min(statCount, 10))/10.0, 0.40, 1.0)
 	volatilityPenalty := clamp((profile.Volatility-0.18)/(0.50-0.18), 0.0, 1.0)
-	modelWeight := 0.58 + 0.18*reliability - 0.10*volatilityPenalty
-	modelWeight = clamp(modelWeight, 0.52, 0.82)
+	modelWeight := 0.55 + 0.20*reliability - 0.08*volatilityPenalty
+	modelWeight = clamp(modelWeight, 0.50, 0.80)
 	anchored := modelWeight*predicted + (1-modelWeight)*robustAnchor
-	lower := robustAnchor * (0.82 - 0.03*volatilityPenalty)
-	upper := robustAnchor * (1.28 - 0.06*volatilityPenalty)
+	lower := robustAnchor * (0.80 - 0.02*volatilityPenalty)
+	upper := robustAnchor * (1.32 - 0.08*volatilityPenalty)
 	if upper < lower {
 		upper = lower
 	}
@@ -1352,8 +1410,10 @@ func applyStableStarLift(
 }
 
 func shrinkTowardsOne(value, confidence float64) float64 {
+	// 调整收缩逻辑：高信心时保持更多原始值
 	conf := clamp(confidence, 0.0, 1.0)
-	return 1.0 + (value-1.0)*conf
+	// 使用平方压缩低信心区域，让高信心保持更多
+	return 1.0 + (value-1.0)*conf*conf
 }
 
 func (s *LineupRecommendService) calcMatchupFactor(stats []entity.PlayerGameStats, opponentTeam string, baseValue float64) float64 {
@@ -1645,6 +1705,7 @@ func calcArchetypeFactor(
 	roleSecurityFactor float64,
 	dataReliabilityFactor float64,
 	teamContextFactor float64,
+	profile recentPowerProfile,
 ) float64 {
 	factor := 1.0
 	positionGroup := normalizePositionGroup(player.Position)
@@ -1667,7 +1728,21 @@ func calcArchetypeFactor(
 		if stabilityFactor < 0.95 {
 			factor -= clamp((0.95-stabilityFactor)*0.25, 0.0, 0.03)
 		}
+		// 爆发型球员加成：Upside3≥1.5 时给予额外加成
+		if profile.Upside3 >= 1.5 {
+			factor += clamp((profile.Upside3-1.5)*0.08, 0.0, 0.05)
+		}
 		return clamp(factor, 0.94, 1.12)
+	}
+
+	// 非核心位置球员：识别低薪爆发型球员
+	valueRatio := 0.0
+	if player.Salary > 0 {
+		valueRatio = baseValue / float64(player.Salary)
+	}
+	// 低薪高能且有爆发力的球员给予加成
+	if player.Salary <= 15 && valueRatio >= 3.0 && profile.Upside3 >= 1.4 {
+		factor += clamp((profile.Upside3-1.4)*0.10, 0.0, 0.06)
 	}
 
 	if player.Salary <= 12 {
@@ -1682,7 +1757,7 @@ func calcArchetypeFactor(
 		factor -= clamp((teamContextFactor-1.04)*0.35, 0.0, 0.03)
 	}
 
-	return clamp(factor, 0.90, 1.05)
+	return clamp(factor, 0.90, 1.08)
 }
 
 func adjustOptimizedPowerForArchetype(

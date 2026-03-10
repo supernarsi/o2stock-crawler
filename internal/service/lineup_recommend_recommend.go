@@ -126,6 +126,7 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		})
 	}
 	log.Printf("有效球员: %d 人 (战力 > 0)", effectiveCount)
+
 	candidates = applyTeamExposurePenalty(candidates)
 
 	// 6. DP 求解最优阵容
@@ -273,6 +274,11 @@ func (s *LineupRecommendService) buildRecommendation(
 		dp.Factors.TeamExposureFactor = c.Prediction.TeamExposureFactor
 		dp.Factors.FatigueFactor = c.Prediction.FatigueFactor
 		dp.Factors.GameRiskFactor = c.Prediction.GameRiskFactor
+		dp.Factors.Upside3 = c.Prediction.Upside3
+		dp.Factors.Upside5 = c.Prediction.Upside5
+		dp.Factors.VersatilityFactor = c.Prediction.VersatilityFactor
+		dp.Factors.ExplosivenessFactor = c.Prediction.ExplosivenessFactor
+		dp.Factors.StableFloorFactor = c.Prediction.StableFloorFactor
 
 		if dbP, ok := dbPlayerMap[c.Player.NBAPlayerID]; ok {
 			dp.Factors.DbPowerPer5 = dbP.PowerPer5
@@ -388,17 +394,55 @@ func applyTeamExposurePenalty(candidates []PlayerCandidate) []PlayerCandidate {
 		teamPressureFactor := estimateTeamPressureFactor(candidates, indexes)
 		extraSecondPenalty := 1.0
 		if teamPressureFactor < 0.88 {
-			extraSecondPenalty = 0.90
+			extraSecondPenalty = 0.92
 		} else if teamPressureFactor < 0.92 {
-			extraSecondPenalty = 0.94
+			extraSecondPenalty = 0.96
+		}
+
+		// 识别低薪高能球员，减少惩罚
+		// 使用动态阈值：工资≤15 且预测战力/工资比值≥3.0 视为价值球员
+		highValueCount := 0
+		for _, idx := range indexes {
+			c := candidates[idx]
+			valueRatio := 0.0
+			if c.Player.Salary > 0 {
+				valueRatio = c.Prediction.PredictedPower / float64(c.Player.Salary)
+			}
+			// 条件 1：工资≤12 且战力≥35（传统低薪高能）
+			// 条件 2：工资≤15 且战力/工资比值≥3.5（动态价值比）
+			// 条件 3：工资≤20 且战力/工资比值≥4.0（超级价值比）
+			isHighValue := (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
+				(c.Player.Salary <= 15 && valueRatio >= 3.5) ||
+				(c.Player.Salary <= 20 && valueRatio >= 4.0)
+			if isHighValue {
+				highValueCount++
+			}
 		}
 
 		for rank, idx := range indexes {
+			c := candidates[idx]
+			valueRatio := 0.0
+			if c.Player.Salary > 0 {
+				valueRatio = c.Prediction.PredictedPower / float64(c.Player.Salary)
+			}
+			// 低薪高能球员减少惩罚（使用动态阈值）
+			isHighValue := (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
+				(c.Player.Salary <= 15 && valueRatio >= 3.5) ||
+				(c.Player.Salary <= 20 && valueRatio >= 4.0)
+			// 爆发型球员识别：近期有单场爆发表现（Upside3≥1.4）
+			hasUpside := c.Prediction.Upside3 >= 1.4
+			isExplosive := isHighValue && hasUpside
+
 			penalty := 1.0
 			switch {
 			case rank <= 1:
 				if rank == 1 {
-					penalty = extraSecondPenalty
+					// 前两名球员施加轻微惩罚，但爆发型球员保持原价
+					if isExplosive {
+						penalty = 1.0
+					} else {
+						penalty = extraSecondPenalty
+					}
 				}
 			case rank == 2:
 				current := candidates[idx].Prediction.OptimizedPower
@@ -406,14 +450,38 @@ func applyTeamExposurePenalty(candidates []PlayerCandidate) []PlayerCandidate {
 					current = candidates[idx].Prediction.PredictedPower
 				}
 				if secondPower > 0 && current/secondPower < 0.75 {
-					penalty = 0.95 * extraSecondPenalty
+					if isExplosive {
+						penalty = 0.98 * extraSecondPenalty // 爆发型球员惩罚更少
+					} else if isHighValue {
+						penalty = 0.97 * extraSecondPenalty
+					} else {
+						penalty = 0.96 * extraSecondPenalty
+					}
 				} else {
-					penalty = 0.98 * extraSecondPenalty
+					if isExplosive {
+						penalty = 1.0 // 爆发型球员不惩罚
+					} else if isHighValue {
+						penalty = 0.99 * extraSecondPenalty
+					} else {
+						penalty = 0.98 * extraSecondPenalty
+					}
 				}
 			case rank == 3:
-				penalty = 0.90 * extraSecondPenalty
+				if isExplosive {
+					penalty = 0.96 * extraSecondPenalty
+				} else if isHighValue {
+					penalty = 0.94 * extraSecondPenalty
+				} else {
+					penalty = 0.91 * extraSecondPenalty
+				}
 			default:
-				penalty = 0.84 * extraSecondPenalty
+				if isExplosive {
+					penalty = 0.92 * extraSecondPenalty
+				} else if isHighValue {
+					penalty = 0.88 * extraSecondPenalty
+				} else {
+					penalty = 0.85 * extraSecondPenalty
+				}
 			}
 
 			base := candidates[idx].Prediction.OptimizedPower

@@ -91,6 +91,11 @@ type PlayerPrediction struct {
 	TeamExposureFactor    float64
 	FatigueFactor         float64
 	GameRiskFactor        float64
+	Upside3               float64 // 近 3 场爆发系数
+	Upside5               float64 // 近 5 场爆发系数
+	VersatilityFactor     float64 // 多面手因子（约基奇、东契奇等）
+	ExplosivenessFactor   float64 // 爆发力因子（米切尔、亚历山大等）
+	StableFloorFactor     float64 // 稳定保底因子（维金斯类稳定但上限低）
 }
 
 // PlayerCandidate 候选球员（含预测值）。
@@ -134,6 +139,11 @@ type DetailPlayer struct {
 		TeamExposureFactor    float64 `json:"team_exposure_factor,omitempty"`
 		FatigueFactor         float64 `json:"fatigue_factor"`
 		GameRiskFactor        float64 `json:"game_risk_factor"`
+		Upside3               float64 `json:"upside3,omitempty"`
+		Upside5               float64 `json:"upside5,omitempty"`
+		VersatilityFactor     float64 `json:"versatility_factor,omitempty"`
+		ExplosivenessFactor   float64 `json:"explosiveness_factor,omitempty"`
+		StableFloorFactor     float64 `json:"stable_floor_factor,omitempty"`
 		DbPowerPer5           float64 `json:"db_power_per5,omitempty"`
 		DbPowerPer10          float64 `json:"db_power_per10,omitempty"`
 	} `json:"factors"`

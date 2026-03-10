@@ -377,6 +377,7 @@ func TestCalcArchetypeFactorFrontcourtValueAndCheapGuard(t *testing.T) {
 		1.04,
 		1.00,
 		1.10,
+		recentPowerProfile{},
 	)
 	cheapGuard := calcArchetypeFactor(
 		entity.NBAGamePlayer{Position: 1, Salary: 10, CombatPower: 24},
@@ -388,6 +389,7 @@ func TestCalcArchetypeFactorFrontcourtValueAndCheapGuard(t *testing.T) {
 		1.00,
 		1.00,
 		1.05,
+		recentPowerProfile{},
 	)
 
 	if !(frontcourt > 1.0) {
