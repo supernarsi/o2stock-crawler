@@ -59,6 +59,7 @@ func main() {
 	router.RegisterAPI("/players/investment-stats", apiCtl.PlayerInvestmentStats(), http.MethodGet)
 	router.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)
 	router.RegisterAPI("/ipi/player", apiCtl.IPIPlayer(), http.MethodGet)
+	router.RegisterAPI("/nba/lineups", apiCtl.NBALineups(), http.MethodGet)
 
 	// 内部调试：推送指定用户的球员回本订阅消息（需要 DEBUG=true 且 Header: x-debug=SIGNATURE_DEBUG_KEY）
 	router.RegisterAPI("/debug/wechat/breakeven", apiCtl.DebugSendPlayerBreakEvenNotify(), http.MethodPost)
