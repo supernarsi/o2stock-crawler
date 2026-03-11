@@ -36,16 +36,16 @@ func (s *LineupRecommendService) printRecommendations(gameDate string, title str
 			medal = medals[i]
 		}
 		fmt.Printf("%s %s #%d (总预测战力: %.1f, 总工资: %d)\n", medal, title, i+1, totalPower, totalSalary)
-		fmt.Println("┌──────────────────────┬──────┬──────┬───────┬──────────┐")
-		fmt.Println("│ 球员                 │ 球队 │ 工资 │ 预测  │ 可用性   │")
-		fmt.Println("├──────────────────────┼──────┼──────┼───────┼──────────┤")
+		fmt.Println("┌──────────────────────┬────────┬──────┬───────┬──────────┐")
+		fmt.Println("│ 球员                 │ 球队   │ 工资 │  预测 │ 可用性   │")
+		fmt.Println("├──────────────────────┼────────┼──────┼───────┼──────────┤")
 		for _, c := range lineup {
 			name := padRight(c.Player.PlayerName, 20)
-			team := padRight(c.Player.TeamName, 4)
+			team := padRight(c.Player.TeamName, 6)
 			fmt.Printf("│ %s │ %s │  %2d  │ %5.1f │  %.2f    │\n",
 				name, team, c.Player.Salary, c.Prediction.PredictedPower, c.Prediction.AvailabilityScore)
 		}
-		fmt.Println("└──────────────────────┴──────┴──────┴───────┴──────────┘")
+		fmt.Println("└──────────────────────┴────────┴──────┴───────┴──────────┘")
 		fmt.Println()
 	}
 }
