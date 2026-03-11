@@ -98,6 +98,40 @@ type PlayerPrediction struct {
 	StableFloorFactor     float64 // 稳定保底因子（维金斯类稳定但上限低）
 }
 
+// toDetailFactors 将预测结果转换为 detail_json 中的因子结构。
+func (p PlayerPrediction) toDetailFactors() PredictionFactors {
+	return PredictionFactors{
+		BaseValue:             p.BaseValue,
+		AvailabilityScore:     p.AvailabilityScore,
+		StatusTrend:           p.StatusTrend,
+		MatchupFactor:         p.MatchupFactor,
+		DefRatingFactor:       p.DefRatingFactor,
+		PaceFactor:            p.PaceFactor,
+		DvPFactor:             p.DvPFactor,
+		HistoryFactor:         p.HistoryFactor,
+		OpponentFormFactor:    p.OpponentFormFactor,
+		RimDeterrenceFactor:   p.RimDeterrenceFactor,
+		DefenseAnchorFactor:   p.DefenseAnchorFactor,
+		HomeAwayFactor:        p.HomeAwayFactor,
+		TeamContextFactor:     p.TeamContextFactor,
+		MinutesFactor:         p.MinutesFactor,
+		UsageFactor:           p.UsageFactor,
+		StabilityFactor:       p.StabilityFactor,
+		DefenseUpsideFactor:   p.DefenseUpsideFactor,
+		ArchetypeFactor:       p.ArchetypeFactor,
+		RoleSecurityFactor:    p.RoleSecurityFactor,
+		DataReliabilityFactor: p.DataReliabilityFactor,
+		TeamExposureFactor:    p.TeamExposureFactor,
+		FatigueFactor:         p.FatigueFactor,
+		GameRiskFactor:        p.GameRiskFactor,
+		Upside3:               p.Upside3,
+		Upside5:               p.Upside5,
+		VersatilityFactor:     p.VersatilityFactor,
+		ExplosivenessFactor:   p.ExplosivenessFactor,
+		StableFloorFactor:     p.StableFloorFactor,
+	}
+}
+
 // PlayerCandidate 候选球员（含预测值）。
 type PlayerCandidate struct {
 	Player             entity.NBAGamePlayer
@@ -106,47 +140,50 @@ type PlayerCandidate struct {
 	BacktestName       string
 }
 
+// PredictionFactors detail_json 中保存的因子明细（与 PlayerPrediction 对应）。
+type PredictionFactors struct {
+	BaseValue             float64 `json:"base_value"`
+	AvailabilityScore     float64 `json:"availability_score"`
+	StatusTrend           float64 `json:"status_trend"`
+	MatchupFactor         float64 `json:"matchup_factor"`
+	DefRatingFactor       float64 `json:"def_rating_factor,omitempty"`
+	PaceFactor            float64 `json:"pace_factor,omitempty"`
+	DvPFactor             float64 `json:"dvp_factor,omitempty"`
+	HistoryFactor         float64 `json:"history_factor,omitempty"`
+	OpponentFormFactor    float64 `json:"opponent_form_factor,omitempty"`
+	RimDeterrenceFactor   float64 `json:"rim_deterrence_factor,omitempty"`
+	DefenseAnchorFactor   float64 `json:"defense_anchor_factor,omitempty"`
+	HomeAwayFactor        float64 `json:"home_away_factor"`
+	TeamContextFactor     float64 `json:"team_context_factor"`
+	MinutesFactor         float64 `json:"minutes_factor"`
+	UsageFactor           float64 `json:"usage_factor"`
+	StabilityFactor       float64 `json:"stability_factor"`
+	DefenseUpsideFactor   float64 `json:"defense_upside_factor,omitempty"`
+	ArchetypeFactor       float64 `json:"archetype_factor,omitempty"`
+	RoleSecurityFactor    float64 `json:"role_security_factor,omitempty"`
+	DataReliabilityFactor float64 `json:"data_reliability_factor,omitempty"`
+	TeamExposureFactor    float64 `json:"team_exposure_factor,omitempty"`
+	FatigueFactor         float64 `json:"fatigue_factor"`
+	GameRiskFactor        float64 `json:"game_risk_factor"`
+	Upside3               float64 `json:"upside3,omitempty"`
+	Upside5               float64 `json:"upside5,omitempty"`
+	VersatilityFactor     float64 `json:"versatility_factor,omitempty"`
+	ExplosivenessFactor   float64 `json:"explosiveness_factor,omitempty"`
+	StableFloorFactor     float64 `json:"stable_floor_factor,omitempty"`
+	DbPowerPer5           float64 `json:"db_power_per5,omitempty"`
+	DbPowerPer10          float64 `json:"db_power_per10,omitempty"`
+}
+
 // DetailPlayer detail_json 中的球员信息。
 type DetailPlayer struct {
-	NBAPlayerID    uint    `json:"nba_player_id"`
-	Name           string  `json:"name"`
-	Team           string  `json:"team"`
-	Salary         uint    `json:"salary"`
-	CombatPower    float64 `json:"combat_power"`
-	PredictedPower float64 `json:"predicted_power"`
-	OptimizedPower float64 `json:"optimized_power,omitempty"`
-	Factors        struct {
-		BaseValue             float64 `json:"base_value"`
-		AvailabilityScore     float64 `json:"availability_score"`
-		StatusTrend           float64 `json:"status_trend"`
-		MatchupFactor         float64 `json:"matchup_factor"`
-		DefRatingFactor       float64 `json:"def_rating_factor,omitempty"`
-		PaceFactor            float64 `json:"pace_factor,omitempty"`
-		DvPFactor             float64 `json:"dvp_factor,omitempty"`
-		HistoryFactor         float64 `json:"history_factor,omitempty"`
-		OpponentFormFactor    float64 `json:"opponent_form_factor,omitempty"`
-		RimDeterrenceFactor   float64 `json:"rim_deterrence_factor,omitempty"`
-		DefenseAnchorFactor   float64 `json:"defense_anchor_factor,omitempty"`
-		HomeAwayFactor        float64 `json:"home_away_factor"`
-		TeamContextFactor     float64 `json:"team_context_factor"`
-		MinutesFactor         float64 `json:"minutes_factor"`
-		UsageFactor           float64 `json:"usage_factor"`
-		StabilityFactor       float64 `json:"stability_factor"`
-		DefenseUpsideFactor   float64 `json:"defense_upside_factor,omitempty"`
-		ArchetypeFactor       float64 `json:"archetype_factor,omitempty"`
-		RoleSecurityFactor    float64 `json:"role_security_factor,omitempty"`
-		DataReliabilityFactor float64 `json:"data_reliability_factor,omitempty"`
-		TeamExposureFactor    float64 `json:"team_exposure_factor,omitempty"`
-		FatigueFactor         float64 `json:"fatigue_factor"`
-		GameRiskFactor        float64 `json:"game_risk_factor"`
-		Upside3               float64 `json:"upside3,omitempty"`
-		Upside5               float64 `json:"upside5,omitempty"`
-		VersatilityFactor     float64 `json:"versatility_factor,omitempty"`
-		ExplosivenessFactor   float64 `json:"explosiveness_factor,omitempty"`
-		StableFloorFactor     float64 `json:"stable_floor_factor,omitempty"`
-		DbPowerPer5           float64 `json:"db_power_per5,omitempty"`
-		DbPowerPer10          float64 `json:"db_power_per10,omitempty"`
-	} `json:"factors"`
+	NBAPlayerID    uint              `json:"nba_player_id"`
+	Name           string            `json:"name"`
+	Team           string            `json:"team"`
+	Salary         uint              `json:"salary"`
+	CombatPower    float64           `json:"combat_power"`
+	PredictedPower float64           `json:"predicted_power"`
+	OptimizedPower float64           `json:"optimized_power,omitempty"`
+	Factors        PredictionFactors `json:"factors"`
 }
 
 // DetailJSON detail_json 结构。

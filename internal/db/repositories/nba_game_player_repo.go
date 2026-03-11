@@ -69,6 +69,19 @@ func (r *NBAGamePlayerRepository) UpdatePredictedPower(ctx context.Context, id u
 		Update("predicted_power", power).Error
 }
 
+// BatchUpdatePredictedPower 批量更新球员预测战力值
+func (r *NBAGamePlayerRepository) BatchUpdatePredictedPower(ctx context.Context, players []entity.NBAGamePlayer) error {
+	if len(players) == 0 {
+		return nil
+	}
+	return r.ctx(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"predicted_power"}),
+		}).
+		CreateInBatches(players, 100).Error
+}
+
 // GetByNBAPlayerIDs 根据 NBA 球员 ID 批量获取候选球员
 func (r *NBAGamePlayerRepository) GetByNBAPlayerIDs(ctx context.Context, gameDate string, nbaPlayerIDs []uint) ([]entity.NBAGamePlayer, error) {
 	var players []entity.NBAGamePlayer

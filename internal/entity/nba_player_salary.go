@@ -6,6 +6,7 @@ import "time"
 type NBAPlayerSalary struct {
 	ID             uint      `gorm:"primaryKey;column:id;comment:主键 ID"`
 	NBAPlayerID    uint      `gorm:"column:nba_player_id;not null;default:0;uniqueIndex:uk_nba_player;comment:NBA 球员 ID"`
+	TxPlayerID     uint      `gorm:"column:tx_player_id;not null;default:0;comment:腾讯球员 ID"`
 	NBATeamID      string    `gorm:"column:nba_team_id;type:varchar(20);not null;default:'';index:idx_team;comment:NBA 球队 ID"`
 	PlayerName     string    `gorm:"column:player_name;type:varchar(100);not null;default:'';comment:球员中文名"`
 	PlayerEnName   string    `gorm:"column:player_en_name;type:varchar(100);not null;default:'';comment:球员英文名"`

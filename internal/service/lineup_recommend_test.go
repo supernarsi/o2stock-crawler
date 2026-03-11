@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestSolveOptimalLineupMatchesBruteForceTopN(t *testing.T) {
 		{Player: entity.NBAGamePlayer{NBAPlayerID: 8, Salary: 2}, Prediction: PlayerPrediction{PredictedPower: 8}},
 	}
 
-	got := svc.solveOptimalLineup(candidates, 20, 3, 3)
+	got := svc.solveOptimalLineupInternal(candidates, 20, 3, 3, false, 0)
 	if len(got) != 3 {
 		t.Fatalf("top lineups len=%d, want 3", len(got))
 	}
@@ -690,7 +691,7 @@ func TestSolveOptimalLineupAllowZero(t *testing.T) {
 }
 
 func TestBuildNBAToTxPlayerIDMap(t *testing.T) {
-	players := []entity.Player{
+	players := []entity.NBAPlayerSalary{
 		{NBAPlayerID: 2544, TxPlayerID: 1001},
 		{NBAPlayerID: 2544, TxPlayerID: 1001},
 		{NBAPlayerID: 2544, TxPlayerID: 2002},
@@ -698,7 +699,7 @@ func TestBuildNBAToTxPlayerIDMap(t *testing.T) {
 		{NBAPlayerID: 0, TxPlayerID: 4004},
 	}
 
-	got, conflictCount := buildNBAToTxPlayerIDMap(players)
+	got, conflictCount := buildNBAToTxPlayerIDMapFromSalary(players)
 	if conflictCount != 1 {
 		t.Fatalf("conflictCount=%d, want 1", conflictCount)
 	}
@@ -1083,7 +1084,7 @@ func bruteForceTopLineups(candidates []PlayerCandidate, salaryCap, pickCount, to
 	var dfs func(start, picked, salary int, score float64)
 	dfs = func(start, picked, salary int, score float64) {
 		if picked == pickCount {
-			results = insertLineupState(results, lineupState{
+			results = insertLineupStateTest(results, lineupState{
 				score:   score,
 				salary:  salary,
 				indices: append([]int{}, indices...),
@@ -1111,4 +1112,42 @@ func bruteForceTopLineups(candidates []PlayerCandidate, salaryCap, pickCount, to
 
 	dfs(0, 0, 0, 0)
 	return results
+}
+
+func insertLineupStateTest(states []lineupState, candidate lineupState, limit int) []lineupState {
+	for i := range states {
+		if sameLineupIndicesTest(states[i].indices, candidate.indices) {
+			if lineupStateLess(candidate, states[i]) {
+				states[i] = candidate
+			}
+			sort.Slice(states, func(a, b int) bool {
+				return lineupStateLess(states[a], states[b])
+			})
+			if len(states) > limit {
+				states = states[:limit]
+			}
+			return states
+		}
+	}
+
+	states = append(states, candidate)
+	sort.Slice(states, func(i, j int) bool {
+		return lineupStateLess(states[i], states[j])
+	})
+	if len(states) > limit {
+		states = states[:limit]
+	}
+	return states
+}
+
+func sameLineupIndicesTest(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

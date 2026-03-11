@@ -6,6 +6,20 @@ import (
 	"sort"
 )
 
+const (
+	// 阵容结构评价阈值
+	CheapSalaryThreshold         = 10
+	HighValueSalaryThreshold1    = 12
+	HighValuePowerThreshold1     = 35
+	HighValueSalaryThreshold2    = 10
+	HighValuePowerThreshold2     = 30
+	ValueRatioThreshold          = 3.0
+	ExplosiveUpsideThreshold     = 1.35
+	LineupAvgValueRatioHigh      = 3.5
+	LineupAvgValueRatioMid       = 3.2
+	LineupHighValueCountRequired = 2
+)
+
 // solveOptimalLineup 在推荐模式下求解 TopN 阵容（仅使用正战力候选）。
 func (s *LineupRecommendService) solveOptimalLineup(
 	candidates []PlayerCandidate,
@@ -13,7 +27,7 @@ func (s *LineupRecommendService) solveOptimalLineup(
 	pickCount int,
 	topN int,
 ) [][]PlayerCandidate {
-	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, false)
+	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, false, 2)
 }
 
 func (s *LineupRecommendService) solveOptimalLineupAllowZero(
@@ -22,7 +36,7 @@ func (s *LineupRecommendService) solveOptimalLineupAllowZero(
 	pickCount int,
 	topN int,
 ) [][]PlayerCandidate {
-	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, true)
+	return s.solveOptimalLineupInternal(candidates, salaryCap, pickCount, topN, true, 0)
 }
 
 func (s *LineupRecommendService) solveOptimalLineupInternal(
@@ -31,6 +45,7 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 	pickCount int,
 	topN int,
 	allowNonPositive bool,
+	minDiversity int,
 ) [][]PlayerCandidate {
 	if salaryCap <= 0 || pickCount <= 0 || topN <= 0 {
 		return nil
@@ -84,27 +99,41 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 					continue
 				}
 
-				nextStates := dp[j][k]
+				var newStates []lineupState
 				for _, prev := range prevStates {
-					nextIdx := append([]int{}, prev.indices...)
+					nextIdx := make([]int, len(prev.indices), len(prev.indices)+1)
+					copy(nextIdx, prev.indices)
 					nextIdx = append(nextIdx, i)
-					nextStates = insertLineupState(nextStates, lineupState{
+					newStates = append(newStates, lineupState{
 						score:   prev.score + power,
 						salary:  k,
 						indices: nextIdx,
-					}, stateLimit)
+					})
 				}
-				dp[j][k] = nextStates
+
+				combined := append(dp[j][k], newStates...)
+				sort.Slice(combined, func(a, b int) bool {
+					return lineupStateLess(combined[a], combined[b])
+				})
+				if len(combined) > stateLimit {
+					combined = combined[:stateLimit]
+				}
+				dp[j][k] = combined
 			}
 		}
 	}
 
-	bestStates := make([]lineupState, 0, stateLimit)
+	bestStates := make([]lineupState, 0)
 	for k := 0; k <= salaryCap; k++ {
-		for _, st := range dp[pickCount][k] {
-			bestStates = insertLineupState(bestStates, st, stateLimit)
-		}
+		bestStates = append(bestStates, dp[pickCount][k]...)
 	}
+	sort.Slice(bestStates, func(a, b int) bool {
+		return lineupStateLess(bestStates[a], bestStates[b])
+	})
+	if len(bestStates) > stateLimit {
+		bestStates = bestStates[:stateLimit]
+	}
+
 	if len(bestStates) == 0 {
 		return nil
 	}
@@ -162,12 +191,44 @@ func (s *LineupRecommendService) solveOptimalLineupInternal(
 
 	results := make([][]PlayerCandidate, 0, min(topN, len(scored)))
 	for _, item := range scored {
-		results = append(results, item.lineup)
-	}
-	if len(results) > topN {
-		results = results[:topN]
+		if minDiversity > 0 {
+			if isLineupDiverseEnough(results, item.lineup, minDiversity) {
+				results = append(results, item.lineup)
+			}
+		} else {
+			results = append(results, item.lineup)
+		}
+		if len(results) >= topN {
+			break
+		}
 	}
 	return results
+}
+
+// isLineupDiverseEnough 检查新阵容与已选阵容集合是否具有足够的差异度。
+func isLineupDiverseEnough(existing [][]PlayerCandidate, newLineup []PlayerCandidate, minDiff int) bool {
+	for _, lineup := range existing {
+		shared := countSharedPlayers(lineup, newLineup)
+		if len(lineup)-shared < minDiff {
+			return false
+		}
+	}
+	return true
+}
+
+// countSharedPlayers 计算两套阵容中相同的球员数量。
+func countSharedPlayers(l1, l2 []PlayerCandidate) int {
+	m := make(map[uint]bool)
+	for _, p := range l1 {
+		m[p.Player.NBAPlayerID] = true
+	}
+	count := 0
+	for _, p := range l2 {
+		if m[p.Player.NBAPlayerID] {
+			count++
+		}
+	}
+	return count
 }
 
 func selectionPower(candidate PlayerCandidate, allowNonPositive bool) float64 {
@@ -193,35 +254,35 @@ func calcLineupStructureFactor(lineup []PlayerCandidate) float64 {
 	totalValueRatio := 0.0
 
 	for _, c := range lineup {
-		if c.Player.Salary <= 10 {
+		if c.Player.Salary <= CheapSalaryThreshold {
 			cheapCount++
 		}
-		// 识别低薪高能球员（工资≤12 且预测战力≥35，或工资≤10 且预测战力≥30）
-		if (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
-			(c.Player.Salary <= 10 && c.Prediction.PredictedPower >= 30) {
+		// 识别低薪高能球员
+		if (c.Player.Salary <= HighValueSalaryThreshold1 && c.Prediction.PredictedPower >= HighValuePowerThreshold1) ||
+			(c.Player.Salary <= HighValueSalaryThreshold2 && c.Prediction.PredictedPower >= HighValuePowerThreshold2) {
 			lowSalaryHighPowerCount++
 		}
-		// 识别性价比球员（战力/工资比值≥3.0）
+		// 识别性价比球员
 		if c.Player.Salary > 0 {
 			valueRatio := c.Prediction.PredictedPower / float64(c.Player.Salary)
 			totalValueRatio += valueRatio
-			if valueRatio >= 3.0 {
+			if valueRatio >= ValueRatioThreshold {
 				valueRatioCount++
 			}
 		}
-		// 识别爆发型球员（Upside3≥1.35 或有爆发潜力）
-		if c.Prediction.Upside3 >= 1.35 {
+		// 识别爆发型球员
+		if c.Prediction.Upside3 >= ExplosiveUpsideThreshold {
 			explosiveCount++
 		}
 	}
 
-	avgValueRatio := totalValueRatio / 5.0
+	avgValueRatio := totalValueRatio / float64(defaultPickCount)
 
-	// 高性价比阵容：平均性价比≥3.5 且有 2 个以上高性价比球员，给予奖励
-	if avgValueRatio >= 3.5 && valueRatioCount >= 2 {
+	// 高性价比阵容
+	if avgValueRatio >= LineupAvgValueRatioHigh && valueRatioCount >= LineupHighValueCountRequired {
 		return 1.02
 	}
-	if avgValueRatio >= 3.2 && valueRatioCount >= 2 {
+	if avgValueRatio >= LineupAvgValueRatioMid && valueRatioCount >= LineupHighValueCountRequired {
 		return 1.0
 	}
 
@@ -267,32 +328,6 @@ type lineupState struct {
 	indices []int
 }
 
-func insertLineupState(states []lineupState, candidate lineupState, limit int) []lineupState {
-	for i := range states {
-		if sameLineupIndices(states[i].indices, candidate.indices) {
-			if lineupStateLess(candidate, states[i]) {
-				states[i] = candidate
-			}
-			sort.Slice(states, func(a, b int) bool {
-				return lineupStateLess(states[a], states[b])
-			})
-			if len(states) > limit {
-				states = states[:limit]
-			}
-			return states
-		}
-	}
-
-	states = append(states, candidate)
-	sort.Slice(states, func(i, j int) bool {
-		return lineupStateLess(states[i], states[j])
-	})
-	if len(states) > limit {
-		states = states[:limit]
-	}
-	return states
-}
-
 func lineupStateLess(a, b lineupState) bool {
 	if math.Abs(a.score-b.score) > 1e-9 {
 		return a.score > b.score
@@ -301,18 +336,6 @@ func lineupStateLess(a, b lineupState) bool {
 		return a.salary < b.salary
 	}
 	return lexicographicallyLess(a.indices, b.indices)
-}
-
-func sameLineupIndices(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func lexicographicallyLess(a, b []int) bool {
@@ -330,3 +353,177 @@ func lexicographicallyLess(a, b []int) bool {
 }
 
 // --- 辅助函数 ---
+
+// applyTeamExposurePenalty 对同队第 3 名及之后的候选球员施加惩罚，避免推荐阵容过度堆叠单队风险。
+func applyTeamExposurePenalty(candidates []PlayerCandidate) []PlayerCandidate {
+	if len(candidates) == 0 {
+		return candidates
+	}
+
+	teamToIndexes := make(map[string][]int)
+	for idx := range candidates {
+		teamCode := normalizeTeamCode(candidates[idx].Player.TeamName)
+		if teamCode == "" {
+			teamCode = candidates[idx].Player.NBATeamID
+		}
+		teamToIndexes[teamCode] = append(teamToIndexes[teamCode], idx)
+		candidates[idx].Prediction.TeamExposureFactor = 1.0
+	}
+
+	for _, indexes := range teamToIndexes {
+		sort.Slice(indexes, func(i, j int) bool {
+			left := candidates[indexes[i]].Prediction.OptimizedPower
+			if left <= 0 {
+				left = candidates[indexes[i]].Prediction.PredictedPower
+			}
+			right := candidates[indexes[j]].Prediction.OptimizedPower
+			if right <= 0 {
+				right = candidates[indexes[j]].Prediction.PredictedPower
+			}
+			if left == right {
+				return candidates[indexes[i]].Player.Salary < candidates[indexes[j]].Player.Salary
+			}
+			return left > right
+		})
+
+		secondPower := 0.0
+		if len(indexes) >= 2 {
+			secondPower = candidates[indexes[1]].Prediction.OptimizedPower
+			if secondPower <= 0 {
+				secondPower = candidates[indexes[1]].Prediction.PredictedPower
+			}
+		}
+		teamPressureFactor := estimateTeamPressureFactor(candidates, indexes)
+		extraSecondPenalty := 1.0
+		if teamPressureFactor < 0.88 {
+			extraSecondPenalty = 0.92
+		} else if teamPressureFactor < 0.92 {
+			extraSecondPenalty = 0.96
+		}
+
+		// 识别低薪高能球员，减少惩罚
+		// 使用动态阈值：工资≤15 且预测战力/工资比值≥3.0 视为价值球员
+		highValueCount := 0
+		for _, idx := range indexes {
+			c := candidates[idx]
+			valueRatio := 0.0
+			if c.Player.Salary > 0 {
+				valueRatio = c.Prediction.PredictedPower / float64(c.Player.Salary)
+			}
+			isHighValue := (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
+				(c.Player.Salary <= 15 && valueRatio >= 3.5) ||
+				(c.Player.Salary <= 20 && valueRatio >= 4.0)
+			if isHighValue {
+				highValueCount++
+			}
+		}
+
+		for rank, idx := range indexes {
+			c := candidates[idx]
+			valueRatio := 0.0
+			if c.Player.Salary > 0 {
+				valueRatio = c.Prediction.PredictedPower / float64(c.Player.Salary)
+			}
+			isHighValue := (c.Player.Salary <= 12 && c.Prediction.PredictedPower >= 35) ||
+				(c.Player.Salary <= 15 && valueRatio >= 3.5) ||
+				(c.Player.Salary <= 20 && valueRatio >= 4.0)
+			hasUpside := c.Prediction.Upside3 >= 1.4
+			isExplosive := isHighValue && hasUpside
+
+			penalty := 1.0
+			switch {
+			case rank <= 1:
+				if rank == 1 {
+					if isExplosive {
+						penalty = 1.0
+					} else {
+						penalty = extraSecondPenalty
+					}
+				}
+			case rank == 2:
+				current := candidates[idx].Prediction.OptimizedPower
+				if current <= 0 {
+					current = candidates[idx].Prediction.PredictedPower
+				}
+				if secondPower > 0 && current/secondPower < 0.75 {
+					if isExplosive {
+						penalty = 0.98 * extraSecondPenalty
+					} else if isHighValue {
+						penalty = 0.97 * extraSecondPenalty
+					} else {
+						penalty = 0.96 * extraSecondPenalty
+					}
+				} else {
+					if isExplosive {
+						penalty = 1.0
+					} else if isHighValue {
+						penalty = 0.99 * extraSecondPenalty
+					} else {
+						penalty = 0.98 * extraSecondPenalty
+					}
+				}
+			case rank == 3:
+				if isExplosive {
+					penalty = 0.96 * extraSecondPenalty
+				} else if isHighValue {
+					penalty = 0.94 * extraSecondPenalty
+				} else {
+					penalty = 0.91 * extraSecondPenalty
+				}
+			default:
+				if isExplosive {
+					penalty = 0.92 * extraSecondPenalty
+				} else if isHighValue {
+					penalty = 0.88 * extraSecondPenalty
+				} else {
+					penalty = 0.85 * extraSecondPenalty
+				}
+			}
+
+			base := candidates[idx].Prediction.OptimizedPower
+			if base <= 0 {
+				base = candidates[idx].Prediction.PredictedPower
+			}
+			candidates[idx].Prediction.TeamExposureFactor = penalty
+			candidates[idx].Prediction.OptimizedPower = base * penalty
+		}
+	}
+
+	return candidates
+}
+
+func estimateTeamPressureFactor(candidates []PlayerCandidate, indexes []int) float64 {
+	if len(indexes) == 0 {
+		return 1.0
+	}
+
+	limit := min(2, len(indexes))
+	total := 0.0
+	count := 0
+	for i := 0; i < limit; i++ {
+		pred := candidates[indexes[i]].Prediction
+		matchup := pred.MatchupFactor
+		if matchup <= 0 {
+			matchup = 1.0
+		}
+		anchor := pred.DefenseAnchorFactor
+		if anchor <= 0 {
+			anchor = 1.0
+		}
+		rim := pred.RimDeterrenceFactor
+		if rim <= 0 {
+			rim = 1.0
+		}
+		form := pred.OpponentFormFactor
+		if form <= 0 {
+			form = 1.0
+		}
+
+		total += matchup * anchor * rim * form
+		count++
+	}
+	if count == 0 {
+		return 1.0
+	}
+	return clamp(total/float64(count), 0.75, 1.05)
+}

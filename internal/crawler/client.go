@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"strconv"
@@ -164,7 +164,7 @@ func (c *Client) generateNonceStr(length int) string {
 
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = nonceChars[rand.Intn(len(nonceChars))]
+		b[i] = nonceChars[rand.IntN(len(nonceChars))]
 	}
 	return string(b)
 }

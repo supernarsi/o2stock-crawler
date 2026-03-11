@@ -28,13 +28,13 @@ func (a *API) Test() http.HandlerFunc {
 //
 // 安全约束：
 // - 仅在 DEBUG=true 时可用（否则 404）
-// - 要求请求头 x-debug=42（否则 401；也可触发签名中间件 debug bypass）
+// - 要求请求头 x-debug 等于配置文件中的 SIGNATURE_DEBUG_KEY（否则 401；也可触发签名中间件 debug bypass）
 func (a *API) DebugSendPlayerBreakEvenNotify() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		if os.Getenv("DEBUG") != "true" {
 			return nil, &middleware.APIError{Status: http.StatusNotFound, Code: http.StatusNotFound, Msg: "not found"}
 		}
-		if r.Header.Get("x-debug") != "42" {
+		if a.cfg.SignatureDebugKey == "" || r.Header.Get("x-debug") != a.cfg.SignatureDebugKey {
 			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: "unauthorized"}
 		}
 

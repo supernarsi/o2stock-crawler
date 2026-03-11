@@ -17,8 +17,9 @@ import (
 func TestSignatureMiddleware(t *testing.T) {
 	secret := "test-secret"
 	cfg := &db.Config{
-		EnableSignature: true,
-		SignatureSecret: secret,
+		EnableSignature:   true,
+		SignatureSecret:   secret,
+		SignatureDebugKey: "42",
 	}
 
 	handler := SignatureMiddleware(cfg)(func(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +91,7 @@ func TestSignatureMiddleware(t *testing.T) {
 
 	t.Run("Debug Bypass", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test", nil)
-		req.Header.Set("x-debug", "42")
+		req.Header.Set("x-debug", cfg.SignatureDebugKey)
 
 		w := httptest.NewRecorder()
 		handler(w, req)
