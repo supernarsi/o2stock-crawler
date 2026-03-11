@@ -148,7 +148,7 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	recommendationSets := []recommendationSet{
 		{
 			recType:  entity.LineupRecommendationTypeAIRecommended,
-			title:    "AI推荐阵容",
+			title:    "AI 推荐阵容",
 			lookback: 0,
 			lineups:  topLineups,
 		},
@@ -159,8 +159,8 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		title    string
 		lookback int
 	}{
-		{recType: entity.LineupRecommendationTypeAvg3Baseline, title: "3日均值推荐", lookback: 3},
-		{recType: entity.LineupRecommendationTypeAvg5Baseline, title: "5日均值推荐", lookback: 5},
+		{recType: entity.LineupRecommendationTypeAvg3Baseline, title: "近 3 场均值推荐", lookback: 3},
+		{recType: entity.LineupRecommendationTypeAvg5Baseline, title: "近 5 场均值推荐", lookback: 5},
 	} {
 		benchmarkCandidates, summary, err := s.buildAverageRecommendationCandidates(
 			ctx,
