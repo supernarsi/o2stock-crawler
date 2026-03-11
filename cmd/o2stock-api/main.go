@@ -57,9 +57,6 @@ func main() {
 	router.RegisterAPI("/item-history", apiCtl.ItemHistory(), http.MethodGet)
 	router.RegisterAPI("/multi-players-history", apiCtl.MultiPlayersHistory(), http.MethodGet)
 	router.RegisterAPI("/players/investment-stats", apiCtl.PlayerInvestmentStats(), http.MethodGet)
-	router.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)
-	router.RegisterAPI("/ipi/player", apiCtl.IPIPlayer(), http.MethodGet)
-	router.RegisterAPI("/nba/lineups", apiCtl.NBALineups(), http.MethodGet)
 
 	// 内部调试：推送指定用户的球员回本订阅消息（需要 DEBUG=true 且 Header: x-debug=SIGNATURE_DEBUG_KEY）
 	router.RegisterAPI("/debug/wechat/breakeven", apiCtl.DebugSendPlayerBreakEvenNotify(), http.MethodPost)
@@ -100,6 +97,10 @@ func main() {
 	authGroup.RegisterAPI("/u-fav-items", apiCtl.UserFavItems(), http.MethodGet)
 	// 统一持仓列表
 	authGroup.RegisterAPI("/u-own-goods", apiCtl.UserUnifiedOwnGoods(), http.MethodGet)
+
+	authGroup.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)
+	authGroup.RegisterAPI("/ipi/player", apiCtl.IPIPlayer(), http.MethodGet)
+	authGroup.RegisterAPI("/nba/lineups", apiCtl.NBALineups(), http.MethodGet)
 
 	mux := http.NewServeMux()
 
