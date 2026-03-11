@@ -460,7 +460,10 @@ func calcArchetypeFactor(
 		if profile.Upside3 >= 1.5 {
 			factor += clamp((profile.Upside3-1.5)*0.08, 0.0, 0.05)
 		}
-		return clamp(factor, 0.94, 1.12)
+		if teamContextFactor > 1.05 {
+			factor += clamp((teamContextFactor-1.05)*0.80, 0.0, 0.08)
+		}
+		return clamp(factor, 0.94, 1.15)
 	}
 
 	// 非核心位置球员：识别低薪爆发型球员
@@ -469,8 +472,15 @@ func calcArchetypeFactor(
 		valueRatio = baseValue / float64(player.Salary)
 	}
 	// 低薪高能且有爆发力的球员给予加成
-	if player.Salary <= 15 && valueRatio >= 3.0 && profile.Upside3 >= 1.4 {
-		factor += clamp((profile.Upside3-1.4)*0.10, 0.0, 0.06)
+	if player.Salary <= 20 {
+		if valueRatio >= 3.0 && profile.Upside3 >= 1.35 {
+			factor += clamp((profile.Upside3-1.35)*0.15, 0.0, 0.08)
+		} else if profile.Upside3 >= 1.45 {
+			factor += clamp((profile.Upside3-1.45)*0.12, 0.0, 0.07)
+		}
+		if teamContextFactor > 1.05 {
+			factor += clamp((teamContextFactor-1.05)*0.80, 0.0, 0.08)
+		}
 	}
 
 	if player.Salary <= 12 {
@@ -510,8 +520,11 @@ func adjustOptimizedPowerForArchetype(
 	if positionGroup == 0 && baseValue >= 45 && minutesFactor >= 1.03 && usageFactor >= 1.03 && defenseAnchorFactor >= 0.93 {
 		optimizedPower += upsideGap * 0.30
 	}
-	if positionGroup == 0 && player.Salary <= 20 && archetypeFactor > 1.02 && defenseAnchorFactor >= 0.94 {
-		optimizedPower += upsideGap * clamp((archetypeFactor-1.0)*4.0, 0.0, 0.42)
+	if player.Salary <= 20 && archetypeFactor > 1.02 && defenseAnchorFactor >= 0.92 {
+		optimizedPower += upsideGap * clamp((archetypeFactor-1.0)*3.5+0.1, 0.0, 0.55)
+	}
+	if archetypeFactor >= 1.06 {
+		optimizedPower += upsideGap * 0.35 // 为表现突出的球员提供保底
 	}
 
 	return clamp(optimizedPower, predictedPower*0.62, predictedPower)
@@ -848,6 +861,8 @@ func (s *LineupRecommendService) calcConservativePower(
 	availabilityScore float64,
 	roleSecurityFactor float64,
 	dataReliabilityFactor float64,
+	upside3 float64,
+	teamContextFactor float64,
 ) float64 {
 	if predicted <= 0 {
 		return predicted
@@ -877,9 +892,21 @@ func (s *LineupRecommendService) calcConservativePower(
 	floorPower := math.Max(0.0, mean-0.85*stdDev)
 
 	blended := 0.72*predicted + 0.28*floorPower
+	if upside3 >= 1.4 || teamContextFactor > 1.05 {
+		// 对近期状态极佳或由于队友缺阵而获得大量机会的球员，抵消低地板分的过度拉扯
+		blended = math.Max(blended, predicted*0.85)
+	}
+
 	availabilityRisk := clamp(0.85+0.15*availabilityScore, 0.75, 1.0)
 	conservative := blended * clamp(0.90+0.10*riskAnchor, 0.80, 1.02) * availabilityRisk
-	return clamp(conservative, predicted*0.60, predicted*1.02)
+
+	minLimit := predicted * 0.60
+	if upside3 >= 1.45 || teamContextFactor > 1.08 {
+		minLimit = predicted * 0.82
+	} else if upside3 >= 1.35 || teamContextFactor > 1.04 {
+		minLimit = predicted * 0.72
+	}
+	return clamp(conservative, minLimit, predicted*1.02)
 }
 
 // calcStabilityFactor 计算表现稳定性因子。
