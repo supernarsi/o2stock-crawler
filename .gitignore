@@ -1,4 +1,7 @@
+.agent/
 .beads/
+.claude/
+.cursor/
 .env
 .gitattributes
 .gocache/
