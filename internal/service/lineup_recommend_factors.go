@@ -333,7 +333,7 @@ func (s *LineupRecommendService) calcOpponentDefenseAnchorFactor(
 		blocksTotal := 0.0
 		stealsTotal := 0.0
 		minutesTotal := 0.0
-		for i := 0; i < recentCount; i++ {
+		for i := range recentCount {
 			blocksTotal += float64(stats[i].Blocks)
 			stealsTotal += float64(stats[i].Steals)
 			minutesTotal += float64(stats[i].Minutes)

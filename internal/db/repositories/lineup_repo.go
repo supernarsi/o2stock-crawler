@@ -63,6 +63,41 @@ func (r *LineupRecommendationRepository) GetByDateAndType(
 	return recs, err
 }
 
+// GetLatestGameDate 获取大于等于给定日期的最近一个有推荐数据的日期
+// todayStr: 传入当前日期的字符串 (YYYY-MM-DD)，用于查找 >= today 的最新推荐
+func (r *LineupRecommendationRepository) GetLatestGameDate(ctx context.Context, todayStr string) (string, error) {
+	var gameDate string
+	queryToday := todayStr
+	if len(queryToday) == 10 {
+		queryToday = queryToday + "T"
+	}
+	err := r.ctx(ctx).Model(&entity.LineupRecommendation{}).
+		Where("game_date >= ?", queryToday).
+		Select("MAX(game_date)").
+		Scan(&gameDate).Error
+	return gameDate, err
+}
+
+// GetRecentGameDates 获取小于给定日期的最近 limit 个有推荐数据的日期
+func (r *LineupRecommendationRepository) GetRecentGameDates(ctx context.Context, beforeDate string, limit int) ([]string, error) {
+	var dates []string
+	
+	// 为了兼容只传 2026-03-10 和完整的 2026-03-10T... 字符串，
+	// 如果传入的是短日期，确保查询能匹配。实际库里的 game_date 包含 T... 时，如果 beforeDate 不带，可以直接前缀比对。
+	queryBefore := beforeDate
+	if len(queryBefore) == 10 {
+		queryBefore = queryBefore + "T"
+	}
+	
+	err := r.ctx(ctx).Model(&entity.LineupRecommendation{}).
+		Where("game_date < ?", queryBefore).
+		Select("DISTINCT game_date").
+		Order("game_date DESC").
+		Limit(limit).
+		Pluck("game_date", &dates).Error
+	return dates, err
+}
+
 // BatchUpdateActualPower 批量更新推荐阵容的实际总战力（按 game_date + rank）
 // 仅更新 recommendation_type=1 (AI 推荐) 的数据
 func (r *LineupRecommendationRepository) BatchUpdateActualPower(

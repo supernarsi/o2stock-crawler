@@ -48,3 +48,19 @@ func (r *LineupBacktestResultRepository) GetByGameDateAndType(
 		Find(&rows).Error
 	return rows, err
 }
+
+func (r *LineupBacktestResultRepository) GetByGameDatesAndType(
+	ctx context.Context,
+	gameDates []string,
+	resultType uint8,
+) ([]entity.LineupBacktestResult, error) {
+	if len(gameDates) == 0 {
+		return nil, nil
+	}
+	var rows []entity.LineupBacktestResult
+	err := r.ctx(ctx).
+		Where("game_date IN ? AND result_type = ?", gameDates, resultType).
+		Order("game_date DESC, `rank` ASC").
+		Find(&rows).Error
+	return rows, err
+}

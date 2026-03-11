@@ -83,6 +83,21 @@ func (r *NBAPlayerSalaryRepository) BatchGetByNBAPlayerIDs(
 	return rows, err
 }
 
+// GetByNBAPlayerIDs 按 nba_player_id 批量获取球员完整信息（API 展示用）。
+func (r *NBAPlayerSalaryRepository) GetByNBAPlayerIDs(
+	ctx context.Context,
+	nbaPlayerIDs []uint,
+) ([]entity.NBAPlayerSalary, error) {
+	var rows []entity.NBAPlayerSalary
+	if len(nbaPlayerIDs) == 0 {
+		return rows, nil
+	}
+	err := r.ctx(ctx).
+		Where("nba_player_id IN ?", nbaPlayerIDs).
+		Find(&rows).Error
+	return rows, err
+}
+
 // UpdateCombatPowerFromRecentStats 根据 player_game_stats 更新 combat_power（最近 10 场有效比赛场均战力）
 func (r *NBAPlayerSalaryRepository) UpdateCombatPowerFromRecentStats(ctx context.Context) error {
 	query := `
