@@ -2,4 +2,5 @@
 .env
 .gitattributes
 .gocache/
+memory/
 docs/
