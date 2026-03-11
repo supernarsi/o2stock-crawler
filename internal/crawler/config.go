@@ -40,20 +40,8 @@ func LoadConfigFromEnv() (*Config, error) {
 	}
 
 	nonseStr := os.Getenv("OL2_NONSE_STR")
-	if nonseStr == "" {
-		nonseStr = "VKE5z"
-	}
-
 	baseURL := os.Getenv("OL2_BASE_URL")
-	if baseURL == "" {
-		baseURL = "https://nba2k2app.game.qq.com/game/trade/rosterList"
-	}
-
 	itemListURL := os.Getenv("OL2_ITEM_LIST_URL")
-	if itemListURL == "" {
-		itemListURL = "https://nba2k2app.game.qq.com/game/trade/itemList"
-	}
-
 	return &Config{
 		OpenID:      openID,
 		AccessToken: accessToken,
