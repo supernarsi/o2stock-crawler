@@ -257,6 +257,8 @@ func (s *LineupRecommendService) predictPower(
 		availabilityScore,
 		roleSecurityFactor,
 		dataReliabilityFactor,
+		recentProfile.Upside3,
+		teamContextFactor,
 	)
 	optimizedPower = adjustOptimizedPowerForArchetype(
 		player,

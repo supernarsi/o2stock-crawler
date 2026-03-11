@@ -17,7 +17,7 @@ type NBALineupDay struct {
 type NBALineupItem struct {
 	Rank                uint               `json:"rank"`
 	TotalPredictedPower float64            `json:"total_predicted_power"` // 对于实际最佳阵容，此值为 0
-	TotalActualPower    *float64           `json:"total_actual_power,omitempty"`
+	TotalActualPower    float64            `json:"total_actual_power"`
 	TotalSalary         uint               `json:"total_salary"`
 	Detail              []*NBALineupPlayer `json:"detail"` // 具体的球员详情
 }
