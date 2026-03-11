@@ -21,60 +21,6 @@
 - **`internal/controller/`**: 接口层，负责处理 HTTP 请求、鉴权及响应分发。
 - **`api/`**: 接口定义与公共契约。
 
-### 数据库表结构
-
-请在 MySQL 中创建以下表（来自设计文档，可自行调整索引/约束）：
-
-```sql
-CREATE TABLE `players` (
-  `id` int unsigned NOT NULL AUTO_INCREMENT,
-  `player_id` int unsigned NOT NULL COMMENT '球员 id',
-  `p_name_show` varchar(255) NOT NULL COMMENT '球员展示名称',
-  `p_name_en` varchar(255) NOT NULL COMMENT '球员英文名称',
-  `team_abbr` varchar(255) NOT NULL COMMENT '球队名称',
-  `version` int unsigned NOT NULL DEFAULT '0' COMMENT '球员版本',
-  `card_type` int unsigned NOT NULL DEFAULT '0' COMMENT '卡类型',
-  `player_img` varchar(255) NOT NULL COMMENT '球员头像',
-  `price_standard` int unsigned NOT NULL DEFAULT '0' COMMENT '单卡价格-基准',
-  `price_current_lowest` int unsigned NOT NULL DEFAULT '0' COMMENT '市场最低售价',
-  `price_sale_lower` int unsigned NOT NULL DEFAULT '0' COMMENT '售价-低',
-  `price_sale_upper` int unsigned NOT NULL DEFAULT '0' COMMENT '售价-高',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_player` (`player_id`,`version`,`card_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='球员价格表';
-
-CREATE TABLE `p_p_history` (
-  `id` int unsigned NOT NULL AUTO_INCREMENT,
-  `player_id` int unsigned NOT NULL DEFAULT '0' COMMENT '球员 id',
-  `at_date` date NOT NULL COMMENT '日期',
-  `at_date_hour` char(10) NOT NULL DEFAULT '2026010100' COMMENT '价格对应的日期小时，格式为：年月日时（例 2026010223）',
-  `at_year` char(4) NOT NULL DEFAULT '2026' COMMENT '价格对应的年份',
-  `at_month` char(2) NOT NULL DEFAULT '01' COMMENT '价格对应的月份',
-  `at_day` char(2) NOT NULL DEFAULT '01' COMMENT '价格对应的日期',
-  `at_hour` char(2) NOT NULL DEFAULT '00' COMMENT '价格对应的小时',
-  `price_standard` int unsigned NOT NULL DEFAULT '0' COMMENT '基础卡片单卡价格',
-  `price_lower` int unsigned NOT NULL DEFAULT '0' COMMENT '市场最低价（单卡）',
-  `price_upper` int unsigned NOT NULL DEFAULT '0' COMMENT '市场最高价（单卡）',
-  `c_time` datetime NOT NULL COMMENT '创建时间',
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='球员历史价格';
-
-CREATE TABLE `u_p_own` (
-  `id` int unsigned NOT NULL AUTO_INCREMENT,
-  `user_id` int unsigned NOT NULL DEFAULT '0' COMMENT '用户 id',
-  `player_id` int unsigned NOT NULL DEFAULT '0' COMMENT '球员 id',
-  `own_sta` tinyint unsigned NOT NULL DEFAULT '0' COMMENT '状态：0.未拥有；1.已购买；2.已出售',
-  `price_in` int unsigned NOT NULL DEFAULT '0' COMMENT '购买时的总价格',
-  `price_out` int unsigned NOT NULL DEFAULT '0' COMMENT '出售时的总价格',
-  `num_in` int unsigned NOT NULL DEFAULT '0' COMMENT '购买的卡数',
-  `dt_in` datetime NOT NULL COMMENT '购买时间',
-  `dt_out` datetime DEFAULT NULL COMMENT '出售时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_uid` (`user_id`),
-  KEY `idx_pid` (`player_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户拥有球员数据表';
-```
-
 ### 环境变量配置
 
 程序通过环境变量读取接口和数据库配置。你可以在本地创建一个 `.env` 文件，然后使用 `github.com/joho/godotenv` 在本地开发时自动加载。
@@ -84,7 +30,6 @@ CREATE TABLE `u_p_own` (
 - **OL2_OPENID**：接口中使用的 `openid`。
 - **OL2_ACCESS_TOKEN**：接口中使用的 `access_token`。
 - **OL2_SIGN**：接口中使用的 `sign`。
-- **OL2_LOGIN_CHANNEL**：登录渠道，默认 `qq`。
 - **OL2_NONSE_STR**：`nonseStr`。
 - **OL2_BASE_URL**：接口 URL，详见 .env 配置文件。
 
@@ -94,7 +39,6 @@ CREATE TABLE `u_p_own` (
 OL2_OPENID=
 OL2_ACCESS_TOKEN=
 OL2_SIGN=
-OL2_LOGIN_CHANNEL=
 OL2_NONSE_STR=
 OL2_BASE_URL=https://nba2k2app.com/
 ```
