@@ -106,7 +106,7 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 			day.AIRecommend = append(day.AIRecommend, api.NBALineupItem{
 				Rank:                rec.Rank,
 				TotalPredictedPower: rec.TotalPredictedPower,
-				TotalActualPower:    rec.TotalActualPower,
+				TotalActualPower:    safeFloat64(rec.TotalActualPower),
 				TotalSalary:         rec.TotalSalary,
 				Detail:              buildLineupPlayers(recPlayerIDs(rec), salaryMap, predictedMap, nil),
 			})
@@ -116,7 +116,7 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 			day.ActualBest = append(day.ActualBest, api.NBALineupItem{
 				Rank:                best.Rank,
 				TotalPredictedPower: 0,
-				TotalActualPower:    &best.TotalActualPower,
+				TotalActualPower:    best.TotalActualPower,
 				TotalSalary:         best.TotalSalary,
 				Detail:              buildLineupPlayers(backtestPlayerIDs(best), salaryMap, nil, actualMap),
 			})
@@ -138,7 +138,7 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 				day.AIRecommend = append(day.AIRecommend, api.NBALineupItem{
 					Rank:                rec.Rank,
 					TotalPredictedPower: rec.TotalPredictedPower,
-					TotalActualPower:    rec.TotalActualPower,
+					TotalActualPower:    safeFloat64(rec.TotalActualPower),
 					TotalSalary:         rec.TotalSalary,
 					Detail:              buildLineupPlayers(recPlayerIDs(rec), salaryMap, predictedMap, nil),
 				})
@@ -151,7 +151,7 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 				day.ActualBest = append(day.ActualBest, api.NBALineupItem{
 					Rank:                best.Rank,
 					TotalPredictedPower: 0,
-					TotalActualPower:    &best.TotalActualPower,
+					TotalActualPower:    best.TotalActualPower,
 					TotalSalary:         best.TotalSalary,
 					Detail:              buildLineupPlayers(backtestPlayerIDs(best), salaryMap, nil, actualMap),
 				})
@@ -320,4 +320,12 @@ func normalizeGameDate(date string) string {
 		return date[:10]
 	}
 	return date
+}
+
+// safeFloat64 安全的解引用 float64
+func safeFloat64(f *float64) float64 {
+	if f == nil {
+		return 0
+	}
+	return *f
 }
