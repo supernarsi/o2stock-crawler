@@ -5,6 +5,7 @@ import (
 	"o2stock-crawler/internal/entity"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type LineupBacktestResultRepository struct {
@@ -17,7 +18,7 @@ func NewLineupBacktestResultRepository(db *gorm.DB) *LineupBacktestResultReposit
 	}
 }
 
-// ReplaceByGameDateAndType 全量替换某日某类回测结果（先删后插）
+// ReplaceByGameDateAndType 按 game_date + result_type + rank 覆盖某日某类回测结果
 func (r *LineupBacktestResultRepository) ReplaceByGameDateAndType(
 	ctx context.Context,
 	gameDate string,
@@ -25,14 +26,39 @@ func (r *LineupBacktestResultRepository) ReplaceByGameDateAndType(
 	rows []entity.LineupBacktestResult,
 ) error {
 	return r.ctx(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("game_date = ? AND result_type = ?", gameDate, resultType).
+		if len(rows) == 0 {
+			return tx.Where("game_date = ? AND result_type = ?", gameDate, resultType).
+				Delete(&entity.LineupBacktestResult{}).Error
+		}
+
+		ranks := make([]uint, 0, len(rows))
+		for _, row := range rows {
+			ranks = append(ranks, row.Rank)
+		}
+		if err := tx.
+			Where("game_date = ? AND result_type = ? AND `rank` NOT IN ?", gameDate, resultType, ranks).
 			Delete(&entity.LineupBacktestResult{}).Error; err != nil {
 			return err
 		}
-		if len(rows) == 0 {
-			return nil
-		}
-		return tx.CreateInBatches(rows, 100).Error
+
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "game_date"},
+				{Name: "result_type"},
+				{Name: "rank"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"total_actual_power",
+				"total_salary",
+				"player1_id",
+				"player2_id",
+				"player3_id",
+				"player4_id",
+				"player5_id",
+				"detail_json",
+				"updated_at",
+			}),
+		}).Create(&rows).Error
 	})
 }
 

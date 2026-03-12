@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type LineupRecommendationRepository struct {
@@ -18,19 +19,43 @@ func NewLineupRecommendationRepository(db *gorm.DB) *LineupRecommendationReposit
 	}
 }
 
-// BatchSave 批量保存推荐阵容（先删除同日期旧记录，再插入）
+// BatchSave 批量保存推荐阵容（按 game_date + recommendation_type + rank 覆盖）
 func (r *LineupRecommendationRepository) BatchSave(ctx context.Context, recs []entity.LineupRecommendation) error {
 	if len(recs) == 0 {
 		return nil
 	}
 	gameDate := recs[0].GameDate
+	ranksByType := make(map[uint8][]uint, 3)
+	for _, rec := range recs {
+		ranksByType[rec.RecommendationType] = append(ranksByType[rec.RecommendationType], rec.Rank)
+	}
 	return r.ctx(ctx).Transaction(func(tx *gorm.DB) error {
-		// 删除旧记录
-		if err := tx.Where("game_date = ?", gameDate).Delete(&entity.LineupRecommendation{}).Error; err != nil {
-			return err
+		for recommendationType, ranks := range ranksByType {
+			if err := tx.
+				Where("game_date = ? AND recommendation_type = ? AND `rank` NOT IN ?", gameDate, recommendationType, ranks).
+				Delete(&entity.LineupRecommendation{}).Error; err != nil {
+				return err
+			}
 		}
-		// 插入新记录
-		return tx.Create(&recs).Error
+
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "game_date"},
+				{Name: "recommendation_type"},
+				{Name: "rank"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"total_predicted_power",
+				"total_actual_power",
+				"total_salary",
+				"player1_id",
+				"player2_id",
+				"player3_id",
+				"player4_id",
+				"player5_id",
+				"detail_json",
+			}),
+		}).Create(&recs).Error
 	})
 }
 
@@ -98,14 +123,14 @@ func (r *LineupRecommendationRepository) GetLatestGameDate(ctx context.Context, 
 // GetRecentGameDates 获取小于给定日期的最近 limit 个有推荐数据的日期
 func (r *LineupRecommendationRepository) GetRecentGameDates(ctx context.Context, beforeDate string, limit int) ([]string, error) {
 	var dates []string
-	
+
 	// 为了兼容只传 2026-03-10 和完整的 2026-03-10T... 字符串，
 	// 如果传入的是短日期，确保查询能匹配。实际库里的 game_date 包含 T... 时，如果 beforeDate 不带，可以直接前缀比对。
 	queryBefore := beforeDate
 	if len(queryBefore) == 10 {
 		queryBefore = queryBefore + "T"
 	}
-	
+
 	err := r.ctx(ctx).Model(&entity.LineupRecommendation{}).
 		Where("game_date < ?", queryBefore).
 		Select("DISTINCT game_date").
