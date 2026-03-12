@@ -24,6 +24,7 @@ type LineupRecommendation struct {
 	Player5ID           uint      `gorm:"column:player5_id"`
 	DetailJSON          string    `gorm:"column:detail_json;type:json"`
 	CreatedAt           time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt           time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (LineupRecommendation) TableName() string {

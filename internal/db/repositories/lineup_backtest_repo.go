@@ -69,7 +69,7 @@ func (r *LineupBacktestResultRepository) GetByGameDateAndType(
 ) ([]entity.LineupBacktestResult, error) {
 	var rows []entity.LineupBacktestResult
 	err := r.ctx(ctx).
-		Where("game_date = ? AND result_type = ?", gameDate, resultType).
+		Where("LEFT(game_date, 10) = ? AND result_type = ?", gameDate[:min(10, len(gameDate))], resultType).
 		Order("`rank` ASC").
 		Find(&rows).Error
 	return rows, err
@@ -83,9 +83,10 @@ func (r *LineupBacktestResultRepository) GetByGameDatesAndType(
 	if len(gameDates) == 0 {
 		return nil, nil
 	}
+	normalizedDates := normalizeGameDates(gameDates)
 	var rows []entity.LineupBacktestResult
 	err := r.ctx(ctx).
-		Where("game_date IN ? AND result_type = ?", gameDates, resultType).
+		Where("LEFT(game_date, 10) IN ? AND result_type = ?", normalizedDates, resultType).
 		Order("game_date DESC, `rank` ASC").
 		Find(&rows).Error
 	return rows, err

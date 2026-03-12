@@ -58,6 +58,7 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 	if err != nil {
 		historyDates = nil
 	}
+	historyDates = normalizeGameDateList(historyDates)
 
 	// 2. 收集所有需要查询的日期
 	allQueryDates := make([]string, 0)
@@ -134,6 +135,7 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 			})
 		}
 		res.Today = &day
+		res.TodayUpdateAt = latestRecommendationUpdateAt(todayRecs)
 	}
 
 	// 7. 组装历史数据
@@ -317,9 +319,9 @@ func parsePredictedDetailMap(detailJSONStr string) map[uint]PredictedPlayerDetai
 	}
 	var payload struct {
 		Players []struct {
-			NBAPlayerID       uint    `json:"nba_player_id"`
-			PredictedPower    float64 `json:"predicted_power"`
-			Factors           struct {
+			NBAPlayerID    uint    `json:"nba_player_id"`
+			PredictedPower float64 `json:"predicted_power"`
+			Factors        struct {
 				AvailabilityScore float64 `json:"availability_score"`
 			} `json:"factors"`
 		} `json:"players"`
@@ -367,6 +369,36 @@ func normalizeGameDate(date string) string {
 		return date[:10]
 	}
 	return date
+}
+
+func normalizeGameDateList(dates []string) []string {
+	normalized := make([]string, 0, len(dates))
+	seen := make(map[string]struct{}, len(dates))
+	for _, date := range dates {
+		key := normalizeGameDate(date)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, key)
+	}
+	return normalized
+}
+
+func latestRecommendationUpdateAt(recs []entity.LineupRecommendation) int64 {
+	var latest time.Time
+	for _, rec := range recs {
+		if rec.UpdatedAt.After(latest) {
+			latest = rec.UpdatedAt
+		}
+	}
+	if latest.IsZero() {
+		return 0
+	}
+	return latest.Unix()
 }
 
 // safeFloat64 安全的解引用 float64

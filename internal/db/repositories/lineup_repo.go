@@ -4,6 +4,7 @@ import (
 	"context"
 	"o2stock-crawler/internal/entity"
 	"sort"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -54,6 +55,7 @@ func (r *LineupRecommendationRepository) BatchSave(ctx context.Context, recs []e
 				"player4_id",
 				"player5_id",
 				"detail_json",
+				"updated_at",
 			}),
 		}).Create(&recs).Error
 	})
@@ -82,7 +84,7 @@ func (r *LineupRecommendationRepository) GetByDateAndType(
 ) ([]entity.LineupRecommendation, error) {
 	var recs []entity.LineupRecommendation
 	err := r.ctx(ctx).
-		Where("game_date = ? AND recommendation_type = ?", gameDate, recommendationType).
+		Where("LEFT(game_date, 10) = ? AND recommendation_type = ?", gameDate[:min(10, len(gameDate))], recommendationType).
 		Order("`rank` ASC").
 		Find(&recs).Error
 	return recs, err
@@ -97,9 +99,10 @@ func (r *LineupRecommendationRepository) GetByDatesAndType(
 	if len(gameDates) == 0 {
 		return nil, nil
 	}
+	normalizedDates := normalizeGameDates(gameDates)
 	var recs []entity.LineupRecommendation
 	err := r.ctx(ctx).
-		Where("game_date IN ? AND recommendation_type = ?", gameDates, recommendationType).
+		Where("LEFT(game_date, 10) IN ? AND recommendation_type = ?", normalizedDates, recommendationType).
 		Order("game_date DESC, `rank` ASC").
 		Find(&recs).Error
 	return recs, err
@@ -140,6 +143,26 @@ func (r *LineupRecommendationRepository) GetRecentGameDates(ctx context.Context,
 	return dates, err
 }
 
+func normalizeGameDates(gameDates []string) []string {
+	normalized := make([]string, 0, len(gameDates))
+	seen := make(map[string]struct{}, len(gameDates))
+	for _, gameDate := range gameDates {
+		key := gameDate
+		if len(key) > 10 {
+			key = key[:10]
+		}
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, key)
+	}
+	return normalized
+}
+
 // BatchUpdateActualPower 批量更新推荐阵容的实际总战力（按 game_date + rank）
 // 仅更新 recommendation_type=1 (AI 推荐) 的数据
 func (r *LineupRecommendationRepository) BatchUpdateActualPower(
@@ -156,6 +179,7 @@ func (r *LineupRecommendationRepository) BatchUpdateActualPower(
 		ranks = append(ranks, rank)
 	}
 	sort.Slice(ranks, func(i, j int) bool { return ranks[i] < ranks[j] })
+	now := time.Now()
 
 	return r.ctx(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, rank := range ranks {
@@ -166,7 +190,10 @@ func (r *LineupRecommendationRepository) BatchUpdateActualPower(
 					entity.LineupRecommendationTypeAIRecommended,
 					rank,
 				).
-				Update("total_actual_power", rankPowerMap[rank]).Error; err != nil {
+				Updates(map[string]any{
+					"total_actual_power": rankPowerMap[rank],
+					"updated_at":         now,
+				}).Error; err != nil {
 				return err
 			}
 		}
@@ -184,6 +211,7 @@ func (r *LineupRecommendationRepository) BatchUpdateActualPowerForAllTypes(
 	if len(recs) == 0 {
 		return nil
 	}
+	now := time.Now()
 
 	return r.ctx(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, rec := range recs {
@@ -199,7 +227,10 @@ func (r *LineupRecommendationRepository) BatchUpdateActualPowerForAllTypes(
 					rec.RecommendationType,
 					rec.Rank,
 				).
-				Update("total_actual_power", actualPower).Error; err != nil {
+				Updates(map[string]any{
+					"total_actual_power": actualPower,
+					"updated_at":         now,
+				}).Error; err != nil {
 				return err
 			}
 		}
