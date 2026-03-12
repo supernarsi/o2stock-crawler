@@ -863,6 +863,50 @@ func TestBuildRobustBaseValuePullsTowardHistoryCenter(t *testing.T) {
 	}
 }
 
+func TestOpportunityAdjustedBaseValueBoostsRecentRoleGrowth(t *testing.T) {
+	stats := []entity.PlayerGameStats{
+		{Minutes: 36, Points: 28, Assists: 8, Rebounds: 6, FieldGoalsAttempted: 21, FreeThrowsAttempted: 7, Turnovers: 3},
+		{Minutes: 35, Points: 24, Assists: 7, Rebounds: 5, FieldGoalsAttempted: 19, FreeThrowsAttempted: 6, Turnovers: 2},
+		{Minutes: 34, Points: 22, Assists: 6, Rebounds: 5, FieldGoalsAttempted: 18, FreeThrowsAttempted: 5, Turnovers: 2},
+		{Minutes: 23, Points: 12, Assists: 3, Rebounds: 4, FieldGoalsAttempted: 9, FreeThrowsAttempted: 2, Turnovers: 1},
+		{Minutes: 22, Points: 11, Assists: 3, Rebounds: 4, FieldGoalsAttempted: 8, FreeThrowsAttempted: 2, Turnovers: 1},
+		{Minutes: 21, Points: 10, Assists: 2, Rebounds: 3, FieldGoalsAttempted: 8, FreeThrowsAttempted: 1, Turnovers: 1},
+	}
+	profile := recentPowerProfile{
+		Avg3:        43,
+		Avg5:        37,
+		Avg10:       32,
+		SampleCount: 6,
+	}
+
+	got := opportunityAdjustedBaseValue(32, stats, &entity.PlayerSeasonStats{Minutes: 23}, 10, profile)
+	if !(got > 32 && got <= 38) {
+		t.Fatalf("opportunity adjusted base=%.1f, want moderate lift above 32", got)
+	}
+}
+
+func TestOpportunityAdjustedBaseValueKeepsMarginalTrendUnchanged(t *testing.T) {
+	stats := []entity.PlayerGameStats{
+		{Minutes: 25, Points: 14, Assists: 4, Rebounds: 4, FieldGoalsAttempted: 11, FreeThrowsAttempted: 3, Turnovers: 2},
+		{Minutes: 24, Points: 13, Assists: 4, Rebounds: 4, FieldGoalsAttempted: 10, FreeThrowsAttempted: 3, Turnovers: 2},
+		{Minutes: 24, Points: 13, Assists: 4, Rebounds: 3, FieldGoalsAttempted: 10, FreeThrowsAttempted: 2, Turnovers: 2},
+		{Minutes: 24, Points: 13, Assists: 4, Rebounds: 4, FieldGoalsAttempted: 10, FreeThrowsAttempted: 2, Turnovers: 2},
+		{Minutes: 23, Points: 12, Assists: 4, Rebounds: 4, FieldGoalsAttempted: 10, FreeThrowsAttempted: 2, Turnovers: 2},
+		{Minutes: 23, Points: 12, Assists: 3, Rebounds: 3, FieldGoalsAttempted: 9, FreeThrowsAttempted: 2, Turnovers: 2},
+	}
+	profile := recentPowerProfile{
+		Avg3:        30,
+		Avg5:        29.5,
+		Avg10:       29,
+		SampleCount: 6,
+	}
+
+	got := opportunityAdjustedBaseValue(30, stats, &entity.PlayerSeasonStats{Minutes: 23.5}, 12, profile)
+	if got != 30 {
+		t.Fatalf("opportunity adjusted base=%.1f, want unchanged 30.0", got)
+	}
+}
+
 func TestCalibratePredictedPowerShrinksVolatileSpike(t *testing.T) {
 	profile := recentPowerProfile{
 		Avg3:        50,
