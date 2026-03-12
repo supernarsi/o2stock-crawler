@@ -18,6 +18,8 @@ const (
 	LineupAvgValueRatioHigh      = 3.5
 	LineupAvgValueRatioMid       = 3.2
 	LineupHighValueCountRequired = 2
+	CoreTripletPowerThreshold    = 165.0
+	CoreTripletThirdMinPower     = 47.0
 )
 
 // solveOptimalLineup 在推荐模式下求解 TopN 阵容（仅使用正战力候选）。
@@ -277,24 +279,25 @@ func calcLineupStructureFactor(lineup []PlayerCandidate) float64 {
 	}
 
 	avgValueRatio := totalValueRatio / float64(defaultPickCount)
+	coreTripletBonus := calcCoreTripletBonus(lineup)
 
 	// 高性价比阵容
 	if avgValueRatio >= LineupAvgValueRatioHigh && valueRatioCount >= LineupHighValueCountRequired {
-		return 1.02
+		return 1.02 + coreTripletBonus
 	}
 	if avgValueRatio >= LineupAvgValueRatioMid && valueRatioCount >= LineupHighValueCountRequired {
-		return 1.0
+		return 1.0 + coreTripletBonus
 	}
 
 	// 有爆发型球员或高性价比球员时，减少惩罚（这些是潜在的价值 picks）
 	if explosiveCount > 0 || valueRatioCount >= 2 {
 		switch {
 		case cheapCount <= 2:
-			return 1.0
+			return 1.0 + coreTripletBonus
 		case cheapCount == 3:
-			return 0.98
+			return 0.98 + coreTripletBonus
 		default:
-			return 0.95
+			return 0.95 + coreTripletBonus
 		}
 	}
 
@@ -302,24 +305,46 @@ func calcLineupStructureFactor(lineup []PlayerCandidate) float64 {
 	if lowSalaryHighPowerCount > 0 {
 		switch {
 		case cheapCount <= 2:
-			return 1.0
+			return 1.0 + coreTripletBonus
 		case cheapCount == 3:
-			return 0.97
+			return 0.97 + coreTripletBonus
 		default:
-			return 0.93
+			return 0.93 + coreTripletBonus
 		}
 	}
 
 	switch {
 	case cheapCount <= 1:
-		return 1.0
+		return 1.0 + coreTripletBonus
 	case cheapCount == 2:
-		return 0.98
+		return 0.98 + coreTripletBonus
 	case cheapCount == 3:
-		return 0.95
+		return 0.95 + coreTripletBonus
 	default:
-		return 0.88
+		return 0.88 + coreTripletBonus
 	}
+}
+
+func calcCoreTripletBonus(lineup []PlayerCandidate) float64 {
+	if len(lineup) < 3 {
+		return 0.0
+	}
+
+	powers := make([]float64, 0, len(lineup))
+	for _, candidate := range lineup {
+		powers = append(powers, candidate.Prediction.PredictedPower)
+	}
+	sort.Slice(powers, func(i, j int) bool { return powers[i] > powers[j] })
+
+	top3Total := powers[0] + powers[1] + powers[2]
+	if top3Total < CoreTripletPowerThreshold || powers[2] < CoreTripletThirdMinPower {
+		return 0.0
+	}
+
+	bonus := 0.0
+	bonus += clamp((top3Total-CoreTripletPowerThreshold)*0.0008, 0.0, 0.012)
+	bonus += clamp((powers[2]-CoreTripletThirdMinPower)*0.0012, 0.0, 0.006)
+	return bonus
 }
 
 type lineupState struct {

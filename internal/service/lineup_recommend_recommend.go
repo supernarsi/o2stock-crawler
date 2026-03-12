@@ -133,6 +133,7 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 
 	// 6. DP 求解最优阵容
 	topLineups := s.solveOptimalLineup(candidates, defaultSalaryCap, defaultPickCount, defaultTopN)
+	topLineups = s.ensureFullAvailabilityLineup(topLineups, candidates, defaultSalaryCap, defaultPickCount, defaultTopN)
 	if len(topLineups) == 0 {
 		log.Println("未找到可行阵容")
 		return nil
@@ -186,6 +187,13 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		)
 
 		lineups := s.solveOptimalLineup(benchmarkCandidates, defaultSalaryCap, defaultPickCount, defaultTopN)
+		lineups = s.ensureFullAvailabilityLineup(
+			lineups,
+			benchmarkCandidates,
+			defaultSalaryCap,
+			defaultPickCount,
+			defaultTopN,
+		)
 		if len(lineups) == 0 {
 			log.Printf("%s未找到可行阵容: %s", spec.title, gameDate)
 			continue
@@ -220,6 +228,57 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 
 	log.Printf(">>> 推荐完成，结果已保存到 lineup_recommendation 表 <<<")
 	return nil
+}
+
+func (s *LineupRecommendService) ensureFullAvailabilityLineup(
+	lineups [][]PlayerCandidate,
+	candidates []PlayerCandidate,
+	salaryCap int,
+	pickCount int,
+	topN int,
+) [][]PlayerCandidate {
+	if len(lineups) == 0 {
+		return lineups
+	}
+	for _, lineup := range lineups {
+		if lineupHasFullAvailability(lineup) {
+			return lineups
+		}
+	}
+
+	fullAvailabilityCandidates := make([]PlayerCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Player.Salary == 0 || candidate.Prediction.PredictedPower <= 0 {
+			continue
+		}
+		if !candidateHasFullAvailability(candidate) {
+			continue
+		}
+		fullAvailabilityCandidates = append(fullAvailabilityCandidates, candidate)
+	}
+	if len(fullAvailabilityCandidates) < pickCount {
+		log.Printf("全员可用阵容保底失败: 可用候选不足 %d 人", pickCount)
+		return lineups
+	}
+
+	healthyLineups := s.solveOptimalLineup(fullAvailabilityCandidates, salaryCap, pickCount, 1)
+	if len(healthyLineups) == 0 {
+		log.Printf("全员可用阵容保底失败: 未找到满足工资帽的健康阵容")
+		return lineups
+	}
+
+	healthyLineup := healthyLineups[0]
+	if containsSameLineup(lineups, healthyLineup) {
+		return lineups
+	}
+
+	updated := append([][]PlayerCandidate{}, lineups...)
+	if len(updated) >= topN {
+		updated[len(updated)-1] = healthyLineup
+	} else {
+		updated = append(updated, healthyLineup)
+	}
+	return updated
 }
 
 // --- 球员战力预测（11 维评分） ---

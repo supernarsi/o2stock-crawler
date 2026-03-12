@@ -805,7 +805,7 @@ func TestFormatBacktestPlayersFromRowWithTxOnlySlot(t *testing.T) {
 	}
 
 	got := formatBacktestPlayersFromRow(row, playerMap)
-	want := "201950:朱.霍勒迪, 196154(tx):-"
+	want := "朱.霍勒迪(55.3), 196154(tx)(48.6)"
 	if got != want {
 		t.Fatalf("formatBacktestPlayersFromRow()=%q, want %q", got, want)
 	}
@@ -970,6 +970,7 @@ func TestBuildBacktestRowFromCandidatesTxOnlyPersistsDetail(t *testing.T) {
 		lineup,
 		"",
 		0,
+		nil,
 		-1,
 	)
 	if row.Player2ID != 0 {
@@ -1005,6 +1006,7 @@ func TestBuildBacktestRowFromCandidatesUsesBenchmarkResultTypeAndActualOverride(
 		lineup,
 		"3_game_average_baseline",
 		130,
+		[]float64{31.5, 27.5, 25.0, 21.5, 13.0},
 		118.5,
 	)
 	if row.TotalActualPower != 118.5 {
@@ -1020,6 +1022,64 @@ func TestBuildBacktestRowFromCandidatesUsesBenchmarkResultTypeAndActualOverride(
 	}
 	if detail.PredictedTotalPower != 130 {
 		t.Fatalf("detail.PredictedTotalPower=%.1f, want 130", detail.PredictedTotalPower)
+	}
+	if len(detail.Lineup) != 5 {
+		t.Fatalf("detail.Lineup len=%d, want 5", len(detail.Lineup))
+	}
+	if detail.Lineup[0].ActualPower != 31.5 {
+		t.Fatalf("detail.Lineup[0].ActualPower=%.1f, want 31.5", detail.Lineup[0].ActualPower)
+	}
+}
+
+func TestBuildBacktestRowFromRecommendationPersistsActualPowerByPlayer(t *testing.T) {
+	svc := &LineupRecommendService{}
+	rec := entity.LineupRecommendation{
+		GameDate:            "2026-03-08",
+		Rank:                1,
+		RecommendationType:  entity.LineupRecommendationTypeAIRecommended,
+		TotalPredictedPower: 145.6,
+		TotalSalary:         120,
+		Player1ID:           1,
+		Player2ID:           2,
+		Player3ID:           3,
+		Player4ID:           4,
+		Player5ID:           5,
+	}
+	actualMap := map[uint]float64{
+		1: 30.5,
+		2: 28.0,
+		3: 26.5,
+		4: 24.0,
+		5: 20.5,
+	}
+	playerMap := map[uint]entity.NBAGamePlayer{
+		1: {NBAPlayerID: 1, PlayerName: "A", Salary: 20},
+		2: {NBAPlayerID: 2, PlayerName: "B", Salary: 20},
+		3: {NBAPlayerID: 3, PlayerName: "C", Salary: 25},
+		4: {NBAPlayerID: 4, PlayerName: "D", Salary: 25},
+		5: {NBAPlayerID: 5, PlayerName: "E", Salary: 30},
+	}
+
+	row, ok := svc.buildBacktestRowFromRecommendation("2026-03-08", rec, actualMap, playerMap)
+	if !ok {
+		t.Fatal("buildBacktestRowFromRecommendation() ok=false, want true")
+	}
+	if row.TotalActualPower != 129.5 {
+		t.Fatalf("row.TotalActualPower=%.1f, want 129.5", row.TotalActualPower)
+	}
+
+	var detail backtestDetailPayload
+	if err := json.Unmarshal([]byte(row.DetailJSON), &detail); err != nil {
+		t.Fatalf("unmarshal detail_json err=%v", err)
+	}
+	if len(detail.Lineup) != 5 {
+		t.Fatalf("detail.Lineup len=%d, want 5", len(detail.Lineup))
+	}
+	if detail.Lineup[0].PlayerName != "A" || detail.Lineup[0].ActualPower != 30.5 {
+		t.Fatalf("detail.Lineup[0]=%+v, want name=A actual=30.5", detail.Lineup[0])
+	}
+	if detail.DeltaActualPredict != -16.1 {
+		t.Fatalf("detail.DeltaActualPredict=%.1f, want -16.1", detail.DeltaActualPredict)
 	}
 }
 
@@ -1074,6 +1134,62 @@ func TestBuildAverageRecommendationCandidatesFiltersInjuryOutInBacktest(t *testi
 	}
 	if got.Prediction.PredictedPower != 25 {
 		t.Fatalf("PredictedPower=%.1f, want 25.0", got.Prediction.PredictedPower)
+	}
+}
+
+func TestEnsureFullAvailabilityLineupAddsHealthyFallback(t *testing.T) {
+	svc := &LineupRecommendService{}
+	mixedLineup := []PlayerCandidate{
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 1, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 50, OptimizedPower: 50, AvailabilityScore: 0.78}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 2, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 49, OptimizedPower: 49, AvailabilityScore: 0.78}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 3, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 48, OptimizedPower: 48, AvailabilityScore: 0.78}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 4, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 47, OptimizedPower: 47, AvailabilityScore: 0.78}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 5, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 46, OptimizedPower: 46, AvailabilityScore: 0.78}},
+	}
+	candidates := append([]PlayerCandidate{}, mixedLineup...)
+	candidates = append(candidates,
+		PlayerCandidate{Player: entity.NBAGamePlayer{NBAPlayerID: 6, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 40, OptimizedPower: 40, AvailabilityScore: 1}},
+		PlayerCandidate{Player: entity.NBAGamePlayer{NBAPlayerID: 7, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 39, OptimizedPower: 39, AvailabilityScore: 1}},
+		PlayerCandidate{Player: entity.NBAGamePlayer{NBAPlayerID: 8, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 38, OptimizedPower: 38, AvailabilityScore: 1}},
+		PlayerCandidate{Player: entity.NBAGamePlayer{NBAPlayerID: 9, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 37, OptimizedPower: 37, AvailabilityScore: 1}},
+		PlayerCandidate{Player: entity.NBAGamePlayer{NBAPlayerID: 10, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 36, OptimizedPower: 36, AvailabilityScore: 1}},
+	)
+
+	got := svc.ensureFullAvailabilityLineup([][]PlayerCandidate{mixedLineup}, candidates, 150, 5, 3)
+	if len(got) != 2 {
+		t.Fatalf("len(got)=%d, want 2", len(got))
+	}
+	if !lineupHasFullAvailability(got[1]) {
+		t.Fatalf("got[1] should be a full-availability lineup: %+v", got[1])
+	}
+}
+
+func TestCalcCoreTripletBonusRewardsThreeStrongCores(t *testing.T) {
+	lineup := []PlayerCandidate{
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 1, Salary: 50}, Prediction: PlayerPrediction{PredictedPower: 60}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 2, Salary: 45}, Prediction: PlayerPrediction{PredictedPower: 56}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 3, Salary: 40}, Prediction: PlayerPrediction{PredictedPower: 49}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 4, Salary: 10}, Prediction: PlayerPrediction{PredictedPower: 28}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 5, Salary: 5}, Prediction: PlayerPrediction{PredictedPower: 22}},
+	}
+
+	got := calcCoreTripletBonus(lineup)
+	if got <= 0 {
+		t.Fatalf("calcCoreTripletBonus()=%.4f, want > 0", got)
+	}
+}
+
+func TestCalcCoreTripletBonusIgnoresBalancedNonCoreLineup(t *testing.T) {
+	lineup := []PlayerCandidate{
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 1, Salary: 42}, Prediction: PlayerPrediction{PredictedPower: 46}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 2, Salary: 38}, Prediction: PlayerPrediction{PredictedPower: 45}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 3, Salary: 30}, Prediction: PlayerPrediction{PredictedPower: 41}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 4, Salary: 20}, Prediction: PlayerPrediction{PredictedPower: 35}},
+		{Player: entity.NBAGamePlayer{NBAPlayerID: 5, Salary: 15}, Prediction: PlayerPrediction{PredictedPower: 31}},
+	}
+
+	if got := calcCoreTripletBonus(lineup); got != 0 {
+		t.Fatalf("calcCoreTripletBonus()=%.4f, want 0", got)
 	}
 }
 

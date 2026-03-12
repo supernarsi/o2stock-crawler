@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -125,6 +126,60 @@ func normalizePlayerName(name string) string {
 func calcPowerFromStats(g entity.PlayerGameStats) float64 {
 	return float64(g.Points) + 1.2*float64(g.Rebounds) + 1.5*float64(g.Assists) +
 		3*float64(g.Steals) + 3*float64(g.Blocks) - float64(g.Turnovers)
+}
+
+func candidateHasFullAvailability(candidate PlayerCandidate) bool {
+	return candidate.Prediction.AvailabilityScore >= 0.999999
+}
+
+func lineupHasFullAvailability(lineup []PlayerCandidate) bool {
+	if len(lineup) == 0 {
+		return false
+	}
+	for _, candidate := range lineup {
+		if !candidateHasFullAvailability(candidate) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsSameLineup(lineups [][]PlayerCandidate, target []PlayerCandidate) bool {
+	targetKey := lineupKey(target)
+	if targetKey == "" {
+		return false
+	}
+	for _, lineup := range lineups {
+		if lineupKey(lineup) == targetKey {
+			return true
+		}
+	}
+	return false
+}
+
+func lineupKey(lineup []PlayerCandidate) string {
+	if len(lineup) == 0 {
+		return ""
+	}
+
+	ids := make([]uint, 0, len(lineup))
+	for _, candidate := range lineup {
+		if candidate.Player.NBAPlayerID == 0 {
+			continue
+		}
+		ids = append(ids, candidate.Player.NBAPlayerID)
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%d", id))
+	}
+	return strings.Join(parts, "-")
 }
 
 // calcRecentVersatilityFactor 计算球员近期的多面手因子
