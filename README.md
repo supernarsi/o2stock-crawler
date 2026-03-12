@@ -1,39 +1,39 @@
 ## O2Stock-Crawler
 
-一个使用 Golang 实现的 NBA2K Online2 球员价格抓取与入库工具。
+A tool implemented in Golang for crawling and storing NBA2K Online2 player price data.
 
-### 功能概述
+### Features Overview
 
-- **定时/一次性调用**：请求官方接口获取收藏列表中的球员价格数据。
-- **JSON 解析与模型映射**：解析接口返回的 `rosterList` 数据。
-- **MySQL 持久化**：
-  - 更新/插入当前球员价格到 `players` 表。
-  - 将每次抓取的价格快照写入 `p_p_history` 历史表。
+- **Periodic/One-time Invocation**: Request official interfaces to retrieve player price data from follow lists.
+- **JSON Parsing & Model Mapping**: Parse `rosterList` data returned by the interface.
+- **MySQL Persistence**:
+  - Update/Insert current player prices into the `players`表.
+  - Write price snapshots into the `p_p_history` table for each crawl.
 
-### 项目架构
+### Project Architecture
 
-本项目采用清晰的分层架构（Clean Architecture / DDD 模式）：
+The project follows a clear layered architecture (Clean Architecture / DDD pattern):
 
-- **`internal/entity/`**: 领域实体模型，对应 MySQL 表结构（GORM）。
-- **`internal/dto/`**: 数据传输对象，用于 API 响应和请求的 JSON 序列化。
-- **`internal/db/repositories/`**: 数据访问层（Repository），负责纯粹的 CURD 操作。
-- **`internal/service/`**: 业务逻辑层（Service），处理复杂的业务流程及 Entity 与 DTO 的转换。
-- **`internal/controller/`**: 接口层，负责处理 HTTP 请求、鉴权及响应分发。
-- **`api/`**: 接口定义与公共契约。
+- **`internal/entity/`**: Domain entity models corresponding to MySQL table structures (GORM).
+- **`internal/dto/`**: Data Transfer Objects for API response and request JSON serialization.
+- **`internal/db/repositories/`**: Data Access Layer (Repository) responsible for pure CRUD operations.
+- **`internal/service/`**: Business Logic Layer (Service) handling complex workflows and conversions between Entity and DTO.
+- **`internal/controller/`**: Interface Layer responsible for HTTP requests, authentication, and response dispatching.
+- **`api/`**: API definitions and public contracts.
 
-### 环境变量配置
+### Environment Configuration
 
-程序通过环境变量读取接口和数据库配置。你可以在本地创建一个 `.env` 文件，然后使用 `github.com/joho/godotenv` 在本地开发时自动加载。
+The program reads interface and database configurations via environment variables. You can create a `.env` file in the root directory, which will be automatically loaded during local development using `github.com/joho/godotenv`.
 
-#### OL2 接口配置
+#### OL2 Interface Configuration
 
-- **OL2_OPENID**：接口中使用的 `openid`。
-- **OL2_ACCESS_TOKEN**：接口中使用的 `access_token`。
-- **OL2_SIGN**：接口中使用的 `sign`。
-- **OL2_NONSE_STR**：`nonseStr`。
-- **OL2_BASE_URL**：接口 URL，详见 .env 配置文件。
+- **OL2_OPENID**: `openid` used in the interface.
+- **OL2_ACCESS_TOKEN**: `access_token` used in the interface.
+- **OL2_SIGN**: `sign` used in the interface.
+- **OL2_NONSE_STR**: `nonseStr`.
+- **OL2_BASE_URL**: API Base URL (refer to `.env` config file).
 
-示例（请根据自己的实际账号信息修改）：
+Example (please modify based on your actual account info):
 
 ```env
 OL2_OPENID=
@@ -43,9 +43,9 @@ OL2_NONSE_STR=
 OL2_BASE_URL=https://nba2k2app.com/
 ```
 
-#### 数据库配置
+#### Database Configuration
 
-通过环境变量覆盖：
+Override via environment variables:
 
 ```env
 DB_HOST=127.0.0.1
@@ -55,195 +55,193 @@ DB_PASS=
 DB_NAME=
 ```
 
-### 安装依赖
+### Install Dependencies
 
-在项目根目录执行：
+Execute in the project root:
 
 ```bash
 go mod tidy
 ```
 
-### 运行方式
+### Usage
 
-程序入口在 `cmd/o2stock-crawler/main.go`。
+The program entry point is `cmd/o2stock-crawler/main.go`.
 
-- **一次性抓取并入库**：
+- **One-time crawling and storage**:
 
 ```bash
 go run ./cmd/o2stock-crawler
-# 或
+# OR
 go run ./cmd/o2stock-crawler run-once
 ```
 
-- **循环定时抓取**（例如每 1 小时抓取一次）：
+- **Looping periodic crawling** (e.g., every 1 hour):
 
 ```bash
 go run ./cmd/o2stock-crawler loop 1h
 ```
 
-间隔参数使用 Go 的 duration 语法，例如 `30m`、`2h`、`90m` 等；若不填则默认 60 分钟。
+Interval parameter uses Go's duration syntax (e.g., `30m`, `2h`, `90m`); defaults to 60 minutes if omitted.
 
-## API 服务
+## API Service
 
-项目还提供了一个 HTTP API 服务，用于查询球员数据和用户买卖记录。
+The project also provides an HTTP API service for querying player data and user transaction records.
 
-### 启动 API 服务
+### Start API Service
 
 ```bash
 go run ./cmd/o2stock-api
 ```
 
-默认监听 `:8080`，可通过环境变量 `API_ADDR` 修改。
+Listens on `:8080` by default; can be modified via the `API_ADDR` environment variable.
 
-### 运行测试
+### Running Tests
 
-项目包含单元测试，运行方式：
+The project includes unit tests:
 
 ```bash
-# 运行所有测试
+# Run all tests
 go test ./...
 
-# 运行特定包的测试
+# Run tests for a specific package
 go test ./internal/db/...
 
-# 跳过需要数据库的测试（短模式）
+# Skip tests requiring database (short mode)
 go test -short ./...
 ```
 
-**注意：** 数据库相关的测试需要配置真实的数据库连接。测试会自动跳过如果无法连接数据库。
+**Note:** Database-related tests require a real database connection. Tests will automatically skip if unable to connect.
 
-## 构建与部署
+## Build and Deployment
 
-项目提供了 `build.sh` 脚本用于快速构建，并支持将配置文件打包进二进制文件，方便部署。同时提供了 Systemd 服务配置文件，支持在 Linux (如 CentOS) 系统上以服务方式常驻运行。
+The project provides a `build.sh` script for rapid building, supporting configuration injection into the binary for easy deployment. It also includes Systemd service configuration for Linux (e.g., CentOS) systems.
 
-### 1. build.sh 脚本使用说明
+### 1. `build.sh` Script Instructions
 
-**脚本功能概述**
-`build.sh` 是一个自动化构建脚本，它会读取当前目录下的 `.env` 文件内容，并通过 Go 的 `-ldflags` 将其注入到二进制文件中。这样编译出来的程序在运行时如果没有找到外部 `.env` 文件，会自动使用编译时注入的配置，实现"零配置"部署。
+**Script Overview**
+`build.sh` is an automated build script that reads the contents of the `.env` file in the current directory and injects them into the binary via Go's `-ldflags`. This allows the program to run using injected configurations if no external `.env` file is found, enabling "zero-config" deployment.
 
-**运行环境要求**
-- 操作系统：Linux / macOS
-- 依赖软件：Go 1.18+
-- 依赖文件：项目根目录下需存在 `.env` 配置文件（用于注入默认配置）
+**Requirements**
+- OS: Linux / macOS
+- Dependencies: Go 1.18+
+- Required File: A `.env` config file must exist in the root (for default config injection).
 
-**执行步骤**
+**Steps**
 
-1.  **权限设置**
+1.  **Set Permissions**
     ```bash
     chmod +x build.sh
     ```
 
-2.  **标准构建命令**
-    - 构建爬虫程序 (Crawler)：
+2.  **Standard Build Command**
+    - Build Crawler:
       ```bash
       ./build.sh
       ```
-      默认生成 `o2stock-crawler` 可执行文件。
+      Generates `o2stock-crawler` executable.
 
-    - 构建 API 服务 (API)：
+    - Build API Service:
       ```bash
       ./build.sh o2stock-api o2stock-api
       ```
-      生成 `o2stock-api` 可执行文件。
+      Generates `o2stock-api` executable.
 
-3.  **可选参数说明**
-    脚本用法：`./build.sh [output_name] [target_cmd]`
-    - `output_name`: (可选) 输出的二进制文件名，默认为 `o2stock-crawler`。
-    - `target_cmd`: (可选) `cmd/` 目录下的目标程序目录名，默认为 `o2stock-crawler`。若要构建 API，请填 `o2stock-api`。
+3.  **Optional Parameters**
+    Usage: `./build.sh [output_name] [target_cmd]`
+    - `output_name`: (Optional) Output binary filename, defaults to `o2stock-crawler`.
+    - `target_cmd`: (Optional) Target program directory name under `cmd/`. Use `o2stock-api` for API.
 
-**预期输出**
-执行成功后，当前目录下会生成指定名称的可执行文件（如 `o2stock-api`），且文件大小通常比未注入配置的版本略大（包含了 `.env` 内容）。
+**Expected Output**
+A binary file with the specified name will be generated in the current directory. The file size is typically slightly larger than a version without injected configuration (as it contains `.env` content).
 
-### 2. Systemd 服务管理配置
+### 2. Systemd Service Management
 
-对于 CentOS 等使用 Systemd 的 Linux 发行版，推荐使用 Systemd 管理 `o2stock-api` 服务。
+For Linux distributions using Systemd (like CentOS), it is recommended to manage the `o2stock-api` service via Systemd.
 
-**服务安装**
+**Service Installation**
 
-1.  **修改配置文件**
-    根据实际部署路径，修改项目根目录下的 `o2stock-api.service` 文件：
-    - `WorkingDirectory`: 修改为程序所在的实际目录（如 `/opt/o2stock`）。
-    - `ExecStart`: 修改为可执行文件的绝对路径（如 `/opt/o2stock/o2stock-api`）。
-    - `User`: 建议修改为非 root 用户（可选）。
+1.  **Modify Configuration File**
+    Modify the `o2stock-api.service` file in the project root:
+    - `WorkingDirectory`: Change to the actual directory where the program is located (e.g., `/opt/o2stock`).
+    - `ExecStart`: Change to the absolute path of the executable (e.g., `/opt/o2stock/o2stock-api`).
+    - `User`: Recommended to change to a non-root user (optional).
 
-2.  **复制文件**
-    将修改好的 unit 文件复制到系统服务目录：
+2.  **Copy File**
     ```bash
     sudo cp o2stock-api.service /etc/systemd/system/
     ```
 
-3.  **重载配置**
+3.  **Reload Configuration**
     ```bash
     sudo systemctl daemon-reload
     ```
 
-**常用命令**
+**Common Commands**
 
-- **启动服务**
+- **Start Service**
   ```bash
   sudo systemctl start o2stock-api
   ```
 
-- **设置开机自启**
+- **Enable Auto-start on Boot**
   ```bash
   sudo systemctl enable o2stock-api
   ```
 
-- **查看状态**
+- **Check Status**
   ```bash
   sudo systemctl status o2stock-api
   ```
 
-- **停止服务**
+- **Stop Service**
   ```bash
   sudo systemctl stop o2stock-api
   ```
 
-- **重启服务**
+- **Restart Service**
   ```bash
   sudo systemctl restart o2stock-api
   ```
 
-**日志查看**
-服务日志默认输出到系统日志，可以通过 `journalctl` 查看：
+**Viewing Logs**
+Logs output to the system log by default, viewable via `journalctl`:
 ```bash
-# 查看实时日志
+# View real-time logs
 journalctl -u o2stock-api -f
 
-# 查看最近 100 行日志
+# View last 100 lines
 journalctl -u o2stock-api -n 100
 ```
 
-**配置文件位置**
-- **Systemd Unit 文件**：`/etc/systemd/system/o2stock-api.service`
-- **程序配置文件**：通常位于程序运行目录下的 `.env` 文件（如果有），或者直接使用编译进二进制的内置配置。
+**File Locations**
+- **Systemd Unit File**: `/etc/systemd/system/o2stock-api.service`
+- **Program Configuration**: Usually `.env` in the run directory, or builtin configuration if `.env` is absent.
 
-### 3. 注意事项
+### 3. Precautions
 
-**权限要求**
-- 执行构建脚本需要当前用户对项目目录有写权限。
-- 管理 Systemd 服务（start, stop, enable, cp 到 /etc/systemd/system）通常需要 `root` 权限或 `sudo` 权限。
+**Permission Requirements**
+- Executing the build script requires write access to the project directory.
+- Managing Systemd services (`start`, `stop`, `enable`, copying to `/etc/systemd/system`) typically requires `root` or `sudo` privileges.
 
-**常见问题**
-- **构建失败**：请检查 Go 环境是否安装正确，以及 `go mod tidy` 是否已执行。
-- **服务无法启动**：
-  - 检查 `WorkingDirectory` 和 `ExecStart` 路径是否正确。
-  - 检查二进制文件是否有执行权限 (`chmod +x o2stock-api`)。
-  - 通过 `journalctl -u o2stock-api -xe` 查看详细报错信息。
-- **配置未生效**：程序优先读取运行目录下的 `.env` 文件，如果不存在才会使用编译注入的配置。请确认配置文件的加载优先级。
+**Troubleshooting**
+- **Build Failure**: Check Go environment and ensure `go mod tidy` has been executed.
+- **Service Fails to Start**:
+  - Check `WorkingDirectory` and `ExecStart` paths.
+  - Ensure binary has execution permissions (`chmod +x o2stock-api`).
+  - View detailed errors with `journalctl -u o2stock-api -xe`.
+- **Config Not Taking Effect**: The program prioritizes the `.env` file in the run directory. If not present, it uses the built-in configuration.
 
-**版本兼容性**
-- **操作系统**：CentOS 7+, Ubuntu 16.04+, Debian 8+ 等支持 Systemd 的 Linux 发行版。
-- **Go 版本**：建议使用 Go 1.18 及以上版本进行编译。
+**Compatibility**
+- **OS**: CentOS 7+, Ubuntu 16.04+, Debian 8+, etc.
+- **Go Version**: Go 1.18+ recommended.
 
-### 后续可扩展点
+### Future Extensions
 
-- 使用 cron（如 crontab 或系统级定时任务）调用 `run-once`。
-- 增加更多字段入库，例如 `grade`、`popularity` 等。
-- 增加日志输出到文件以及 Prometheus 监控等。
-- 添加用户认证中间件，从 token 中获取 user_id。
-- 添加更多的数据统计和分析接口。
-
+- Use `cron` (crontab) to trigger `run-once`.
+- Add more fields to database, such as `grade`, `popularity`, etc.
+- Add file logging and Prometheus monitoring.
+- Add user authentication middleware (retrieve `user_id` from token).
+- Add more statistics and analysis APIs.
 
 ## Maintainer
 

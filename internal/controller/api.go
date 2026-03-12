@@ -15,6 +15,7 @@ type API struct {
 	userItemService   *service.UserItemService
 	itemsService      *service.ItemsService
 	lineupService     *service.LineupAPIService
+	feedbackService   *service.FeedbackService
 	ipiRepo           *repositories.IPIRepository
 	playerRepo        *repositories.PlayerRepository
 	taskStatusRepo    *repositories.TaskStatusRepository
@@ -40,8 +41,9 @@ func NewAPI(database *db.DB, cfg *db.Config) *API {
 			repositories.NewItemRepository(database.DB),
 			repositories.NewItemFavRepository(database.DB),
 		),
-		itemsService:   service.NewItemsService(database),
-		ipiRepo:        repositories.NewIPIRepository(database.DB),
+		itemsService:    service.NewItemsService(database),
+		feedbackService: service.NewFeedbackService(database, cfg, repositories.NewFeedbackRepository(database.DB), repositories.NewUserRepository(database.DB)),
+		ipiRepo:         repositories.NewIPIRepository(database.DB),
 		playerRepo:     repositories.NewPlayerRepository(database.DB),
 		taskStatusRepo: repositories.NewTaskStatusRepository(database.DB),
 	}
