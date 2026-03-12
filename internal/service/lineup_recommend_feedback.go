@@ -72,10 +72,8 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 		actualPowerByLineup[playerIDs] = calcLineupActualTotal(playerIDs, actualMap)
 	}
 	for _, rec := range recs {
-		actualTotal := actualPowerByLineup[pickLineupPlayerIDs(rec)]
-
 		if int(rec.Rank) <= topN {
-			row, ok := s.buildBacktestRowFromRecommendation(gameDate, rec, actualTotal, playerMap)
+			row, ok := s.buildBacktestRowFromRecommendation(gameDate, rec, actualMap, playerMap)
 			if ok {
 				recRows = append(recRows, row)
 			}
@@ -127,6 +125,7 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 		for i, lineup := range lineups {
 			actualTotal := calcLineupActualFromCandidates(lineup, actualMap)
 			predictedTotal := calcLineupPredictedFromCandidates(lineup)
+			slotActualPowers := buildLineupSlotActualPowers(lineup, actualMap)
 			rows = append(rows, s.buildBacktestRowFromCandidates(
 				gameDate,
 				uint(i+1),
@@ -134,6 +133,7 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 				lineup,
 				fmt.Sprintf("%d_game_average_baseline", lookback),
 				predictedTotal,
+				slotActualPowers,
 				actualTotal,
 			))
 		}
@@ -171,6 +171,7 @@ func (s *LineupRecommendService) RunBacktest(ctx context.Context, gameDate strin
 			lineup,
 			"",
 			0,
+			nil,
 			-1,
 		))
 	}
@@ -278,6 +279,8 @@ type backtestDetailPayload struct {
 	ResultType          string               `json:"result_type"`
 	Note                string               `json:"note,omitempty"`
 	PredictedTotalPower float64              `json:"predicted_total_power,omitempty"`
+	ActualTotalPower    float64              `json:"actual_total_power,omitempty"`
+	DeltaActualPredict  float64              `json:"delta_actual_predict,omitempty"`
 	Lineup              []backtestLineupSlot `json:"lineup,omitempty"`
 	LineupTxPlayerIDs   []uint               `json:"lineup_tx_player_ids,omitempty"`
 	LineupNBAPlayerIDs  []uint               `json:"lineup_nba_player_ids,omitempty"`
@@ -699,7 +702,7 @@ func collectUniqueTxPlayerIDs(nbaToTxMap map[uint]uint) []uint {
 func (s *LineupRecommendService) buildBacktestRowFromRecommendation(
 	gameDate string,
 	rec entity.LineupRecommendation,
-	actualTotal float64,
+	actualMap map[uint]float64,
 	playerMap map[uint]entity.NBAGamePlayer,
 ) (entity.LineupBacktestResult, bool) {
 	ids := pickLineupPlayerIDs(rec)
@@ -710,18 +713,44 @@ func (s *LineupRecommendService) buildBacktestRowFromRecommendation(
 		}
 	}
 
-	detail, _ := json.Marshal(map[string]any{
-		"result_type":           backtestResultTypeName(entity.LineupBacktestResultTypeRecommendedActual),
-		"predicted_total_power": rec.TotalPredictedPower,
-		"actual_total_power":    actualTotal,
-		"delta_actual_predict":  roundTo(actualTotal-rec.TotalPredictedPower, 1),
-	})
+	lineupSlots := make([]backtestLineupSlot, 0, len(ids))
+	lineupNBAIDs := make([]uint, 0, len(ids))
+	totalActual := 0.0
+	for i, id := range ids {
+		if id == 0 {
+			continue
+		}
+
+		player := playerMap[id]
+		actualPower := roundTo(actualMap[id], 1)
+		totalActual += actualPower
+
+		lineupSlots = append(lineupSlots, backtestLineupSlot{
+			Slot:        uint(i + 1),
+			NBAPlayerID: id,
+			PlayerName:  resolveBacktestPlayerName(id, "", playerMap),
+			Salary:      player.Salary,
+			ActualPower: actualPower,
+			IDSource:    "recommendation",
+		})
+		lineupNBAIDs = append(lineupNBAIDs, id)
+	}
+
+	detailData := backtestDetailPayload{
+		ResultType:          backtestResultTypeName(entity.LineupBacktestResultTypeRecommendedActual),
+		PredictedTotalPower: rec.TotalPredictedPower,
+		ActualTotalPower:    roundTo(totalActual, 1),
+		DeltaActualPredict:  roundTo(totalActual-rec.TotalPredictedPower, 1),
+		Lineup:              lineupSlots,
+		LineupNBAPlayerIDs:  lineupNBAIDs,
+	}
+	detail, _ := json.Marshal(detailData)
 
 	return entity.LineupBacktestResult{
 		GameDate:         gameDate,
 		ResultType:       entity.LineupBacktestResultTypeRecommendedActual,
 		Rank:             rec.Rank,
-		TotalActualPower: actualTotal,
+		TotalActualPower: roundTo(totalActual, 1),
 		TotalSalary:      totalSalary,
 		Player1ID:        ids[0],
 		Player2ID:        ids[1],
@@ -739,6 +768,7 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 	lineup []PlayerCandidate,
 	note string,
 	predictedTotal float64,
+	slotActualPowers []float64,
 	actualTotalOverride float64,
 ) entity.LineupBacktestResult {
 	var totalActual float64
@@ -749,7 +779,6 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 	lineupNBAIDs := make([]uint, 0, len(lineup))
 
 	for i, c := range lineup {
-		totalActual += c.Prediction.PredictedPower
 		totalSalary += c.Player.Salary
 		if i < len(playerIDs) {
 			playerIDs[i] = c.Player.NBAPlayerID
@@ -768,13 +797,19 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 			idSource = "feedback_only"
 		}
 
+		slotActualPower := c.Prediction.PredictedPower
+		if i < len(slotActualPowers) {
+			slotActualPower = slotActualPowers[i]
+		}
+		totalActual += slotActualPower
+
 		lineupSlots = append(lineupSlots, backtestLineupSlot{
 			Slot:        uint(i + 1),
 			TxPlayerID:  c.BacktestTxPlayerID,
 			NBAPlayerID: c.Player.NBAPlayerID,
 			PlayerName:  playerName,
 			Salary:      c.Player.Salary,
-			ActualPower: roundTo(c.Prediction.PredictedPower, 1),
+			ActualPower: roundTo(slotActualPower, 1),
 			IDSource:    idSource,
 		})
 		lineupTxIDs = append(lineupTxIDs, c.BacktestTxPlayerID)
@@ -787,6 +822,7 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 
 	detailData := backtestDetailPayload{
 		ResultType:         backtestResultTypeName(resultType),
+		ActualTotalPower:   roundTo(totalActual, 1),
 		Lineup:             lineupSlots,
 		LineupTxPlayerIDs:  lineupTxIDs,
 		LineupNBAPlayerIDs: lineupNBAIDs,
@@ -812,6 +848,18 @@ func (s *LineupRecommendService) buildBacktestRowFromCandidates(
 		Player5ID:        playerIDs[4],
 		DetailJSON:       string(detail),
 	}
+}
+
+func buildLineupSlotActualPowers(lineup []PlayerCandidate, actualMap map[uint]float64) []float64 {
+	if len(lineup) == 0 {
+		return nil
+	}
+
+	actualPowers := make([]float64, 0, len(lineup))
+	for _, candidate := range lineup {
+		actualPowers = append(actualPowers, roundTo(actualMap[candidate.Player.NBAPlayerID], 1))
+	}
+	return actualPowers
 }
 
 // filterRecommendationsByType 按类型过滤推荐阵容

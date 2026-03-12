@@ -136,9 +136,9 @@ func (s *LineupRecommendService) printBacktestSummary(
 			opt := optRows[i]
 			gap := roundTo(opt.TotalActualPower-rec.TotalActualPower, 1)
 			fmt.Printf(" | %s %.1f (差距 %.1f)", backtestResultTypeLabel(opt.ResultType), opt.TotalActualPower, gap)
-			fmt.Printf("\n   %s: %s", backtestResultTypeLabel(opt.ResultType), formatBacktestPlayersFromRow(opt, playerMap))
 		}
 		fmt.Println()
+		fmt.Printf("   %s: %s\n", backtestResultTypeLabel(rec.ResultType), formatBacktestPlayersFromRow(rec, playerMap))
 		for _, benchmarkType := range []uint8{
 			entity.LineupBacktestResultTypeAvg3Benchmark,
 			entity.LineupBacktestResultTypeAvg5Benchmark,
@@ -148,6 +148,9 @@ func (s *LineupRecommendService) printBacktestSummary(
 				continue
 			}
 			fmt.Printf("   %s: %s\n", backtestResultTypeLabel(benchmarkType), formatBacktestPlayersFromRow(rows[i], playerMap))
+		}
+		if i < len(optRows) {
+			fmt.Printf("   %s: %s\n", backtestResultTypeLabel(optRows[i].ResultType), formatBacktestPlayersFromRow(optRows[i], playerMap))
 		}
 	}
 	fmt.Println()
@@ -183,15 +186,15 @@ func formatBacktestPlayersBySlots(slots []backtestLineupSlot, playerMap map[uint
 
 		if slot.NBAPlayerID > 0 {
 			name := resolveBacktestPlayerName(slot.NBAPlayerID, slot.PlayerName, playerMap)
-			parts = append(parts, fmt.Sprintf("%d:%s", slot.NBAPlayerID, name))
+			parts = append(parts, fmt.Sprintf("%s(%.1f)", name, slot.ActualPower))
 			continue
 		}
 
 		name := strings.TrimSpace(slot.PlayerName)
-		if name == "" {
-			name = "-"
+		if name == "" || name == "-" {
+			name = fmt.Sprintf("%d(tx)", slot.TxPlayerID)
 		}
-		parts = append(parts, fmt.Sprintf("%d(tx):%s", slot.TxPlayerID, name))
+		parts = append(parts, fmt.Sprintf("%s(%.1f)", name, slot.ActualPower))
 	}
 	if len(parts) == 0 {
 		return "-"

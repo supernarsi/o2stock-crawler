@@ -113,6 +113,7 @@ func (s *LineupRecommendService) predictPower(
 	recentProfile := calcRecentPowerProfile(stats)
 	baseValue = stabilizeBaseValue(baseValue, gamePower, recentPower5, recentPower10, len(stats))
 	baseValue = buildRobustBaseValue(baseValue, gamePower, recentProfile)
+	baseValue = opportunityAdjustedBaseValue(baseValue, stats, pctx.SeasonStatsMap[txPlayerID], player.Salary, recentProfile)
 
 	// Step 3: 因素3 — 近期状态趋势 (StatusTrend)
 	statusTrend := calcStatusTrend(dbPlayer, stats)
@@ -499,6 +500,92 @@ func buildRobustBaseValue(baseValue, gamePower float64, profile recentPowerProfi
 		upper = lower
 	}
 	return clamp(mixed, lower, upper)
+}
+
+func opportunityAdjustedBaseValue(
+	baseValue float64,
+	stats []entity.PlayerGameStats,
+	seasonStats *entity.PlayerSeasonStats,
+	salary uint,
+	profile recentPowerProfile,
+) float64 {
+	if baseValue <= 0 || len(stats) < 4 || profile.SampleCount < 3 {
+		return baseValue
+	}
+
+	recentCount := min(3, len(stats))
+	recentMinutes := 0.0
+	recentUsage := 0.0
+	for i := 0; i < recentCount; i++ {
+		recentMinutes += float64(stats[i].Minutes)
+		recentUsage += calcUsageProxyFromStats(stats[i])
+	}
+	recentMinutesAvg := recentMinutes / float64(recentCount)
+	recentUsageAvg := recentUsage / float64(recentCount)
+	if recentMinutesAvg < 22 || recentUsageAvg <= 0 {
+		return baseValue
+	}
+
+	baselineStart := recentCount
+	baselineWindow := min(5, len(stats)-baselineStart)
+	baselineMinutes := 0.0
+	baselineUsage := 0.0
+	if baselineWindow > 0 {
+		for i := baselineStart; i < baselineStart+baselineWindow; i++ {
+			baselineMinutes += float64(stats[i].Minutes)
+			baselineUsage += calcUsageProxyFromStats(stats[i])
+		}
+		baselineMinutes /= float64(baselineWindow)
+		baselineUsage /= float64(baselineWindow)
+	}
+
+	if baselineMinutes <= 0 && seasonStats != nil && seasonStats.Minutes > 0 {
+		baselineMinutes = seasonStats.Minutes
+	}
+	if baselineMinutes <= 0 {
+		baselineMinutes = recentMinutesAvg
+	}
+	if baselineUsage <= 0 {
+		baselineUsage = recentUsageAvg
+	}
+
+	minutesRatio := recentMinutesAvg / baselineMinutes
+	usageRatio := recentUsageAvg / baselineUsage
+	powerAnchor := profile.Avg10
+	if powerAnchor <= 0 {
+		powerAnchor = profile.Avg5
+	}
+	if powerAnchor <= 0 {
+		return baseValue
+	}
+	powerRatio := profile.Avg3 / powerAnchor
+
+	if minutesRatio <= 1.05 || usageRatio <= 1.04 || powerRatio <= 1.04 {
+		return baseValue
+	}
+
+	maxLift := 0.05
+	switch {
+	case salary <= 10:
+		maxLift = 0.08
+	case salary <= 18:
+		maxLift = 0.065
+	case salary <= 28:
+		maxLift = 0.050
+	case salary <= 38:
+		maxLift = 0.035
+	default:
+		maxLift = 0.025
+	}
+
+	lift := 0.0
+	lift += clamp((minutesRatio-1.05)*0.10, 0.0, maxLift*0.40)
+	lift += clamp((usageRatio-1.04)*0.08, 0.0, maxLift*0.30)
+	lift += clamp((powerRatio-1.04)*0.10, 0.0, maxLift*0.30)
+
+	adjusted := baseValue * (1.0 + lift)
+	anchorUpper := powerAnchor * (1.12 + maxLift*0.50)
+	return clamp(adjusted, baseValue, max(baseValue*1.02, anchorUpper))
 }
 
 func calibratePredictedPower(predicted, baseValue float64, profile recentPowerProfile, statCount int) float64 {
