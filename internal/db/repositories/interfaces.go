@@ -83,6 +83,11 @@ type ItemFavRepositoryInterface interface {
 	GetFavMap(ctx context.Context, userID uint, itemIDs []uint) (map[uint]bool, error)
 }
 
+// FeedbackRepositoryInterface defines the contract for feedback data access
+type FeedbackRepositoryInterface interface {
+	Create(ctx context.Context, feedback *entity.Feedback) error
+}
+
 // Compile-time interface compliance checks
 var _ PlayerRepositoryInterface = (*PlayerRepository)(nil)
 var _ UserRepositoryInterface = (*UserRepository)(nil)
@@ -90,5 +95,6 @@ var _ FavRepositoryInterface = (*FavRepository)(nil)
 var _ ItemFavRepositoryInterface = (*ItemFavRepository)(nil)
 var _ OwnRepositoryInterface = (*OwnRepository)(nil)
 var _ StatsRepositoryInterface = (*StatsRepository)(nil)
+var _ FeedbackRepositoryInterface = (*FeedbackRepository)(nil)
 
 // Note: HistoryRepository interface check is implicit as the interface is implemented
