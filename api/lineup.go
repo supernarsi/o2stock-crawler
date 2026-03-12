@@ -2,8 +2,9 @@ package api
 
 // NBALineupsRes NBA 推荐阵容列表响应
 type NBALineupsRes struct {
-	Today   *NBALineupDay  `json:"today"`
-	History []NBALineupDay `json:"history"`
+	Today         *NBALineupDay  `json:"today"`
+	TodayUpdateAt int64          `json:"today_update_at"`
+	History       []NBALineupDay `json:"history"`
 }
 
 // NBALineupDay 单日的 NBA 推荐与回测数据
