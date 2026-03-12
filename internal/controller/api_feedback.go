@@ -28,7 +28,7 @@ func (a *API) Feedback() http.HandlerFunc {
 			appVersion = client.AppVersion
 		}
 
-		if err := a.feedbackService.SubmitFeedback(r.Context(), uid, req.WxOpenID, req.Content, appVersion, client.IP, uint8(client.OS)); err != nil {
+		if err := a.feedbackService.SubmitFeedback(r.Context(), uid, req.Code, req.Content, appVersion, client.IP, uint8(client.OS)); err != nil {
 			log.Printf("Submit feedback failed: %v", err)
 			return nil, &middleware.APIError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: "提交反馈失败，请稍后重试"}
 		}

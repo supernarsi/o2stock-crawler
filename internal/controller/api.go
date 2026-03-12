@@ -42,7 +42,7 @@ func NewAPI(database *db.DB, cfg *db.Config) *API {
 			repositories.NewItemFavRepository(database.DB),
 		),
 		itemsService:    service.NewItemsService(database),
-		feedbackService: service.NewFeedbackService(database, repositories.NewFeedbackRepository(database.DB)),
+		feedbackService: service.NewFeedbackService(database, cfg, repositories.NewFeedbackRepository(database.DB), repositories.NewUserRepository(database.DB)),
 		ipiRepo:         repositories.NewIPIRepository(database.DB),
 		playerRepo:     repositories.NewPlayerRepository(database.DB),
 		taskStatusRepo: repositories.NewTaskStatusRepository(database.DB),
