@@ -31,4 +31,6 @@ type NBALineupPlayer struct {
 	AvgPower       float64 `json:"avg_power"`
 	PredictedPower float64 `json:"predicted_power"`
 	ActualPower    float64 `json:"actual_power"`
+	Avatar         string  `json:"avatar"`
+	Available      float64 `json:"available"`
 }

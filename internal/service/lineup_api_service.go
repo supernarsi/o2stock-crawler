@@ -15,6 +15,7 @@ type LineupAPIService struct {
 	recommendRepo *repositories.LineupRecommendationRepository
 	backtestRepo  *repositories.LineupBacktestResultRepository
 	salaryRepo    *repositories.NBAPlayerSalaryRepository
+	playerRepo    *repositories.PlayerRepository
 }
 
 func NewLineupAPIService(database *db.DB) *LineupAPIService {
@@ -23,6 +24,7 @@ func NewLineupAPIService(database *db.DB) *LineupAPIService {
 		recommendRepo: repositories.NewLineupRecommendationRepository(database.DB),
 		backtestRepo:  repositories.NewLineupBacktestResultRepository(database.DB),
 		salaryRepo:    repositories.NewNBAPlayerSalaryRepository(database.DB),
+		playerRepo:    repositories.NewPlayerRepository(database.DB),
 	}
 }
 
@@ -47,16 +49,6 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 	var res api.NBALineupsRes
 	res.History = make([]api.NBALineupDay, 0)
 
-	// 2. 获取 today 的推荐数据和回测数据
-	var todayRecs []entity.LineupRecommendation
-	var todayBests []entity.LineupBacktestResult
-	if latestDate != "" {
-		todayRecs, _ = s.recommendRepo.GetByDateAndType(ctx, latestDate, entity.LineupRecommendationTypeAIRecommended)
-		// 同时查询当日的回测真实最优数据（如果已回测则有数据）
-		todayBestsAll, _ := s.backtestRepo.GetByGameDatesAndType(ctx, []string{latestDate}, entity.LineupBacktestResultTypeActualOptimal)
-		todayBests = todayBestsAll
-	}
-
 	// 3. 获取历史日期
 	benchmarkDate := latestDate
 	if benchmarkDate == "" {
@@ -66,33 +58,53 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 	if err != nil {
 		historyDates = nil
 	}
-	// 统一日期格式
-	for i := range historyDates {
-		historyDates[i] = normalizeGameDate(historyDates[i])
-	}
 
-	// 4. 批量查询历史日期的推荐阵容和实际最佳阵容
-	historyRecs := make(map[string][]entity.LineupRecommendation)
+	// 2. 收集所有需要查询的日期
+	allQueryDates := make([]string, 0)
+	if latestDate != "" {
+		allQueryDates = append(allQueryDates, latestDate)
+	}
 	for _, date := range historyDates {
-		recs, _ := s.recommendRepo.GetByDateAndType(ctx, date, entity.LineupRecommendationTypeAIRecommended)
-		historyRecs[date] = recs
+		allQueryDates = append(allQueryDates, normalizeGameDate(date))
 	}
 
-	bestMap := make(map[string][]entity.LineupBacktestResult)
-	if len(historyDates) > 0 {
-		historyBests, _ := s.backtestRepo.GetByGameDatesAndType(ctx, historyDates, entity.LineupBacktestResultTypeActualOptimal)
-		for _, best := range historyBests {
-			key := normalizeGameDate(best.GameDate)
-			bestMap[key] = append(bestMap[key], best)
+	// 3. 批量查询推荐阵容
+	historyRecs := make(map[string][]entity.LineupRecommendation)
+	todayRecs := make([]entity.LineupRecommendation, 0)
+	if len(allQueryDates) > 0 {
+		allRecs, _ := s.recommendRepo.GetByDatesAndType(ctx, allQueryDates, entity.LineupRecommendationTypeAIRecommended)
+		for _, rec := range allRecs {
+			dateKey := normalizeGameDate(rec.GameDate)
+			if dateKey == latestDate {
+				todayRecs = append(todayRecs, rec)
+			} else {
+				historyRecs[dateKey] = append(historyRecs[dateKey], rec)
+			}
 		}
 	}
 
-	// 5. 收集所有涉及的 nba_player_id，批量查询 nba_player_salary
+	// 4. 批量查询实际最佳阵容
+	bestMap := make(map[string][]entity.LineupBacktestResult)
+	todayBests := make([]entity.LineupBacktestResult, 0)
+	if len(allQueryDates) > 0 {
+		allBests, _ := s.backtestRepo.GetByGameDatesAndType(ctx, allQueryDates, entity.LineupBacktestResultTypeActualOptimal)
+		for _, best := range allBests {
+			dateKey := normalizeGameDate(best.GameDate)
+			if dateKey == latestDate {
+				// today 的也同时放入 map 和 切片，向下兼容
+				todayBests = append(todayBests, best)
+			}
+			bestMap[dateKey] = append(bestMap[dateKey], best)
+		}
+	}
+
+	// 5. 收集所有涉及的 nba_player_id，批量查询 nba_player_salary 和 avatar
 	allPlayerIDs := collectAllPlayerIDs(todayRecs, todayBests, historyRecs, bestMap)
 	salaryMap, err := s.buildSalaryMap(ctx, allPlayerIDs)
 	if err != nil {
 		return nil, err
 	}
+	avatarMap, _ := s.buildAvatarMap(ctx, allPlayerIDs)
 
 	// 6. 组装 today
 	if len(todayRecs) > 0 || len(todayBests) > 0 {
@@ -102,13 +114,13 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 			ActualBest:  make([]api.NBALineupItem, 0),
 		}
 		for _, rec := range todayRecs {
-			predictedMap := parsePredictedPowerMap(rec.DetailJSON)
+			predictedMap := parsePredictedDetailMap(rec.DetailJSON)
 			day.AIRecommend = append(day.AIRecommend, api.NBALineupItem{
 				Rank:                rec.Rank,
 				TotalPredictedPower: rec.TotalPredictedPower,
 				TotalActualPower:    safeFloat64(rec.TotalActualPower),
 				TotalSalary:         rec.TotalSalary,
-				Detail:              buildLineupPlayers(recPlayerIDs(rec), salaryMap, predictedMap, nil),
+				Detail:              buildLineupPlayers(recPlayerIDs(rec), salaryMap, predictedMap, nil, avatarMap),
 			})
 		}
 		for _, best := range todayBests {
@@ -118,7 +130,7 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 				TotalPredictedPower: 0,
 				TotalActualPower:    best.TotalActualPower,
 				TotalSalary:         best.TotalSalary,
-				Detail:              buildLineupPlayers(backtestPlayerIDs(best), salaryMap, nil, actualMap),
+				Detail:              buildLineupPlayers(backtestPlayerIDs(best), salaryMap, nil, actualMap, avatarMap),
 			})
 		}
 		res.Today = &day
@@ -134,13 +146,13 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 
 		if recs, ok := historyRecs[date]; ok {
 			for _, rec := range recs {
-				predictedMap := parsePredictedPowerMap(rec.DetailJSON)
+				predictedMap := parsePredictedDetailMap(rec.DetailJSON)
 				day.AIRecommend = append(day.AIRecommend, api.NBALineupItem{
 					Rank:                rec.Rank,
 					TotalPredictedPower: rec.TotalPredictedPower,
 					TotalActualPower:    safeFloat64(rec.TotalActualPower),
 					TotalSalary:         rec.TotalSalary,
-					Detail:              buildLineupPlayers(recPlayerIDs(rec), salaryMap, predictedMap, nil),
+					Detail:              buildLineupPlayers(recPlayerIDs(rec), salaryMap, predictedMap, nil, avatarMap),
 				})
 			}
 		}
@@ -153,7 +165,7 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 					TotalPredictedPower: 0,
 					TotalActualPower:    best.TotalActualPower,
 					TotalSalary:         best.TotalSalary,
-					Detail:              buildLineupPlayers(backtestPlayerIDs(best), salaryMap, nil, actualMap),
+					Detail:              buildLineupPlayers(backtestPlayerIDs(best), salaryMap, nil, actualMap, avatarMap),
 				})
 			}
 		}
@@ -181,12 +193,32 @@ func (s *LineupAPIService) buildSalaryMap(ctx context.Context, playerIDs []uint)
 	return result, nil
 }
 
+// buildAvatarMap 批量查询玩家信息，并按 nba_player_id 返回 avatar (player_img)
+func (s *LineupAPIService) buildAvatarMap(ctx context.Context, playerIDs []uint) (map[uint]string, error) {
+	result := make(map[uint]string)
+	if len(playerIDs) == 0 {
+		return result, nil
+	}
+
+	players, err := s.playerRepo.BatchGetByNBAPlayerIDs(ctx, playerIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range players {
+		if _, ok := result[p.NBAPlayerID]; !ok {
+			result[p.NBAPlayerID] = p.PlayerImg
+		}
+	}
+	return result, nil
+}
+
 // buildLineupPlayers 用 player IDs + salaryMap + 运行时映射组装球员详情列表
 func buildLineupPlayers(
 	playerIDs [5]uint,
 	salaryMap map[uint]entity.NBAPlayerSalary,
-	predictedMap map[uint]float64,
+	predictedMap map[uint]PredictedPlayerDetail,
 	actualMap map[uint]float64,
+	avatarMap map[uint]string,
 ) []*api.NBALineupPlayer {
 	players := make([]*api.NBALineupPlayer, 0, 5)
 	for _, pid := range playerIDs {
@@ -203,10 +235,14 @@ func buildLineupPlayers(
 			p.AvgPower = salary.CombatPower
 		}
 		if predictedMap != nil {
-			p.PredictedPower = predictedMap[pid]
+			p.PredictedPower = predictedMap[pid].PredictedPower
+			p.Available = predictedMap[pid].AvailabilityScore
 		}
 		if actualMap != nil {
 			p.ActualPower = actualMap[pid]
+		}
+		if avatarMap != nil {
+			p.Avatar = avatarMap[pid]
 		}
 		players = append(players, p)
 	}
@@ -268,16 +304,24 @@ func collectAllPlayerIDs(
 	return result
 }
 
-// parsePredictedPowerMap 从推荐 detail_json 中提取每位球员的 predicted_power
-func parsePredictedPowerMap(detailJSONStr string) map[uint]float64 {
-	result := make(map[uint]float64)
+type PredictedPlayerDetail struct {
+	PredictedPower    float64
+	AvailabilityScore float64
+}
+
+// parsePredictedDetailMap 从推荐 detail_json 中提取每位球员的 predicted_power 和 availability_score
+func parsePredictedDetailMap(detailJSONStr string) map[uint]PredictedPlayerDetail {
+	result := make(map[uint]PredictedPlayerDetail)
 	if detailJSONStr == "" {
 		return result
 	}
 	var payload struct {
 		Players []struct {
-			NBAPlayerID    uint    `json:"nba_player_id"`
-			PredictedPower float64 `json:"predicted_power"`
+			NBAPlayerID       uint    `json:"nba_player_id"`
+			PredictedPower    float64 `json:"predicted_power"`
+			Factors           struct {
+				AvailabilityScore float64 `json:"availability_score"`
+			} `json:"factors"`
 		} `json:"players"`
 	}
 	if err := json.Unmarshal([]byte(detailJSONStr), &payload); err != nil {
@@ -285,7 +329,10 @@ func parsePredictedPowerMap(detailJSONStr string) map[uint]float64 {
 	}
 	for _, p := range payload.Players {
 		if p.NBAPlayerID > 0 {
-			result[p.NBAPlayerID] = p.PredictedPower
+			result[p.NBAPlayerID] = PredictedPlayerDetail{
+				PredictedPower:    p.PredictedPower,
+				AvailabilityScore: p.Factors.AvailabilityScore,
+			}
 		}
 	}
 	return result

@@ -63,6 +63,23 @@ func (r *LineupRecommendationRepository) GetByDateAndType(
 	return recs, err
 }
 
+// GetByDatesAndType 批量获取多个日期、指定类型的推荐阵容
+func (r *LineupRecommendationRepository) GetByDatesAndType(
+	ctx context.Context,
+	gameDates []string,
+	recommendationType uint8,
+) ([]entity.LineupRecommendation, error) {
+	if len(gameDates) == 0 {
+		return nil, nil
+	}
+	var recs []entity.LineupRecommendation
+	err := r.ctx(ctx).
+		Where("game_date IN ? AND recommendation_type = ?", gameDates, recommendationType).
+		Order("game_date DESC, `rank` ASC").
+		Find(&recs).Error
+	return recs, err
+}
+
 // GetLatestGameDate 获取大于等于给定日期的最近一个有推荐数据的日期
 // todayStr: 传入当前日期的字符串 (YYYY-MM-DD)，用于查找 >= today 的最新推荐
 func (r *LineupRecommendationRepository) GetLatestGameDate(ctx context.Context, todayStr string) (string, error) {
