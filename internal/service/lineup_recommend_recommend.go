@@ -44,12 +44,22 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 		)
 		injuryMap, snapshotRows, err = s.fetchInjuryMap(ctx, allPlayers)
 		if err != nil {
-			log.Printf("获取伤病报告失败（将跳过伤病因素）: %v", err)
+			if snapshotMap, ok := s.loadInjurySnapshotMap(ctx, gameDate); ok {
+				injuryMap = snapshotMap
+				log.Printf("获取伤病报告失败，沿用已有伤病快照: %d 条 (日期=%s, err=%v)", len(injuryMap), normalizeInjurySnapshotGameDate(gameDate), err)
+			} else {
+				injuryMap, snapshotRows = buildFullAvailabilityInjuryFallback(allPlayers)
+				if persistErr := s.persistInjurySnapshots(ctx, gameDate, snapshotRows); persistErr != nil {
+					log.Printf("获取伤病报告失败，且无历史快照，已按全员可用回退，但保存回退快照失败: err=%v persist_err=%v", err, persistErr)
+				} else {
+					log.Printf("获取伤病报告失败，且无历史快照，已按全员可用回退并保存快照: %d 条 (日期=%s, err=%v)", len(snapshotRows), normalizeInjurySnapshotGameDate(gameDate), err)
+				}
+			}
 		} else {
 			if err := s.persistInjurySnapshots(ctx, gameDate, snapshotRows); err != nil {
 				log.Printf("保存伤病快照失败: %v", err)
 			} else {
-				log.Printf("伤病快照已保存: %d 条 (日期=%s)", len(snapshotRows), gameDate)
+				log.Printf("伤病快照已保存: %d 条 (日期=%s)", len(snapshotRows), normalizeInjurySnapshotGameDate(gameDate))
 			}
 		}
 	} else {

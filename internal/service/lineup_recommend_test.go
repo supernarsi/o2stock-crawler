@@ -282,8 +282,59 @@ func TestResolveAvailabilityScore(t *testing.T) {
 	questionableScore := resolveAvailabilityScore(player, map[uint]crawler.InjuryReport{
 		1: {Status: "Questionable"},
 	})
-	if math.Abs(questionableScore-0.78) > 1e-9 {
-		t.Fatalf("questionableScore=%.2f, want 0.78", questionableScore)
+	if math.Abs(questionableScore-0.5) > 1e-9 {
+		t.Fatalf("questionableScore=%.2f, want 0.50", questionableScore)
+	}
+
+	dayToDayQuestionableScore := resolveAvailabilityScore(player, map[uint]crawler.InjuryReport{
+		1: {
+			Status:      "Day-To-Day",
+			Description: "Mar 13: Wembanyama (ankle) is listed as questionable for Saturday's game against the Hornets.",
+		},
+	})
+	if math.Abs(dayToDayQuestionableScore-0.5) > 1e-9 {
+		t.Fatalf("dayToDayQuestionableScore=%.2f, want 0.50", dayToDayQuestionableScore)
+	}
+
+	dayToDayOutScore := resolveAvailabilityScore(player, map[uint]crawler.InjuryReport{
+		1: {
+			Status:      "Day-To-Day",
+			Description: "Mar 14: Player has been ruled out for Friday's game.",
+		},
+	})
+	if dayToDayOutScore != 0 {
+		t.Fatalf("dayToDayOutScore=%.2f, want 0", dayToDayOutScore)
+	}
+
+	dayToDayProbableScore := resolveAvailabilityScore(player, map[uint]crawler.InjuryReport{
+		1: {
+			Status:      "Day-To-Day",
+			Description: "Mar 14: Player is probable for Saturday's game.",
+		},
+	})
+	if math.Abs(dayToDayProbableScore-0.92) > 1e-9 {
+		t.Fatalf("dayToDayProbableScore=%.2f, want 0.92", dayToDayProbableScore)
+	}
+}
+
+func TestBuildFullAvailabilityInjuryFallback(t *testing.T) {
+	players := []entity.NBAGamePlayer{
+		{NBAPlayerID: 1, PlayerEnName: "Victor Wembanyama", TeamName: "马刺"},
+		{NBAPlayerID: 2, PlayerEnName: "Luka Doncic", TeamName: "湖人"},
+	}
+
+	injuryMap, snapshots := buildFullAvailabilityInjuryFallback(players)
+	if len(injuryMap) != 2 {
+		t.Fatalf("len(injuryMap)=%d, want 2", len(injuryMap))
+	}
+	if len(snapshots) != 2 {
+		t.Fatalf("len(snapshots)=%d, want 2", len(snapshots))
+	}
+	if got := injuryMap[1].Status; got != "Available" {
+		t.Fatalf("injuryMap[1].Status=%q, want Available", got)
+	}
+	if got := snapshots[0].Source; got != "fallback" {
+		t.Fatalf("snapshots[0].Source=%q, want fallback", got)
 	}
 }
 

@@ -67,7 +67,7 @@ func resolveAvailabilityScore(
 	}
 	if injury, ok := injuryMap[player.NBAPlayerID]; ok {
 		availabilityScore := crawler.StatusToAvailabilityScore(injury.Status)
-		return rebalanceAvailabilityScore(injury.Status, availabilityScore)
+		return rebalanceAvailabilityScoreWithDescription(injury.Status, injury.Description, availabilityScore)
 	}
 	return 1.0
 }

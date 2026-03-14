@@ -69,7 +69,7 @@ func (s *LineupRecommendService) loadInjurySnapshotMap(
 	gameDate string,
 ) (map[uint]crawler.InjuryReport, bool) {
 	repo := repositories.NewNBAGameInjurySnapshotRepository(s.db.DB)
-	rows, err := repo.GetByGameDate(ctx, gameDate)
+	rows, err := repo.GetByGameDate(ctx, normalizeInjurySnapshotGameDate(gameDate))
 	if err != nil {
 		log.Printf("读取伤病快照失败: game_date=%s err=%v", gameDate, err)
 		return map[uint]crawler.InjuryReport{}, false
@@ -101,12 +101,45 @@ func (s *LineupRecommendService) persistInjurySnapshots(
 	rows []entity.NBAGameInjurySnapshot,
 ) error {
 	repo := repositories.NewNBAGameInjurySnapshotRepository(s.db.DB)
+	gameDate = normalizeInjurySnapshotGameDate(gameDate)
 	now := time.Now()
 	for i := range rows {
 		rows[i].GameDate = gameDate
 		rows[i].FetchedAt = now
 	}
 	return repo.ReplaceByGameDate(ctx, gameDate, rows)
+}
+
+func buildFullAvailabilityInjuryFallback(
+	players []entity.NBAGamePlayer,
+) (map[uint]crawler.InjuryReport, []entity.NBAGameInjurySnapshot) {
+	injuryMap := make(map[uint]crawler.InjuryReport, len(players))
+	rows := make([]entity.NBAGameInjurySnapshot, 0, len(players))
+
+	for _, player := range players {
+		if player.NBAPlayerID == 0 {
+			continue
+		}
+
+		report := crawler.InjuryReport{
+			PlayerName:  player.PlayerEnName,
+			TeamName:    player.TeamName,
+			Status:      "Available",
+			Description: "fallback to full availability after espn injury fetch failure",
+			Date:        "",
+		}
+		injuryMap[player.NBAPlayerID] = report
+		rows = append(rows, entity.NBAGameInjurySnapshot{
+			NBAPlayerID: player.NBAPlayerID,
+			PlayerName:  player.PlayerEnName,
+			TeamName:    player.TeamName,
+			Status:      report.Status,
+			Description: report.Description,
+			Source:      "fallback",
+		})
+	}
+
+	return injuryMap, rows
 }
 
 // pickInjuryMatchedPlayer 将伤病报告与候选球员匹配，优先精确匹配英文名，其次模糊匹配。
@@ -157,24 +190,49 @@ func selectPlayerByTeamCode(players []entity.NBAGamePlayer, teamCode string) (ui
 
 // rebalanceAvailabilityScore 根据伤病状态微调可用性分数，避免某些状态被过度惩罚。
 func rebalanceAvailabilityScore(status string, availabilityScore float64) float64 {
-	if availabilityScore <= 0 || availabilityScore >= 1 {
+	return rebalanceAvailabilityScoreWithDescription(status, "", availabilityScore)
+}
+
+func rebalanceAvailabilityScoreWithDescription(status string, description string, availabilityScore float64) float64 {
+	if availabilityScore <= 0 {
 		return availabilityScore
 	}
 
-	normalized := strings.ToLower(strings.TrimSpace(status))
+	normalizedStatus := strings.ToLower(strings.TrimSpace(status))
+	normalizedDesc := strings.ToLower(strings.TrimSpace(description))
+	combined := strings.TrimSpace(normalizedStatus + " " + normalizedDesc)
+
 	switch {
-	case normalized == "day-to-day":
-		// 上调下限，避免过度悲观
-		return clamp(math.Max(availabilityScore, 0.85), 0.0, 1.0)
-	case strings.Contains(normalized, "questionable"):
-		// 上调下限，减少过度折扣
-		return clamp(math.Max(availabilityScore, 0.78), 0.0, 1.0)
-	case strings.Contains(normalized, "probable"):
-		// probable 状态给予更高下限
+	case strings.Contains(combined, "ruled out"),
+		strings.Contains(combined, "will not play"),
+		strings.Contains(combined, "won't play"),
+		strings.Contains(combined, "out for"),
+		strings.Contains(combined, "has been ruled out"),
+		strings.Contains(combined, "is out for"):
+		return 0.0
+	case strings.Contains(combined, "doubtful"):
+		return clamp(math.Min(availabilityScore, 0.15), 0.0, 1.0)
+	case strings.Contains(combined, "questionable"):
+		return clamp(math.Min(availabilityScore, 0.5), 0.0, 1.0)
+	case strings.Contains(combined, "probable"),
+		strings.Contains(combined, "available"),
+		strings.Contains(combined, "expected to play"),
+		strings.Contains(combined, "will play"):
 		return clamp(math.Max(availabilityScore, 0.92), 0.0, 1.0)
+	case normalizedStatus == "day-to-day":
+		// ESPN 的 Day-To-Day 过于宽泛，默认保持 0.5，避免高风险球员被抬到接近健康。
+		return clamp(availabilityScore, 0.0, 1.0)
 	default:
-		return availabilityScore
+		return clamp(availabilityScore, 0.0, 1.0)
 	}
+}
+
+func normalizeInjurySnapshotGameDate(gameDate string) string {
+	gameDate = strings.TrimSpace(gameDate)
+	if len(gameDate) > 10 {
+		return gameDate[:10]
+	}
+	return gameDate
 }
 
 // loadDBPlayerMap 从 players 表批量加载 DB 球员记录（含历史场均战力等锚定数据）。
