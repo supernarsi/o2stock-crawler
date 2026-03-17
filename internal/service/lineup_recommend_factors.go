@@ -444,6 +444,13 @@ func calcArchetypeFactor(
 			factor += clamp((defenseUpsideFactor-1.0)*0.45, 0.0, 0.06)
 			factor += clamp((teamContextFactor-1.0)*0.80, 0.0, 0.04)
 		}
+		if player.Salary <= 30 && baseValue >= 34 && minutesFactor >= 1.02 &&
+			(profile.Upside5 >= 1.35 || profile.Upside3 >= 1.28) {
+			factor += clamp((minutesFactor-1.02)*0.60, 0.0, 0.03)
+			factor += clamp((defenseUpsideFactor-1.0)*0.35, 0.0, 0.03)
+			factor += clamp((profile.Upside5-1.35)*0.12, 0.0, 0.04)
+			factor += clamp((profile.Upside3-1.28)*0.10, 0.0, 0.03)
+		}
 		if player.Salary <= 12 && player.CombatPower >= 18 {
 			factor += 0.05
 		}
@@ -1031,13 +1038,6 @@ func applyStableStarLift(
 	}
 
 	positionGroup := normalizePositionGroup(player.Position)
-	if positionGroup != 0 {
-		return predictedPower
-	}
-	if baseValue < StableStarBasePower || player.Salary < StableStarSalaryMin {
-		return predictedPower
-	}
-
 	stableSignal := 0.0
 	if baseValue >= 50 {
 		stableSignal += 0.18
@@ -1060,14 +1060,28 @@ func applyStableStarLift(
 	if dataReliabilityFactor >= 0.90 {
 		stableSignal += 0.18
 	}
-	if defenseAnchorFactor >= 0.94 {
+	if positionGroup == 0 && defenseAnchorFactor >= 0.94 {
 		stableSignal += 0.08
 	}
-	if stableSignal <= 0.25 {
+
+	if positionGroup == 0 {
+		if baseValue < StableStarBasePower || player.Salary < StableStarSalaryMin || stableSignal <= 0.25 {
+			return predictedPower
+		}
+
+		lift := clamp((stableSignal-0.25)*0.09, 0.0, 0.07)
+		targetFloor := baseValue * (1.00 + lift)
+		return math.Max(predictedPower, targetFloor)
+	}
+
+	if player.Salary < 36 || baseValue < 40 || stableSignal <= 0.42 {
+		return predictedPower
+	}
+	if minutesFactor < 1.0 || usageFactor < 1.0 || roleSecurityFactor < 0.90 || dataReliabilityFactor < 0.88 {
 		return predictedPower
 	}
 
-	lift := clamp((stableSignal-0.25)*0.09, 0.0, 0.07)
-	targetFloor := baseValue * (1.00 + lift)
+	lift := clamp((stableSignal-0.42)*0.08, 0.0, 0.05)
+	targetFloor := baseValue * (0.94 + lift)
 	return math.Max(predictedPower, targetFloor)
 }
