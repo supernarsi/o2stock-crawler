@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"sync"
@@ -192,10 +193,11 @@ func (c *Client) SendLineupNotify(openID, templateID, page string, totalPower fl
 
 	now := time.Now().Format("2006-01-02 15:04:05")
 	data := SubscribeData{
-		"thing1":       {Value: "今日NBA阵容推荐"},
-		"time2":        {Value: now},
-		"short_thing4": {Value: fmt.Sprintf("预测总战力：%.0f", totalPower)},
-		"thing5":       {Value: "点击查看阵容明细"},
+		"thing2": {Value: "今日NBA阵容推荐"},
+		"thing1": {Value: now},
+		"thing3": {Value: fmt.Sprintf("预测战力：%.0f", totalPower) + "\n点击查看推荐阵容明细"},
 	}
+
+	log.Printf("[wechat] send lineup notify: openID=%s templateID=%s page=%s data=%v", openID, templateID, page, data)
 	return c.SendSubscribe(openID, templateID, page, data)
 }
