@@ -485,6 +485,37 @@ func TestCalcArchetypeFactorFrontcourtValueAndCheapGuard(t *testing.T) {
 	}
 }
 
+func TestCalcArchetypeFactorBoostsMidSalaryFrontcourtSurge(t *testing.T) {
+	surge := calcArchetypeFactor(
+		entity.NBAGamePlayer{Position: 0, Salary: 28, CombatPower: 30},
+		38.0,
+		1.05,
+		1.01,
+		0.98,
+		1.08,
+		1.00,
+		0.96,
+		1.02,
+		recentPowerProfile{Upside3: 1.33, Upside5: 1.46},
+	)
+	plain := calcArchetypeFactor(
+		entity.NBAGamePlayer{Position: 0, Salary: 28, CombatPower: 30},
+		38.0,
+		1.01,
+		1.00,
+		0.98,
+		1.01,
+		1.00,
+		0.96,
+		1.00,
+		recentPowerProfile{Upside3: 1.15, Upside5: 1.18},
+	)
+
+	if !(surge > plain) {
+		t.Fatalf("surge=%.3f, plain=%.3f, want surge > plain", surge, plain)
+	}
+}
+
 func TestAdjustOptimizedPowerForArchetype(t *testing.T) {
 	got := adjustOptimizedPowerForArchetype(
 		entity.NBAGamePlayer{Position: 0, Salary: 18},
@@ -499,6 +530,25 @@ func TestAdjustOptimizedPowerForArchetype(t *testing.T) {
 
 	if !(got > 37.7 && got < 41.9) {
 		t.Fatalf("adjusted optimized=%.3f, want between original and predicted", got)
+	}
+}
+
+func TestApplyStableStarLiftBoostsStableHighSalaryWing(t *testing.T) {
+	got := applyStableStarLift(
+		entity.NBAGamePlayer{Position: 1, Salary: 38},
+		36.7,
+		43.3,
+		1.02,
+		1.03,
+		0.99,
+		1.02,
+		0.96,
+		0.92,
+		1.00,
+	)
+
+	if !(got > 36.7 && got <= 43.3) {
+		t.Fatalf("stable star lift=%.2f, want between predicted and base", got)
 	}
 }
 
