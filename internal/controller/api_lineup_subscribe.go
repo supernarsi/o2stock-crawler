@@ -9,7 +9,7 @@ import (
 func (a *API) SubscribeLineup() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		var req struct {
-			Action string `json:"action"` // subscribe or unsubscribe
+			Subscribe bool `json:"subscribe"`
 		}
 		if err := middleware.DecodeJSONBody(r, &req); err != nil {
 			return nil, &middleware.APIError{Status: http.StatusBadRequest, Msg: "invalid request body"}
@@ -21,14 +21,9 @@ func (a *API) SubscribeLineup() http.HandlerFunc {
 			return nil, &middleware.APIError{Status: http.StatusUnauthorized, Msg: "need login"}
 		}
 
-		var status uint8
-		switch req.Action {
-		case "subscribe":
+		var status uint8 = 0
+		if req.Subscribe {
 			status = 1
-		case "unsubscribe":
-			status = 0
-		default:
-			return nil, &middleware.APIError{Status: http.StatusBadRequest, Msg: "invalid action"}
 		}
 
 		// 假设我们在 API 结构体中通过订阅接口来操作，

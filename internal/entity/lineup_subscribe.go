@@ -8,7 +8,7 @@ type LineupSubscribe struct {
 	UserID       uint      `gorm:"column:user_id;uniqueIndex"`
 	Status       uint8     `gorm:"column:status;default:1"` // 订阅状态：1 已订阅；0 已取消
 	PushCount    uint      `gorm:"column:push_count;default:0"`
-	LastPushTime time.Time `gorm:"column:last_push_time"`
+	LastPushTime *time.Time `gorm:"column:last_push_time"`
 	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt    time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
