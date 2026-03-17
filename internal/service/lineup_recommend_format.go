@@ -8,6 +8,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -254,4 +255,52 @@ func sortLineupsByPowerDesc(lineups [][]PlayerCandidate) {
 		}
 		return salaryI < salaryJ
 	})
+}
+
+func sortLineupsByRecommendationPriority(lineups [][]PlayerCandidate) {
+	sort.Slice(lineups, func(i, j int) bool {
+		metricI := summarizeLineupPriority(lineups[i])
+		metricJ := summarizeLineupPriority(lineups[j])
+
+		if metricI.fullAvailability != metricJ.fullAvailability {
+			return metricI.fullAvailability
+		}
+		if math.Abs(metricI.minAvailability-metricJ.minAvailability) > 1e-9 {
+			return metricI.minAvailability > metricJ.minAvailability
+		}
+		if math.Abs(metricI.totalAvailability-metricJ.totalAvailability) > 1e-9 {
+			return metricI.totalAvailability > metricJ.totalAvailability
+		}
+		if math.Abs(metricI.totalPredictedPower-metricJ.totalPredictedPower) > 1e-9 {
+			return metricI.totalPredictedPower > metricJ.totalPredictedPower
+		}
+		return metricI.totalSalary < metricJ.totalSalary
+	})
+}
+
+type lineupPrioritySummary struct {
+	fullAvailability    bool
+	minAvailability     float64
+	totalAvailability   float64
+	totalPredictedPower float64
+	totalSalary         uint
+}
+
+func summarizeLineupPriority(lineup []PlayerCandidate) lineupPrioritySummary {
+	summary := lineupPrioritySummary{
+		fullAvailability: true,
+		minAvailability:  1.0,
+	}
+	for _, c := range lineup {
+		summary.totalPredictedPower += c.Prediction.PredictedPower
+		summary.totalSalary += c.Player.Salary
+		summary.totalAvailability += c.Prediction.AvailabilityScore
+		if c.Prediction.AvailabilityScore < summary.minAvailability {
+			summary.minAvailability = c.Prediction.AvailabilityScore
+		}
+		if c.Prediction.AvailabilityScore < 0.999999 {
+			summary.fullAvailability = false
+		}
+	}
+	return summary
 }

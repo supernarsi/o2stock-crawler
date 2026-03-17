@@ -8,6 +8,7 @@ import (
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/entity"
 	"o2stock-crawler/internal/service"
+	"o2stock-crawler/internal/wechat"
 	"os"
 	"strings"
 	"time"
@@ -57,12 +58,25 @@ func main() {
 		}
 
 	case "recommend":
-		// go run ./cmd/nba-lineup recommend [2026-03-04]
-		gameDate := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
-		if len(os.Args) >= 3 {
-			gameDate = os.Args[2]
+		// go run ./cmd/nba-lineup recommend 2026-03-04
+		if len(os.Args) < 2 { // This condition is technically redundant as os.Args[1] must exist to reach this case
+			log.Fatalf("用法: nba-lineup recommend [date]")
 		}
-		if err := svc.GenerateRecommendation(ctx, gameDate); err != nil {
+		var gameDate time.Time
+		var err error
+		if len(os.Args) >= 3 {
+			gameDateStr, parseErr := parseGameDateArg(os.Args[2])
+			if parseErr != nil {
+				log.Fatalf("日期参数错误: %v", parseErr)
+			}
+			gameDate, err = time.Parse("2006-01-02", gameDateStr)
+			if err != nil {
+				log.Fatalf("日期解析错误: %v", err)
+			}
+		} else {
+			gameDate = time.Now().AddDate(0, 0, 1) // 默认明天
+		}
+		if err := svc.GenerateRecommendation(ctx, gameDate.Format("2006-01-02")); err != nil {
 			log.Fatalf("推荐失败: %v", err)
 		}
 
@@ -77,6 +91,15 @@ func main() {
 		}
 		if err := svc.RunBacktest(ctx, gameDate, 3); err != nil {
 			log.Fatalf("回测失败: %v", err)
+		}
+
+	case "notify":
+		// go run ./cmd/nba-lineup notify
+		wxCfg := config.LoadWechatConfigFromEnv()
+		wxClient := wechat.NewClient(wxCfg)
+		notifySvc := service.NewLineupNotifyService(database, wxClient)
+		if err := notifySvc.RunDailyNotify(ctx); err != nil {
+			log.Fatalf("阵容推送失败: %v", err)
 		}
 
 	default:
@@ -94,6 +117,7 @@ func printUsage() {
 	log.Println("                        dataDir 下需要有 today_nba_total_prepare.json")
 	log.Println("  recommend [date]      自动抓官方赛程并生成指定日期推荐阵容（默认明日）")
 	log.Println("  backtest <date>       基于 player_game_stats 回测并输出真实最优 Top3")
+	log.Println("  notify                对已订阅用户发送每日 NBA 阵容推荐推送")
 	log.Println()
 	log.Println("示例:")
 	log.Println("  go run ./cmd/nba-lineup recommend 2026-03-04")

@@ -10,7 +10,8 @@ import (
 func (a *API) NBALineups() http.HandlerFunc {
 	return middleware.API(func(r *http.Request) (any, *middleware.APIError) {
 		queryDate := r.URL.Query().Get("date")
-		res, err := a.lineupService.GetNBALineups(r.Context(), queryDate)
+		userID, _ := GetUserIDFromContext(r.Context())
+		res, err := a.lineupService.GetNBALineups(r.Context(), queryDate, userID)
 		if err != nil {
 			return nil, &middleware.APIError{
 				Status: http.StatusInternalServerError,

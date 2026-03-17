@@ -7,6 +7,7 @@ import (
 	"o2stock-crawler/internal/db"
 	"o2stock-crawler/internal/db/repositories"
 	"o2stock-crawler/internal/entity"
+	"log"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type LineupAPIService struct {
 	backtestRepo  *repositories.LineupBacktestResultRepository
 	salaryRepo    *repositories.NBAPlayerSalaryRepository
 	playerRepo    *repositories.PlayerRepository
+	subscribeRepo *repositories.LineupSubscribeRepository
 }
 
 func NewLineupAPIService(database *db.DB) *LineupAPIService {
@@ -25,11 +27,13 @@ func NewLineupAPIService(database *db.DB) *LineupAPIService {
 		backtestRepo:  repositories.NewLineupBacktestResultRepository(database.DB),
 		salaryRepo:    repositories.NewNBAPlayerSalaryRepository(database.DB),
 		playerRepo:    repositories.NewPlayerRepository(database.DB),
+		subscribeRepo: repositories.NewLineupSubscribeRepository(database.DB),
 	}
 }
 
-// GetNBALineups 获取指定日期和历史的推荐阵容及真实最佳阵容
-func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) (*api.NBALineupsRes, error) {
+// GetNBALineups 获取 NBA 推荐阵容列表（包含今日及历史）
+func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string, userID uint) (*api.NBALineupsRes, error) {
+	log.Printf("[lineup-api] getting lineups for date: %s", queryDate)
 	todayStr := time.Now().Format("2006-01-02")
 
 	var latestDate string
@@ -175,7 +179,20 @@ func (s *LineupAPIService) GetNBALineups(ctx context.Context, queryDate string) 
 		res.History = append(res.History, day)
 	}
 
+	// 8. 获取用户的订阅状态
+	if userID > 0 {
+		sub, err := s.subscribeRepo.GetByUserID(ctx, userID)
+		if err == nil && sub != nil && sub.Status == 1 {
+			res.Subscribed = true
+		}
+	}
+
 	return &res, nil
+}
+
+// UpdateSubscription 更新用户的阵容推荐订阅状态
+func (s *LineupAPIService) UpdateSubscription(ctx context.Context, userID uint, status uint8) error {
+	return s.subscribeRepo.Upsert(ctx, userID, status)
 }
 
 // buildSalaryMap 批量查询 nba_player_salary 并构建 map[nba_player_id]NBAPlayerSalary

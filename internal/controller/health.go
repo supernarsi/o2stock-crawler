@@ -46,8 +46,12 @@ func (a *API) CrawlerHealthz() http.HandlerFunc {
 			healthStatus["o2stock-crawler-ol2"] = true
 		}
 
-		// o2stock-crawler-ol2 在 03:00~08:00 之间不抓取数据，固定返回 true
+		// o2stock-crawler-ol2 在 02:00~08:00 之间不抓取数据，固定返回 true
 		if utils.IsOl2CrawlerSleepTime(time.Now()) {
+			healthStatus["o2stock-crawler-ol2"] = true
+		}
+		// o2stock-crawler-ol2 在 08:00~08:30 之间都返回 true
+		if time.Now().Hour() == 8 && time.Now().Minute() < 30 {
 			healthStatus["o2stock-crawler-ol2"] = true
 		}
 

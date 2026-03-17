@@ -338,6 +338,39 @@ func TestBuildFullAvailabilityInjuryFallback(t *testing.T) {
 	}
 }
 
+func TestSortLineupsByRecommendationPriorityPrefersHealthyLineup(t *testing.T) {
+	lineups := [][]PlayerCandidate{
+		{
+			{
+				Player:     entity.NBAGamePlayer{NBAPlayerID: 1, Salary: 40},
+				Prediction: PlayerPrediction{PredictedPower: 60, AvailabilityScore: 0.5},
+			},
+			{
+				Player:     entity.NBAGamePlayer{NBAPlayerID: 2, Salary: 30},
+				Prediction: PlayerPrediction{PredictedPower: 55, AvailabilityScore: 1},
+			},
+		},
+		{
+			{
+				Player:     entity.NBAGamePlayer{NBAPlayerID: 3, Salary: 40},
+				Prediction: PlayerPrediction{PredictedPower: 58, AvailabilityScore: 1},
+			},
+			{
+				Player:     entity.NBAGamePlayer{NBAPlayerID: 4, Salary: 30},
+				Prediction: PlayerPrediction{PredictedPower: 54, AvailabilityScore: 1},
+			},
+		},
+	}
+
+	sortLineupsByRecommendationPriority(lineups)
+	if !lineupHasFullAvailability(lineups[0]) {
+		t.Fatalf("lineups[0] should be full-availability after sorting")
+	}
+	if lineups[0][0].Player.NBAPlayerID != 3 {
+		t.Fatalf("lineups[0] NBAPlayerID=%d, want 3", lineups[0][0].Player.NBAPlayerID)
+	}
+}
+
 func TestCalcMinutesFactorUsesSeasonBaseline(t *testing.T) {
 	svc := &LineupRecommendService{}
 	stats := []entity.PlayerGameStats{

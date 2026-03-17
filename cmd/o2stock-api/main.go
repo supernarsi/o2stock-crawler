@@ -102,6 +102,7 @@ func main() {
 	authGroup.RegisterAPI("/ipi/rank", apiCtl.IPIRank(), http.MethodGet)
 	authGroup.RegisterAPI("/ipi/player", apiCtl.IPIPlayer(), http.MethodGet)
 	authGroup.RegisterAPI("/nba/lineups", apiCtl.NBALineups(), http.MethodGet)
+	authGroup.RegisterAPI("/nba/lineup/subscribe", apiCtl.SubscribeLineup(), http.MethodPost)
 
 	mux := http.NewServeMux()
 

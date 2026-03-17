@@ -5,6 +5,7 @@ type NBALineupsRes struct {
 	Today         *NBALineupDay  `json:"today"`
 	TodayUpdateAt int64          `json:"today_update_at"`
 	History       []NBALineupDay `json:"history"`
+	Subscribed    bool           `json:"subscribed"` // 用户是否已订阅「阵容推荐」推送
 }
 
 // NBALineupDay 单日的 NBA 推荐与回测数据
