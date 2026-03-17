@@ -79,6 +79,12 @@ func (c *Client) getToken() (string, error) {
 	return c.token, nil
 }
 
+// GetConfig 获取微信配置
+func (c *Client) GetConfig() config.WechatConfig {
+	return c.cfg
+}
+
+// SubscribeSendResp 订阅消息发送响应
 type SubscribeSendResp struct {
 	ErrCode int    `json:"errcode"`
 	ErrMsg  string `json:"errmsg"`
@@ -167,6 +173,29 @@ func (c *Client) SendPriceNotifyForItem(openID, currentPrice, costPrice, remark 
 		"amount3": {Value: costPrice},
 		"time5":   {Value: now},
 		"thing6":  {Value: remark},
+	}
+	return c.SendSubscribe(openID, templateID, page, data)
+}
+
+// SendLineupNotify 发送阵容推荐订阅通知
+// thing1: 类型 (今日NBA阵容推荐)
+// time2: 时间 (YYYY-MM-DD HH:mm:ss)
+// short_thing4: 我的预测 (预测总战力：258)
+// thing5: 温馨提示 (点击查看阵容明细)
+func (c *Client) SendLineupNotify(openID, templateID, page string, totalPower float64) error {
+	if templateID == "" {
+		return fmt.Errorf("lineup subscribe template id is empty")
+	}
+	if page == "" {
+		page = "pages/nba-lineup/nba-lineup"
+	}
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+	data := SubscribeData{
+		"thing1":       {Value: "今日NBA阵容推荐"},
+		"time2":        {Value: now},
+		"short_thing4": {Value: fmt.Sprintf("预测总战力：%.0f", totalPower)},
+		"thing5":       {Value: "点击查看阵容明细"},
 	}
 	return c.SendSubscribe(openID, templateID, page, data)
 }

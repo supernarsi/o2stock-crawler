@@ -220,7 +220,11 @@ func (s *LineupRecommendService) GenerateRecommendation(ctx context.Context, gam
 	lineupRepo := repositories.NewLineupRecommendationRepository(s.db.DB)
 	var recs []entity.LineupRecommendation
 	for _, set := range recommendationSets {
-		sortLineupsByPowerDesc(set.lineups)
+		if set.recType == entity.LineupRecommendationTypeAIRecommended {
+			sortLineupsByRecommendationPriority(set.lineups)
+		} else {
+			sortLineupsByPowerDesc(set.lineups)
+		}
 		for rank, lineup := range set.lineups {
 			rec := s.buildRecommendation(gameDate, uint(rank+1), set.recType, set.lookback, lineup, dbPlayerMap)
 			recs = append(recs, rec)
